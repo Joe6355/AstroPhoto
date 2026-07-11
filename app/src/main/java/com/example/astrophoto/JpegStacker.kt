@@ -283,11 +283,18 @@ class JpegStacker(private val context: Context) {
                 readDimensions(frame)
                     ?: error("Не удалось прочитать JPEG: ${frame.fileName}")
             }
-            val targetWidth = dimensions.minOf { it.first }
-            val targetHeight = dimensions.minOf { it.second }
-            require(targetWidth > 0 && targetHeight > 0) {
-                "Не удалось прочитать JPEG"
+            val lightShapes = dimensions.take(lightFrames.size).map { dimension ->
+                decodedPixelFrameShape(dimension.first, dimension.second)
             }
+            val darkShapes = dimensions.drop(lightFrames.size).map { dimension ->
+                decodedPixelFrameShape(dimension.first, dimension.second)
+            }
+            when (val validation = validateDarkFrames(darkShapes, lightShapes)) {
+                is DarkValidationResult.Valid -> Unit
+                is DarkValidationResult.Invalid -> error(validation.message)
+            }
+            val targetWidth = lightShapes.first().width
+            val targetHeight = lightShapes.first().height
 
             var masterDark: Bitmap? = null
             var stacked: Bitmap? = null
@@ -1814,12 +1821,20 @@ class JpegStacker(private val context: Context) {
         try {
             frames.forEachIndexed { index, frame ->
                 currentCoroutineContext().ensureActive()
-                var prepared = decodePreparedFrame(
-                    frame,
-                    targetWidth,
-                    targetHeight
-                ) ?: error("Не удалось прочитать JPEG: ${frame.fileName}")
+                var prepared = decodeFrame(frame)
+                    ?: error("Не удалось прочитать JPEG: ${frame.fileName}")
                 try {
+                    val validation = validateDarkFrames(
+                        darkFrames = listOf(
+                            decodedPixelFrameShape(prepared.width, prepared.height)
+                        ),
+                        lightFrames = listOf(
+                            decodedPixelFrameShape(targetWidth, targetHeight)
+                        )
+                    )
+                    if (validation is DarkValidationResult.Invalid) {
+                        error("${validation.message}: ${frame.fileName}")
+                    }
                     if (average == null) {
                         average = prepared.copy(Bitmap.Config.ARGB_8888, true)
                             ?: error("Не удалось подготовить JPEG")
@@ -1968,6 +1983,7 @@ class JpegStacker(private val context: Context) {
         val averagePixels = IntArray(width * rowCount)
         val lightPixels = IntArray(width * rowCount)
         val darkPixels = IntArray(width * rowCount)
+        val calibratedPixels = IntArray(width * rowCount)
         var top = 0
 
         while (top < average.height) {
@@ -2003,38 +2019,23 @@ class JpegStacker(private val context: Context) {
                 dy = dy,
                 fillColor = 0xFF000000.toInt()
             )
+            subtractMasterDarkArgb(
+                lightPixels = lightPixels,
+                darkPixels = darkPixels,
+                outputPixels = calibratedPixels,
+                neutralOffset = shadowOffset,
+                pixelCount = pixelCount
+            )
 
             for (pixelIndex in 0 until pixelCount) {
-                val lightColor = lightPixels[pixelIndex]
-                val darkColor = darkPixels[pixelIndex]
-                val outsideFrame = lightColor ushr 24 == 0
-                val calibratedRed = if (outsideFrame) {
-                    0
+                val calibratedColor = if (lightPixels[pixelIndex] ushr 24 == 0) {
+                    0xFF000000.toInt()
                 } else {
-                    calibratedChannel(
-                        light = lightColor ushr 16 and 0xFF,
-                        dark = darkColor ushr 16 and 0xFF,
-                        shadowOffset = shadowOffset
-                    )
+                    calibratedPixels[pixelIndex]
                 }
-                val calibratedGreen = if (outsideFrame) {
-                    0
-                } else {
-                    calibratedChannel(
-                        light = lightColor ushr 8 and 0xFF,
-                        dark = darkColor ushr 8 and 0xFF,
-                        shadowOffset = shadowOffset
-                    )
-                }
-                val calibratedBlue = if (outsideFrame) {
-                    0
-                } else {
-                    calibratedChannel(
-                        light = lightColor and 0xFF,
-                        dark = darkColor and 0xFF,
-                        shadowOffset = shadowOffset
-                    )
-                }
+                val calibratedRed = calibratedColor ushr 16 and 0xFF
+                val calibratedGreen = calibratedColor ushr 8 and 0xFF
+                val calibratedBlue = calibratedColor and 0xFF
                 val oldColor = averagePixels[pixelIndex]
                 val red = if (frameNumber == 1) {
                     calibratedRed
@@ -2070,15 +2071,6 @@ class JpegStacker(private val context: Context) {
             average.setPixels(averagePixels, 0, width, 0, top, width, rows)
             top += rows
         }
-    }
-
-    private fun calibratedChannel(
-        light: Int,
-        dark: Int,
-        shadowOffset: Int
-    ): Int {
-        val safeDark = (dark * SAFE_DARK_SUBTRACTION_STRENGTH).roundToInt()
-        return (light - safeDark + shadowOffset).coerceIn(0, 255)
     }
 
     private fun applyAstroStretchInPlace(bitmap: Bitmap) {
@@ -2775,7 +2767,6 @@ class JpegStacker(private val context: Context) {
         private const val MAX_PROFILE_AVERAGE_PIXELS = 8_000_000L
         private const val MAX_COMPLEX_STACK_PIXELS_MANY_FRAMES = 2_500_000L
         private const val MAX_COMPLEX_STACK_PIXELS_MEDIUM_SERIES = 4_000_000L
-        private const val SAFE_DARK_SUBTRACTION_STRENGTH = 0.65f
         private const val MIN_SAFE_ALIGNMENT_CONFIDENCE = 0.02
         private const val MAX_SAFE_ALIGNMENT_SCORE = 55.0
         private val SUPPORTED_SIGMA_VALUES = setOf(1.5, 2.0, 2.5, 3.0)
