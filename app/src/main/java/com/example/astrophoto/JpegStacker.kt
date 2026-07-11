@@ -187,7 +187,7 @@ class JpegStacker(private val context: Context) {
                             average = prepared.copy(Bitmap.Config.ARGB_8888, true)
                                 ?: error("Не удалось подготовить JPEG")
                         } else {
-                            addToRunningAverage(
+                            addToManualRunningAverage(
                                 average = checkNotNull(average),
                                 next = prepared,
                                 frameNumber = index + 1,
@@ -2215,6 +2215,44 @@ class JpegStacker(private val context: Context) {
                     0xFF000000.toInt() or (red shl 16) or (green shl 8) or blue
             }
 
+            average.setPixels(averagePixels, 0, width, 0, top, width, rows)
+            top += rows
+        }
+    }
+
+    private suspend fun addToManualRunningAverage(
+        average: Bitmap,
+        next: Bitmap,
+        frameNumber: Int,
+        dx: Int,
+        dy: Int
+    ) {
+        val width = average.width
+        val rowCount = 32
+        val averagePixels = IntArray(width * rowCount)
+        val nextPixels = IntArray(width * rowCount)
+        var top = 0
+
+        while (top < average.height) {
+            currentCoroutineContext().ensureActive()
+            val rows = minOf(rowCount, average.height - top)
+            val pixelCount = width * rows
+            average.getPixels(averagePixels, 0, width, 0, top, width, rows)
+            readShiftedPixels(
+                bitmap = next,
+                destination = nextPixels,
+                top = top,
+                rows = rows,
+                dx = dx,
+                dy = dy,
+                fillColor = 0xFF000000.toInt()
+            )
+            updateRunningAverageArgb(
+                averagePixels = averagePixels,
+                nextPixels = nextPixels,
+                frameNumber = frameNumber,
+                pixelCount = pixelCount
+            )
             average.setPixels(averagePixels, 0, width, 0, top, width, rows)
             top += rows
         }
