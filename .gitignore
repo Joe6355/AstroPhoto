@@ -1,0 +1,38 @@
+# Android / Gradle generated files
+.gradle/
+.kotlin/
+**/build/
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.iml
+
+# Local IDE and machine settings
+.idea/
+local.properties
+
+# Build artifacts
+*.apk
+*.aab
+
+# Signing secrets
+*.jks
+*.keystore
+key.properties
+
+# Local backups and diagnostics
+_git_setup_backup/
+_rollback_backup_current_broken/
+astrophoto_*_logcat.txt
+*.log
+
+# Local photo/session exports if they appear at the project root
+/Pictures/
+/AstroPhoto/
+
+# Temporary / OS files
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
