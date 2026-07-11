@@ -56,6 +56,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
+import java.nio.file.Files
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -207,20 +208,17 @@ class JpegStacker(private val context: Context) {
                     applyAstroStretchInPlace(output)
                 }
                 val now = System.currentTimeMillis()
-                val timestamp = SimpleDateFormat(
-                    "yyyyMMdd_HHmmss",
-                    Locale.US
-                ).format(Date(now))
-                val fileName = if (alignFrames) {
-                    "StackedAligned_$timestamp.jpg"
+                val outputType = if (alignFrames) {
+                    ProcessedOutputType.AVERAGE_ALIGNED
                 } else {
-                    "Stacked_$timestamp.jpg"
+                    ProcessedOutputType.AVERAGE
                 }
+                val fileName = buildProcessedResultBaseName(outputType, now)
                 val saved = saveBitmap(session, output, fileName)
                 val infoUpdated = runCatching {
                     appendSessionInfo(
                         session = session,
-                        fileName = fileName,
+                        fileName = saved.fileName,
                         frameCount = frames.size,
                         alignmentEnabled = alignFrames,
                         astroStretchApplied = autoStretch,
@@ -229,7 +227,7 @@ class JpegStacker(private val context: Context) {
                 }.isSuccess
 
                 JpegStackResult(
-                    fileName = fileName,
+                    fileName = saved.fileName,
                     displayPath = saved.displayPath,
                     contentUri = saved.contentUri,
                     filePath = saved.filePath,
@@ -330,16 +328,16 @@ class JpegStacker(private val context: Context) {
                     onProgress("Сохранение результата...", 0, 1)
                 }
                 val now = System.currentTimeMillis()
-                val timestamp = SimpleDateFormat(
-                    "yyyyMMdd_HHmmss",
-                    Locale.US
-                ).format(Date(now))
-                val resultFileName = if (alignFrames) {
-                    "StackedDarkAligned_$timestamp.jpg"
+                val resultType = if (alignFrames) {
+                    ProcessedOutputType.AVERAGE_DARK_ALIGNED
                 } else {
-                    "StackedDark_$timestamp.jpg"
+                    ProcessedOutputType.AVERAGE_DARK
                 }
-                val masterDarkFileName = "MasterDark_$timestamp.jpg"
+                val resultFileName = buildProcessedResultBaseName(resultType, now)
+                val masterDarkFileName = buildProcessedResultBaseName(
+                    ProcessedOutputType.MASTER_DARK,
+                    now
+                )
                 if (autoStretch) {
                     applyAstroStretchInPlace(checkNotNull(stacked))
                 }
@@ -358,10 +356,8 @@ class JpegStacker(private val context: Context) {
                 val infoUpdated = runCatching {
                     appendDarkStackSessionInfo(
                         session = session,
-                        resultFileName = resultFileName,
-                        masterDarkFileName = savedMaster?.let {
-                            masterDarkFileName
-                        },
+                        resultFileName = savedResult.fileName,
+                        masterDarkFileName = savedMaster?.fileName,
                         lightFrameCount = lightFrames.size,
                         darkFrameCount = darkFrames.size,
                         shadowOffset = shadowOffset,
@@ -372,7 +368,7 @@ class JpegStacker(private val context: Context) {
                 }.isSuccess
 
                 JpegStackResult(
-                    fileName = resultFileName,
+                    fileName = savedResult.fileName,
                     displayPath = savedResult.displayPath,
                     contentUri = savedResult.contentUri,
                     filePath = savedResult.filePath,
@@ -380,7 +376,7 @@ class JpegStacker(private val context: Context) {
                     sessionInfoUpdated = infoUpdated,
                     darkFrameCount = darkFrames.size,
                     shadowOffset = shadowOffset,
-                    masterDarkFileName = savedMaster?.let { masterDarkFileName },
+                    masterDarkFileName = savedMaster?.fileName,
                     masterDarkDisplayPath = savedMaster?.displayPath,
                     alignmentEnabled = alignFrames,
                     astroStretchApplied = autoStretch
@@ -522,15 +518,12 @@ class JpegStacker(private val context: Context) {
                     onProgress("Сохранение результата...", 0, 1)
                 }
                 val now = System.currentTimeMillis()
-                val timestamp = SimpleDateFormat(
-                    "yyyyMMdd_HHmmss",
-                    Locale.US
-                ).format(Date(now))
-                val fileName = if (alignFrames) {
-                    "MedianAligned_$timestamp.jpg"
+                val outputType = if (alignFrames) {
+                    ProcessedOutputType.MEDIAN_ALIGNED
                 } else {
-                    "Median_$timestamp.jpg"
+                    ProcessedOutputType.MEDIAN
                 }
+                val fileName = buildProcessedResultBaseName(outputType, now)
                 if (autoStretch) {
                     applyAstroStretchInPlace(checkNotNull(output))
                 }
@@ -538,7 +531,7 @@ class JpegStacker(private val context: Context) {
                 val infoUpdated = runCatching {
                     appendMedianSessionInfo(
                         session = session,
-                        fileName = fileName,
+                        fileName = saved.fileName,
                         frameCount = selectedFrames.size,
                         alignmentEnabled = alignFrames,
                         downscaled = downscaled,
@@ -547,7 +540,7 @@ class JpegStacker(private val context: Context) {
                     )
                 }.isSuccess
                 JpegStackResult(
-                    fileName = fileName,
+                    fileName = saved.fileName,
                     displayPath = saved.displayPath,
                     contentUri = saved.contentUri,
                     filePath = saved.filePath,
@@ -703,15 +696,12 @@ class JpegStacker(private val context: Context) {
                     onProgress("Сохранение результата...", 0, 1)
                 }
                 val now = System.currentTimeMillis()
-                val timestamp = SimpleDateFormat(
-                    "yyyyMMdd_HHmmss",
-                    Locale.US
-                ).format(Date(now))
-                val fileName = if (alignFrames) {
-                    "SigmaAligned_$timestamp.jpg"
+                val outputType = if (alignFrames) {
+                    ProcessedOutputType.SIGMA_ALIGNED
                 } else {
-                    "Sigma_$timestamp.jpg"
+                    ProcessedOutputType.SIGMA
                 }
+                val fileName = buildProcessedResultBaseName(outputType, now)
                 if (autoStretch) {
                     applyAstroStretchInPlace(checkNotNull(output))
                 }
@@ -719,7 +709,7 @@ class JpegStacker(private val context: Context) {
                 val infoUpdated = runCatching {
                     appendSigmaSessionInfo(
                         session = session,
-                        fileName = fileName,
+                        fileName = saved.fileName,
                         frameCount = selectedFrames.size,
                         sigma = sigma,
                         alignmentEnabled = alignFrames,
@@ -729,7 +719,7 @@ class JpegStacker(private val context: Context) {
                     )
                 }.isSuccess
                 JpegStackResult(
-                    fileName = fileName,
+                    fileName = saved.fileName,
                     displayPath = saved.displayPath,
                     contentUri = saved.contentUri,
                     filePath = saved.filePath,
@@ -2270,6 +2260,7 @@ class JpegStacker(private val context: Context) {
     ) / frameNumber
 
     private data class SavedJpeg(
+        val fileName: String,
         val displayPath: String,
         val contentUri: String?,
         val filePath: String?
@@ -2286,10 +2277,13 @@ class JpegStacker(private val context: Context) {
             val relativePath =
                 "${Environment.DIRECTORY_PICTURES}/AstroPhoto/" +
                     "${session.folderName}/Processed/"
+            val finalFileName = findUniqueProcessedResultName(fileName) { candidate ->
+                mediaStoreProcessedNameExists(relativePath, candidate)
+            }
             val uri = resolver.insert(
                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
                 ContentValues().apply {
-                    put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+                    put(MediaStore.Images.Media.DISPLAY_NAME, finalFileName)
                     put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
                     put(MediaStore.Images.Media.RELATIVE_PATH, relativePath)
                     put(MediaStore.Images.Media.IS_PENDING, 1)
@@ -2310,22 +2304,32 @@ class JpegStacker(private val context: Context) {
                     null,
                     null
                 )
-                val savedSize = resolver.query(
+                val savedInfo = resolver.query(
                     uri,
-                    arrayOf(MediaStore.Images.Media.SIZE),
+                    arrayOf(
+                        MediaStore.Images.Media.DISPLAY_NAME,
+                        MediaStore.Images.Media.SIZE
+                    ),
                     null,
                     null,
                     null
                 )?.use { cursor ->
-                    if (cursor.moveToFirst()) cursor.getLong(0) else 0L
-                } ?: 0L
-                if (savedSize <= 0L) {
+                    if (cursor.moveToFirst()) {
+                        cursor.getString(0).orEmpty().ifBlank { finalFileName } to
+                            cursor.getLong(1)
+                    } else {
+                        finalFileName to 0L
+                    }
+                } ?: (finalFileName to 0L)
+                if (savedInfo.second <= 0L) {
                     resolver.delete(uri, null, null)
                     error("Файл результата не был сохранён")
                 }
+                val savedFileName = savedInfo.first
                 return SavedJpeg(
+                    fileName = savedFileName,
                     displayPath =
-                        "Pictures/AstroPhoto/${session.folderName}/Processed/$fileName",
+                        "Pictures/AstroPhoto/${session.folderName}/Processed/$savedFileName",
                     contentUri = uri.toString(),
                     filePath = null
                 )
@@ -2346,29 +2350,61 @@ class JpegStacker(private val context: Context) {
         if (!directory.exists() && !directory.mkdirs()) {
             error("Не удалось создать папку Processed")
         }
-        val file = File(directory, fileName)
-        val tempFile = File(directory, "$fileName.tmp")
-        if (tempFile.exists()) tempFile.delete()
-        require(!file.exists()) { "Файл результата уже существует" }
+        val finalFileName = findUniqueProcessedResultName(fileName) { candidate ->
+            File(directory, candidate).exists() ||
+                File(directory, "$candidate.tmp").exists()
+        }
+        val file = File(directory, finalFileName)
+        val tempFile = File(directory, "$finalFileName.tmp")
+        var moved = false
         try {
-            FileOutputStream(tempFile).use { output ->
+            require(tempFile.createNewFile()) {
+                "Не удалось создать временный файл результата"
+            }
+            FileOutputStream(tempFile, false).use { output ->
                 if (!bitmap.compress(Bitmap.CompressFormat.JPEG, jpegQuality, output)) {
                     error("Не удалось сохранить результат")
                 }
             }
             require(tempFile.length() > 0L) { "Файл результата не был сохранён" }
-            require(tempFile.renameTo(file)) { "Не удалось завершить сохранение результата" }
+            try {
+                Files.move(tempFile.toPath(), file.toPath())
+                moved = true
+            } catch (error: Exception) {
+                throw IllegalStateException(
+                    "Не удалось создать уникальный файл результата",
+                    error
+                )
+            }
             require(file.length() > 0L) { "Файл результата не был сохранён" }
         } catch (error: Exception) {
             tempFile.delete()
-            file.delete()
+            if (moved) file.delete()
             throw error
         }
         return SavedJpeg(
+            fileName = finalFileName,
             displayPath = file.absolutePath,
             contentUri = null,
             filePath = file.absolutePath
         )
+    }
+
+    private fun mediaStoreProcessedNameExists(
+        relativePath: String,
+        fileName: String
+    ): Boolean {
+        val resolver = context.contentResolver
+        return resolver.query(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            arrayOf(MediaStore.Images.Media._ID),
+            "${MediaStore.Images.Media.DISPLAY_NAME}=? AND " +
+                "${MediaStore.Images.Media.RELATIVE_PATH}=?",
+            arrayOf(fileName, relativePath),
+            null
+        )?.use { cursor ->
+            cursor.moveToFirst()
+        } ?: error("Не удалось проверить имя файла результата")
     }
 
     private fun appendSessionInfo(
