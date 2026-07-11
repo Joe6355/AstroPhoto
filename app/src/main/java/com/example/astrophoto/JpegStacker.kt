@@ -1445,6 +1445,7 @@ class JpegStacker(private val context: Context) {
         try {
             val sourceRows = Array(frames.size) { IntArray(width) }
             val outputRow = IntArray(width)
+            val colors = IntArray(frames.size)
             val redValues = IntArray(frames.size)
             val greenValues = IntArray(frames.size)
             val blueValues = IntArray(frames.size)
@@ -1464,22 +1465,14 @@ class JpegStacker(private val context: Context) {
                 }
                 for (x in 0 until width) {
                     frames.indices.forEach { index ->
-                        val color = sourceRows[index][x]
-                        redValues[index] = color ushr 16 and 0xFF
-                        greenValues[index] = color ushr 8 and 0xFF
-                        blueValues[index] = color and 0xFF
+                        colors[index] = sourceRows[index][x]
                     }
-                    java.util.Arrays.sort(redValues)
-                    java.util.Arrays.sort(greenValues)
-                    java.util.Arrays.sort(blueValues)
-                    val red = medianChannel(redValues)
-                    val green = medianChannel(greenValues)
-                    val blue = medianChannel(blueValues)
-                    outputRow[x] =
-                        0xFF000000.toInt() or
-                            (red shl 16) or
-                            (green shl 8) or
-                            blue
+                    outputRow[x] = medianArgbPixel(
+                        colors = colors,
+                        redValues = redValues,
+                        greenValues = greenValues,
+                        blueValues = blueValues
+                    )
                 }
                 output.setPixels(outputRow, 0, width, 0, y, width, 1)
                 onRowCompleted(y + 1)
@@ -1488,15 +1481,6 @@ class JpegStacker(private val context: Context) {
         } catch (error: Throwable) {
             output.recycle()
             throw error
-        }
-    }
-
-    private fun medianChannel(values: IntArray): Int {
-        val middle = values.size / 2
-        return if (values.size % 2 == 1) {
-            values[middle]
-        } else {
-            (values[middle - 1] + values[middle]) / 2
         }
     }
 
@@ -1512,6 +1496,7 @@ class JpegStacker(private val context: Context) {
         try {
             val sourceRows = Array(frames.size) { IntArray(width) }
             val outputRow = IntArray(width)
+            val colors = IntArray(frames.size)
             val redValues = IntArray(frames.size)
             val greenValues = IntArray(frames.size)
             val blueValues = IntArray(frames.size)
@@ -1532,18 +1517,31 @@ class JpegStacker(private val context: Context) {
                 for (x in 0 until width) {
                     frames.indices.forEach { index ->
                         val color = sourceRows[index][x]
-                        redValues[index] = color ushr 16 and 0xFF
-                        greenValues[index] = color ushr 8 and 0xFF
-                        blueValues[index] = color and 0xFF
+                        colors[index] = color
+                        if (signalPreserving) {
+                            redValues[index] = color ushr 16 and 0xFF
+                            greenValues[index] = color ushr 8 and 0xFF
+                            blueValues[index] = color and 0xFF
+                        }
                     }
-                    val red = sigmaClippedChannel(redValues, sigma, signalPreserving)
-                    val green = sigmaClippedChannel(greenValues, sigma, signalPreserving)
-                    val blue = sigmaClippedChannel(blueValues, sigma, signalPreserving)
-                    outputRow[x] =
+                    outputRow[x] = if (signalPreserving) {
+                        val red = sigmaClippedChannel(redValues, sigma, true)
+                        val green = sigmaClippedChannel(greenValues, sigma, true)
+                        val blue = sigmaClippedChannel(blueValues, sigma, true)
                         0xFF000000.toInt() or
                             (red shl 16) or
                             (green shl 8) or
                             blue
+                    } else {
+                        sigmaClipArgbPixel(
+                            colors = colors,
+                            sigmaThreshold = sigma,
+                            iterations = 1,
+                            redValues = redValues,
+                            greenValues = greenValues,
+                            blueValues = blueValues
+                        )
+                    }
                 }
                 output.setPixels(outputRow, 0, width, 0, y, width, 1)
                 onRowCompleted(y + 1)
