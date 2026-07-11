@@ -2789,9 +2789,20 @@ fun JpegStackingBlock(
     }
     val excludedLightKeys = marks.bad + marks.autoBad
     val badFrames = jpegFrames.filter { it.key in excludedLightKeys }
-    val goodFrames = jpegFrames.filterNot { it.key in excludedLightKeys }
-    val favoriteFrames = goodFrames.filter { it.key in marks.favorite }
-    val selectedFrames = if (favoritesOnly) favoriteFrames else goodFrames
+    val eligibleFrames = selectEligibleLightFrames(
+        frames = frames,
+        marks = marks,
+        favoritesOnly = false
+    )
+    val selectedFrames = if (favoritesOnly) {
+        selectEligibleLightFrames(
+            frames = frames,
+            marks = marks,
+            favoritesOnly = true
+        )
+    } else {
+        eligibleFrames
+    }
     val darkFrames = frames.filter {
         it.category == SessionFrameCategory.DARKS_JPEG
     }
@@ -3391,7 +3402,7 @@ fun JpegStackingBlock(
             Button(
                 onClick = {
                     when {
-                        jpegFrames.isNotEmpty() && goodFrames.isEmpty() -> {
+                        jpegFrames.isNotEmpty() && eligibleFrames.isEmpty() -> {
                             status = "Все кадры помечены как брак"
                         }
                         jpegFrames.size < 2 -> {
