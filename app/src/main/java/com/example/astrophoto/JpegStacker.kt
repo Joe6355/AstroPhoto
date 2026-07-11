@@ -1370,28 +1370,6 @@ class JpegStacker(private val context: Context) {
             frame.filePath?.let { File(it).inputStream() }
         }
 
-    private data class AlignmentReference(
-        val grayscale: ByteArray,
-        val width: Int,
-        val height: Int,
-        val scaleX: Float,
-        val scaleY: Float
-    )
-
-    private data class AlignmentShift(
-        val dx: Int,
-        val dy: Int,
-        val score: Double = 0.0,
-        val confidence: Double = 1.0
-    ) {
-        val isZero: Boolean
-            get() = dx == 0 && dy == 0
-
-        companion object {
-            val Zero = AlignmentShift(0, 0)
-        }
-    }
-
     private data class MedianPreparedFrame(
         val bitmap: Bitmap,
         val shift: AlignmentShift
@@ -1637,14 +1615,8 @@ class JpegStacker(private val context: Context) {
         )
         return try {
             val shift = findAlignment(reference, candidate)
-            if (
-                safeMode &&
-                !shift.isZero &&
-                (
-                    shift.confidence < MIN_SAFE_ALIGNMENT_CONFIDENCE ||
-                        shift.score > MAX_SAFE_ALIGNMENT_SCORE
-                    )
-            ) {
+            val acceptedShift = selectManualAlignment(shift, safeMode)
+            if (!shift.isZero && acceptedShift.isZero) {
                 onAlignment(
                     frameNumber,
                     totalFrames,
@@ -1658,7 +1630,7 @@ class JpegStacker(private val context: Context) {
                 "Выравнивание кадра $frameNumber из $totalFrames: " +
                     "dx=${shift.dx}, dy=${shift.dy}"
             )
-            shift
+            acceptedShift
         } catch (error: CancellationException) {
             throw error
         } catch (_: Exception) {
@@ -1691,25 +1663,8 @@ class JpegStacker(private val context: Context) {
         try {
             val pixels = IntArray(width * height)
             thumbnail.getPixels(pixels, 0, width, 0, 0, width, height)
-            val grayscale = ByteArray(pixels.size)
-            var minimum = 255
-            var maximum = 0
-            pixels.forEachIndexed { index, color ->
-                val red = color ushr 16 and 0xFF
-                val green = color ushr 8 and 0xFF
-                val blue = color and 0xFF
-                val value = (red * 77 + green * 150 + blue * 29) ushr 8
-                grayscale[index] = value.toByte()
-                minimum = minOf(minimum, value)
-                maximum = maxOf(maximum, value)
-            }
-            require(maximum - minimum >= 8) {
-                "Недостаточно деталей для выравнивания"
-            }
-            return AlignmentReference(
-                grayscale = grayscale,
-                width = width,
-                height = height,
+            return createAlignmentReference(
+                image = ArgbPixelImage(width, height, pixels),
                 scaleX = bitmap.width.toFloat() / width,
                 scaleY = bitmap.height.toFloat() / height
             )
@@ -1723,90 +1678,7 @@ class JpegStacker(private val context: Context) {
         candidateBitmap: Bitmap
     ): AlignmentShift {
         val candidate = createGrayscaleSample(candidateBitmap)
-        require(
-            candidate.width == reference.width &&
-                candidate.height == reference.height
-        ) {
-            "Размеры кадров не совпадают"
-        }
-
-        val maxDx = ceil(30f / reference.scaleX).toInt().coerceAtLeast(1)
-        val maxDy = ceil(30f / reference.scaleY).toInt().coerceAtLeast(1)
-        val sampleStep = maxOf(3, minOf(8, maxOf(maxDx, maxDy) / 4 + 2))
-        var bestScore = Double.MAX_VALUE
-        var bestDx = 0
-        var bestDy = 0
-        var zeroScore = Double.MAX_VALUE
-
-        for (dy in -maxDy..maxDy) {
-            val startY = maxOf(2, -dy + 2)
-            val endY = minOf(reference.height - 2, reference.height - dy - 2)
-            if (endY <= startY) continue
-            for (dx in -maxDx..maxDx) {
-                val startX = maxOf(2, -dx + 2)
-                val endX = minOf(reference.width - 2, reference.width - dx - 2)
-                if (endX <= startX) continue
-
-                var difference = 0L
-                var samples = 0
-                var y = startY
-                while (y < endY) {
-                    var x = startX
-                    val referenceRow = y * reference.width
-                    val candidateRow = (y + dy) * candidate.width
-                    while (x < endX) {
-                        val referenceValue =
-                            reference.grayscale[referenceRow + x].toInt() and 0xFF
-                        val candidateValue =
-                            candidate.grayscale[candidateRow + x + dx].toInt() and 0xFF
-                        difference += kotlin.math.abs(
-                            referenceValue - candidateValue
-                        )
-                        samples++
-                        x += sampleStep
-                    }
-                    y += sampleStep
-                }
-                if (samples == 0) continue
-                val score = difference.toDouble() / samples
-                if (dx == 0 && dy == 0) {
-                    zeroScore = score
-                }
-                val currentDistance = kotlin.math.abs(dx) + kotlin.math.abs(dy)
-                val bestDistance =
-                    kotlin.math.abs(bestDx) + kotlin.math.abs(bestDy)
-                if (
-                    score < bestScore ||
-                    (score == bestScore && currentDistance < bestDistance)
-                ) {
-                    bestScore = score
-                    bestDx = dx
-                    bestDy = dy
-                }
-            }
-        }
-        require(bestScore < Double.MAX_VALUE) {
-            "Не удалось найти сдвиг"
-        }
-        val scaledDx = (bestDx * reference.scaleX).roundToInt().coerceIn(-30, 30)
-        val scaledDy = (bestDy * reference.scaleY).roundToInt().coerceIn(-30, 30)
-        val confidence = if (scaledDx == 0 && scaledDy == 0) {
-            1.0
-        } else {
-            val baseline = zeroScore.takeIf { it < Double.MAX_VALUE }
-                ?: bestScore
-            if (baseline <= 0.0) {
-                1.0
-            } else {
-                ((baseline - bestScore) / baseline).coerceIn(0.0, 1.0)
-            }
-        }
-        return AlignmentShift(
-            dx = scaledDx,
-            dy = scaledDy,
-            score = bestScore,
-            confidence = confidence
-        )
+        return findImageAlignment(reference, candidate, maxShiftPx = 30)
     }
 
     private suspend fun averageFrames(
@@ -2288,22 +2160,17 @@ class JpegStacker(private val context: Context) {
         val width = bitmap.width
         destination.fill(fillColor, 0, width * rows)
 
-        val destinationX = maxOf(0, -dx)
-        val destinationRight = minOf(width, width - dx)
-        val copyWidth = destinationRight - destinationX
-        val destinationY = maxOf(top, -dy)
-        val destinationBottom = minOf(top + rows, bitmap.height - dy)
-        val copyRows = destinationBottom - destinationY
-        if (copyWidth <= 0 || copyRows <= 0) return
+        val region = shiftedCopyRegion(width, bitmap.height, top, rows, dx, dy)
+            ?: return
 
         bitmap.getPixels(
             destination,
-            (destinationY - top) * width + destinationX,
+            (region.destinationY - top) * width + region.destinationX,
             width,
-            destinationX + dx,
-            destinationY + dy,
-            copyWidth,
-            copyRows
+            region.sourceX,
+            region.sourceY,
+            region.width,
+            region.height
         )
     }
 
@@ -2765,8 +2632,6 @@ class JpegStacker(private val context: Context) {
         private const val MAX_PROFILE_AVERAGE_PIXELS = 8_000_000L
         private const val MAX_COMPLEX_STACK_PIXELS_MANY_FRAMES = 2_500_000L
         private const val MAX_COMPLEX_STACK_PIXELS_MEDIUM_SERIES = 4_000_000L
-        private const val MIN_SAFE_ALIGNMENT_CONFIDENCE = 0.02
-        private const val MAX_SAFE_ALIGNMENT_SCORE = 55.0
         private val SUPPORTED_SIGMA_VALUES = setOf(1.5, 2.0, 2.5, 3.0)
     }
 }
