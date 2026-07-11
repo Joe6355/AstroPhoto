@@ -23,24 +23,30 @@ data class AstroStretchResult(
     val warning: String? = null
 )
 
+internal data class AstroStretchParameters(
+    val blackPoint: Int,
+    val whitePoint: Int,
+    val strength: Double,
+    val gamma: Double
+) {
+    val range = (whitePoint - blackPoint).coerceAtLeast(1).toFloat()
+    val denominator = ln(1.0 + strength)
+}
+
 class AstroStretch {
-    fun applyInPlace(
-        bitmap: Bitmap,
-        mode: AstroStretchMode
-    ): AstroStretchResult {
-        if (mode == AstroStretchMode.OFF) {
-            return AstroStretchResult(mode, 0, 255, 0f, 0f)
-        }
-        val histogram = IntArray(256)
-        val row = IntArray(bitmap.width)
-        var total = 0L
-        for (y in 0 until bitmap.height) {
-            bitmap.getPixels(row, 0, bitmap.width, 0, y, bitmap.width, 1)
-            for (color in row) {
-                histogram[StarDetector.luminance(color)]++
-                total++
-            }
-        }
+    fun applyInPlace(bitmap: Bitmap, mode: AstroStretchMode): AstroStretchResult {
+        if (mode == AstroStretchMode.OFF) return offResult()
+        val pixels = IntArray(bitmap.width * bitmap.height)
+        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        val result = applyInPlace(ArgbPixelImage(bitmap.width, bitmap.height, pixels), mode)
+        bitmap.setPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        return result
+    }
+
+    fun applyInPlace(image: ArgbPixelImage, mode: AstroStretchMode): AstroStretchResult {
+        if (mode == AstroStretchMode.OFF) return offResult()
+        val histogram = luminanceHistogram(image)
+        val total = image.pixels.size.toLong()
         val blackPercentile = when (mode) {
             AstroStretchMode.NATURAL -> 0.0005
             AstroStretchMode.SOFT -> 0.001
@@ -77,20 +83,11 @@ class AstroStretch {
             AstroStretchMode.EXTREME_PREVIEW -> 1.65
             AstroStretchMode.OFF -> 1.0
         }
-        val denominator = ln(1.0 + strength)
-        val range = (white - black).coerceAtLeast(1).toFloat()
-        for (y in 0 until bitmap.height) {
-            bitmap.getPixels(row, 0, bitmap.width, 0, y, bitmap.width, 1)
-            for (x in 0 until bitmap.width) {
-                val color = row[x]
-                val red = stretchChannel(color ushr 16 and 0xFF, black, range, strength, denominator, gamma)
-                val green = stretchChannel(color ushr 8 and 0xFF, black, range, strength, denominator, gamma)
-                val blue = stretchChannel(color and 0xFF, black, range, strength, denominator, gamma)
-                row[x] = 0xFF000000.toInt() or (red shl 16) or (green shl 8) or blue
-            }
-            bitmap.setPixels(row, 0, bitmap.width, 0, y, bitmap.width, 1)
-        }
-        val clipping = clippingStats(bitmap)
+        applyLogStretchInPlace(
+            image,
+            AstroStretchParameters(black, white, strength, gamma)
+        )
+        val clipping = clippingStats(image)
         return AstroStretchResult(
             mode = mode,
             blackPoint = black,
@@ -105,35 +102,95 @@ class AstroStretch {
         )
     }
 
-    private fun stretchChannel(
-        value: Int,
-        black: Int,
-        range: Float,
-        strength: Double,
-        denominator: Double,
-        gamma: Double
-    ): Int {
-        val normalized = ((value - black) / range).coerceIn(0f, 1f).toDouble()
-        val logCurve = ln(1.0 + strength * normalized) / denominator
-        val lifted = logCurve.pow(1.0 / gamma)
-        return (lifted * 255.0).roundToInt().coerceIn(0, 255)
-    }
+    private fun offResult() = AstroStretchResult(AstroStretchMode.OFF, 0, 255, 0f, 0f)
+}
 
-    private fun clippingStats(bitmap: Bitmap): Pair<Float, Float> {
-        val row = IntArray(bitmap.width)
-        var black = 0L
-        var white = 0L
-        var total = 0L
-        for (y in 0 until bitmap.height) {
-            bitmap.getPixels(row, 0, bitmap.width, 0, y, bitmap.width, 1)
-            for (color in row) {
-                val lum = StarDetector.luminance(color)
-                if (lum <= 2) black++
-                if (lum >= 253) white++
-                total++
-            }
-        }
-        val safeTotal = total.coerceAtLeast(1L).toFloat()
-        return black * 100f / safeTotal to white * 100f / safeTotal
+internal fun applyManualAstroStretchInPlace(image: ArgbPixelImage): AstroStretchParameters {
+    val histogram = luminanceHistogram(image)
+    val parameters = manualAstroStretchParameters(histogram, image.pixels.size.toLong())
+    applyLogStretchInPlace(image, parameters)
+    return parameters
+}
+
+internal fun manualAstroStretchParameters(
+    histogram: IntArray,
+    total: Long
+): AstroStretchParameters {
+    require(histogram.size == 256) { "Stretch histogram must contain 256 bins" }
+    require(total > 0) { "Stretch pixel count must be positive" }
+    val black = StarDetector.percentile(histogram, total, 0.002).coerceIn(0, 28)
+    val white = StarDetector.percentile(histogram, total, 0.998).coerceIn(black + 24, 255)
+    return AstroStretchParameters(black, white, strength = 8.0, gamma = 1.0)
+}
+
+private fun luminanceHistogram(image: ArgbPixelImage): IntArray {
+    val histogram = IntArray(256)
+    image.pixels.forEach { histogram[pixelLuminance(it)]++ }
+    return histogram
+}
+
+private fun applyLogStretchInPlace(
+    image: ArgbPixelImage,
+    parameters: AstroStretchParameters
+) {
+    image.pixels.indices.forEach { index ->
+        image.pixels[index] = stretchArgbColor(image.pixels[index], parameters)
     }
+}
+
+internal fun stretchArgbColor(
+    color: Int,
+    parameters: AstroStretchParameters
+): Int {
+    val red = stretchChannel(
+        color ushr 16 and 0xFF,
+        parameters.blackPoint,
+        parameters.range,
+        parameters.strength,
+        parameters.denominator,
+        parameters.gamma
+    )
+    val green = stretchChannel(
+        color ushr 8 and 0xFF,
+        parameters.blackPoint,
+        parameters.range,
+        parameters.strength,
+        parameters.denominator,
+        parameters.gamma
+    )
+    val blue = stretchChannel(
+        color and 0xFF,
+        parameters.blackPoint,
+        parameters.range,
+        parameters.strength,
+        parameters.denominator,
+        parameters.gamma
+    )
+    return 0xFF000000.toInt() or (red shl 16) or (green shl 8) or blue
+}
+
+private fun stretchChannel(
+    value: Int,
+    black: Int,
+    range: Float,
+    strength: Double,
+    denominator: Double,
+    gamma: Double
+): Int {
+    val normalized = ((value - black) / range).coerceIn(0f, 1f).toDouble()
+    val logCurve = ln(1.0 + strength * normalized) / denominator
+    val lifted = logCurve.pow(1.0 / gamma)
+    return (lifted * 255.0).roundToInt().coerceIn(0, 255)
+}
+
+private fun clippingStats(image: ArgbPixelImage): Pair<Float, Float> {
+    var black = 0L
+    var white = 0L
+    image.pixels.forEach { color ->
+        val luminance = pixelLuminance(color)
+        if (luminance <= 2) black++
+        if (luminance >= 253) white++
+    }
+    val total = image.pixels.size.toFloat().coerceAtLeast(1f)
+    return black * 100f / total to white * 100f / total
 }

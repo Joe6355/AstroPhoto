@@ -61,7 +61,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.ceil
-import kotlin.math.ln
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
@@ -1944,87 +1943,22 @@ class JpegStacker(private val context: Context) {
     }
 
     private fun applyAstroStretchInPlace(bitmap: Bitmap) {
-        val histogram = IntArray(256)
         val width = bitmap.width
         val row = IntArray(width)
-        var totalPixels = 0L
-
+        val histogram = IntArray(256)
         for (y in 0 until bitmap.height) {
             bitmap.getPixels(row, 0, width, 0, y, width, 1)
-            for (color in row) {
-                val red = color ushr 16 and 0xFF
-                val green = color ushr 8 and 0xFF
-                val blue = color and 0xFF
-                val luminance = (red * 77 + green * 150 + blue * 29) ushr 8
-                histogram[luminance]++
-                totalPixels++
-            }
+            row.forEach { color -> histogram[pixelLuminance(color)]++ }
         }
-
-        val black = histogramPercentile(histogram, totalPixels, 0.002)
-            .coerceIn(0, 28)
-        val white = histogramPercentile(histogram, totalPixels, 0.998)
-            .coerceIn(black + 24, 255)
-        val range = (white - black).coerceAtLeast(1).toFloat()
-        val strength = 8.0
-        val denominator = ln(1.0 + strength)
-
+        val parameters = manualAstroStretchParameters(
+            histogram,
+            width.toLong() * bitmap.height.toLong()
+        )
         for (y in 0 until bitmap.height) {
             bitmap.getPixels(row, 0, width, 0, y, width, 1)
-            for (x in 0 until width) {
-                val color = row[x]
-                val red = astroStretchChannel(
-                    color ushr 16 and 0xFF,
-                    black,
-                    range,
-                    strength,
-                    denominator
-                )
-                val green = astroStretchChannel(
-                    color ushr 8 and 0xFF,
-                    black,
-                    range,
-                    strength,
-                    denominator
-                )
-                val blue = astroStretchChannel(
-                    color and 0xFF,
-                    black,
-                    range,
-                    strength,
-                    denominator
-                )
-                row[x] =
-                    0xFF000000.toInt() or (red shl 16) or (green shl 8) or blue
-            }
+            row.indices.forEach { x -> row[x] = stretchArgbColor(row[x], parameters) }
             bitmap.setPixels(row, 0, width, 0, y, width, 1)
         }
-    }
-
-    private fun astroStretchChannel(
-        value: Int,
-        black: Int,
-        range: Float,
-        strength: Double,
-        denominator: Double
-    ): Int {
-        val normalized = ((value - black) / range).coerceIn(0f, 1f).toDouble()
-        val stretched = ln(1.0 + strength * normalized) / denominator
-        return (stretched * 255.0).roundToInt().coerceIn(0, 255)
-    }
-
-    private fun histogramPercentile(
-        histogram: IntArray,
-        totalPixels: Long,
-        percentile: Double
-    ): Int {
-        val target = (totalPixels * percentile).toLong().coerceAtLeast(1L)
-        var accumulated = 0L
-        histogram.forEachIndexed { index, count ->
-            accumulated += count
-            if (accumulated >= target) return index
-        }
-        return histogram.lastIndex
     }
 
     private suspend fun addToRunningAverage(
