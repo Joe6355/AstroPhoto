@@ -808,6 +808,7 @@ class JpegStacker(private val context: Context) {
         session: SessionSummary,
         frames: List<SessionFrame>,
         profile: AstroProcessingProfile,
+        source: ManualStackingSource = ManualStackingSource.ORIGINAL,
         framesRejected: Int = 0,
         onProgress: suspend (
             message: String,
@@ -823,16 +824,24 @@ class JpegStacker(private val context: Context) {
             require(frames.size >= 2) {
                 "Недостаточно JPEG кадров для профильной обработки"
             }
+            require(frames.size >= profile.minimumFrames) {
+                "Для профиля ${profile.title} рекомендуется минимум ${profile.minimumFrames} кадров"
+            }
             require(frames.all { it.category == SessionFrameCategory.LIGHTS_JPEG }) {
                 "Профили обработки используют только Lights/JPEG"
             }
             currentStage = "Выбор рецепта"
-            val recipe = profile.recipe(frames.size)
+            val recipe = profileRecipe(profile, frames.size)
             val selectedFrames = frames.take(MAX_PROFILE_FRAMES)
             currentStage = "Чтение размеров кадров"
             val dimensions = selectedFrames.map { frame ->
                 readDimensions(frame)
                     ?: error("Не удалось прочитать кадр: ${frame.fileName}")
+            }
+            if (source == ManualStackingSource.CROPPED) {
+                require(dimensions.distinct().size == 1) {
+                    "Selected cropped frames have different dimensions"
+                }
             }
             val commonWidth = dimensions.minOf { it.first }
             val commonHeight = dimensions.minOf { it.second }
@@ -855,21 +864,22 @@ class JpegStacker(private val context: Context) {
             val targetHeight = (commonHeight * scale).roundToInt().coerceAtLeast(1)
             val downscaled = targetWidth < commonWidth || targetHeight < commonHeight
             val detector = StarDetector()
-            val aligner = StarAlignment(detector)
             val backgroundRemoval = BackgroundRemoval()
             val stretch = AstroStretch()
             val starBoost = StarBoost()
             val warnings = mutableListOf<String>()
             var output: Bitmap? = null
+            var safeIntermediate: Bitmap? = null
             val preparedFrames = mutableListOf<MedianPreparedFrame>()
             var referenceBitmap: Bitmap? = null
             var alignmentApplied = 0
             var alignmentRejected = 0
+            var starAlignmentApplied = 0
             var referenceStars = 0
             var finalStars = 0
-            var urbanStrongOutput: Bitmap? = null
-            var urbanStrongStars = 0
-            val additionalProfileFiles = mutableListOf<String>()
+            var sanityStatus = "passed"
+            var fallback = "none"
+            var fallbackReason = ""
 
             try {
                 currentStage = "Подготовка профильной обработки"
@@ -921,13 +931,10 @@ class JpegStacker(private val context: Context) {
                         val bitmap = decodeMedianFrame(frame, targetWidth, targetHeight)
                             ?: error("Не удалось прочитать кадр: ${frame.fileName}")
                         val alignment = try {
-                            aligner.align(
+                            alignProfileFrame(
                                 reference = checkNotNull(referenceBitmap),
                                 candidate = bitmap,
-                                roi = recipe.roi,
-                                sensitivity = recipe.sensitivity,
-                                maxShiftPx = 30,
-                                aggressive = recipe.aggressiveAlignment
+                                recipe = recipe
                             )
                         } catch (error: Exception) {
                             Log.e(
@@ -940,6 +947,7 @@ class JpegStacker(private val context: Context) {
                         }
                         if (alignment?.applied == true) {
                             alignmentApplied++
+                            if (alignment.method == "stars") starAlignmentApplied++
                         } else {
                             alignmentRejected++
                         }
@@ -997,13 +1005,10 @@ class JpegStacker(private val context: Context) {
                             ?: error("Не удалось прочитать кадр: ${frame.fileName}")
                         try {
                             val alignment = try {
-                                aligner.align(
+                                alignProfileFrame(
                                     reference = checkNotNull(referenceBitmap),
                                     candidate = bitmap,
-                                    roi = recipe.roi,
-                                    sensitivity = recipe.sensitivity,
-                                    maxShiftPx = 30,
-                                    aggressive = recipe.aggressiveAlignment
+                                    recipe = recipe
                                 )
                             } catch (error: Exception) {
                                 Log.e(
@@ -1016,6 +1021,7 @@ class JpegStacker(private val context: Context) {
                             }
                             if (alignment?.applied == true) {
                                 alignmentApplied++
+                                if (alignment.method == "stars") starAlignmentApplied++
                             } else {
                                 alignmentRejected++
                             }
@@ -1033,6 +1039,20 @@ class JpegStacker(private val context: Context) {
                             bitmap.recycle()
                         }
                     }
+                }
+
+                if (recipe.requiresAlignment && starAlignmentApplied != selectedFrames.size - 1) {
+                    error(
+                        "Профиль ${profile.title} требует подтверждённого звёздного " +
+                            "выравнивания каждого кадра"
+                    )
+                }
+                safeIntermediate = checkNotNull(output).copy(Bitmap.Config.ARGB_8888, true)
+                    ?: error("Не удалось сохранить безопасный промежуточный stack")
+                val beforeMetrics = analyzeProfileBitmap(checkNotNull(safeIntermediate), recipe)
+                logProfileStage(profile, source, "alignedStack", beforeMetrics)
+                if (recipe.useSignalPreservingSigma) {
+                    logProfileStage(profile, source, "signalPreservingStack", beforeMetrics)
                 }
 
                 currentStage = "Удаление фона"
@@ -1054,8 +1074,10 @@ class JpegStacker(private val context: Context) {
                     )
                     warnings += "Удаление фона не удалось, сохранён stack без этого шага."
                 }
-                if (profile == AstroProcessingProfile.URBAN_SKY) {
-                    urbanStrongOutput = checkNotNull(output).copy(Bitmap.Config.ARGB_8888, true)
+                val backgroundMetrics = analyzeProfileBitmap(checkNotNull(output), recipe)
+                logProfileStage(profile, source, "backgroundRemoval", backgroundMetrics)
+                if (recipe.backgroundMode == BackgroundRemovalMode.URBAN) {
+                    logProfileStage(profile, source, "cityNeutralization", backgroundMetrics)
                 }
                 currentStage = "Astro Stretch"
                 withContext(Dispatchers.Main.immediate) {
@@ -1072,6 +1094,12 @@ class JpegStacker(private val context: Context) {
                     )
                     warnings += "Astro Stretch не удался, сохранён результат без stretch."
                 }
+                logProfileStage(
+                    profile,
+                    source,
+                    "stretch",
+                    analyzeProfileBitmap(checkNotNull(output), recipe)
+                )
                 val starsForBoost = try {
                     detector.detect(
                         bitmap = checkNotNull(output),
@@ -1106,60 +1134,47 @@ class JpegStacker(private val context: Context) {
                     )
                     warnings += "Star Boost не удался, сохранён результат без усиления звёзд."
                 }
-                urbanStrongOutput?.let { strongBitmap ->
-                    currentStage = "UrbanSkyStrong"
-                    withContext(Dispatchers.Main.immediate) {
-                        onProgress("UrbanSkyStrong...", 2, 3)
+                logProfileStage(
+                    profile,
+                    source,
+                    "starBoost",
+                    analyzeProfileBitmap(checkNotNull(output), recipe)
+                )
+                currentStage = "Sanity check"
+                var afterMetrics = analyzeProfileBitmap(checkNotNull(output), recipe)
+                when (val sanity = evaluateProfileSanity(beforeMetrics, afterMetrics)) {
+                    is ProfileSanityResult.Passed -> sanityStatus = "passed"
+                    is ProfileSanityResult.Failed -> {
+                        sanityStatus = "failed"
+                        val aggressive = profile == AstroProcessingProfile.MAX_STARS ||
+                            profile == AstroProcessingProfile.URBAN_SKY_STRONG
+                        if (!aggressive) error("Profile sanity failed: ${sanity.reason}")
+                        when (val recovered = recoverStarsFromIntermediate(
+                            bitmapToArgbImage(checkNotNull(safeIntermediate)),
+                            recipe.roi,
+                            recipe.sensitivity,
+                            sanity.reason
+                        )) {
+                            is RecoveredStarsResult.Recovered -> {
+                                output?.recycle()
+                                output = bitmapFromArgbImage(recovered.image)
+                                afterMetrics = recovered.sanity.metrics
+                                sanityStatus = "passed"
+                                fallback = "RecoveredStars"
+                                fallbackReason = sanity.reason
+                                warnings += "Использован RecoveredStars: ${sanity.reason}"
+                            }
+                            is RecoveredStarsResult.Failed -> error(recovered.reason)
+                        }
                     }
-                    try {
-                        stretch.applyInPlace(strongBitmap, AstroStretchMode.STRONG)
-                            .warning
-                            ?.let { warnings += "UrbanSkyStrong: $it" }
-                        val strongStarsForBoost = detector.detect(
-                            bitmap = strongBitmap,
-                            roi = recipe.roi,
-                            sensitivity = StarDetectionSensitivity.HIGH
-                        )
-                        starBoost.applyInPlace(
-                            bitmap = strongBitmap,
-                            stars = strongStarsForBoost.stars,
-                            mode = StarBoostMode.STRONG
-                        ).warning?.let { warnings += "UrbanSkyStrong: $it" }
-                        urbanStrongStars = detector.detect(
-                            bitmap = strongBitmap,
-                            roi = recipe.roi,
-                            sensitivity = StarDetectionSensitivity.HIGH
-                        ).stars.size
-                    } catch (error: Exception) {
-                        Log.e(
-                            "AstroPhotoProcessing",
-                            "UrbanSkyStrong failed: ${error.message}",
-                            error
-                        )
-                        warnings += "UrbanSkyStrong не удалось создать: ${error.message.orEmpty()}"
-                        urbanStrongOutput?.recycle()
-                        urbanStrongOutput = null
-                    }
                 }
-                currentStage = "Финальный поиск звёзд"
-                finalStars = try {
-                    detector.detect(
-                        bitmap = checkNotNull(output),
-                        roi = recipe.roi,
-                        sensitivity = recipe.sensitivity
-                    ).stars.size
-                } catch (error: Exception) {
-                    Log.e(
-                        "AstroPhotoProcessing",
-                        "Final star detection failed: ${error.message}",
-                        error
-                    )
-                    warnings += "Финальный подсчёт звёзд не удался."
-                    0
-                }
-                if (referenceStars >= 6 && finalStars < (referenceStars * 0.55f).roundToInt()) {
-                    warnings += "Этот результат мог скрыть часть звёзд"
-                }
+                finalStars = afterMetrics.stars
+                logProfileStage(
+                    profile,
+                    source,
+                    if (fallback == "RecoveredStars") "recoveredSanity" else "finalSanity",
+                    afterMetrics
+                )
                 if (profile == AstroProcessingProfile.MAX_STARS) {
                     warnings += "Режим может усилить шум и артефакты"
                 }
@@ -1174,57 +1189,20 @@ class JpegStacker(private val context: Context) {
                 val now = System.currentTimeMillis()
                 val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
                     .format(Date(now))
-                val prefix = if (
-                    profile == AstroProcessingProfile.DEEP_SKY &&
-                    alignmentApplied > 0
-                ) {
-                    "DeepSkyAligned"
-                } else {
-                    profile.filePrefix
-                }
+                val prefix = if (fallback == "RecoveredStars") "RecoveredStars" else profile.filePrefix
                 val fileName = "${prefix}_$timestamp.jpg"
+                Log.i(
+                    "AstroPhotoProfile",
+                    "profile=${profile.name} source=${source.metadataValue} " +
+                        "inputFrames=${selectedFrames.size} alignedFrames=$alignmentApplied " +
+                        "alignmentFailures=$alignmentRejected stackingMethod=" +
+                        "${if (recipe.useSignalPreservingSigma) "signalPreservingSigma" else "average"} " +
+                        "starsBefore=${beforeMetrics.stars} starsAfter=${afterMetrics.stars} " +
+                        "backgroundBefore=${beforeMetrics.background} " +
+                        "backgroundAfter=${afterMetrics.background} sanity=$sanityStatus " +
+                        "fallback=$fallback fallbackReason=$fallbackReason outputName=$fileName"
+                )
                 val saved = saveBitmap(session, checkNotNull(output), fileName)
-                urbanStrongOutput?.let { strongBitmap ->
-                    val strongFileName = "UrbanSkyStrong_$timestamp.jpg"
-                    runCatching {
-                        saveBitmap(session, strongBitmap, strongFileName)
-                    }.onSuccess {
-                        additionalProfileFiles += strongFileName
-                        runCatching {
-                            appendProfileSessionInfo(
-                                session = session,
-                                fileName = strongFileName,
-                                profile = profile,
-                                method = if (recipe.useSignalPreservingSigma) {
-                                    "Signal-preserving sigma ${recipe.sigma} + Urban strong"
-                                } else {
-                                    "Average + Star Safe + Urban strong"
-                                },
-                                framesUsed = selectedFrames.size,
-                                framesRejected = framesRejected + (frames.size - selectedFrames.size),
-                                alignmentMode = if (recipe.aggressiveAlignment) {
-                                    "STAR_AGGRESSIVE"
-                                } else {
-                                    "STAR_SAFE"
-                                },
-                                alignmentApplied = alignmentApplied,
-                                alignmentRejected = alignmentRejected,
-                                roiMode = recipe.roiName,
-                                backgroundRemoval = BackgroundRemovalMode.URBAN.name,
-                                stretchMode = AstroStretchMode.STRONG.name,
-                                starBoost = StarBoostMode.STRONG.name,
-                                starsBefore = referenceStars,
-                                starsAfter = urbanStrongStars,
-                                warnings = warnings.distinct(),
-                                processedAtMillis = now
-                            )
-                        }.onFailure {
-                            warnings += "UrbanSkyStrong СЃРѕС…СЂР°РЅС‘РЅ, РЅРѕ session_info.txt РЅРµ РѕР±РЅРѕРІР»С‘РЅ"
-                        }
-                    }.onFailure { error ->
-                        warnings += "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕС…СЂР°РЅРёС‚СЊ UrbanSkyStrong: ${error.message.orEmpty()}"
-                    }
-                }
                 val infoUpdated = runCatching {
                     appendProfileSessionInfo(
                         session = session,
@@ -1250,6 +1228,10 @@ class JpegStacker(private val context: Context) {
                         starBoost = recipe.starBoostMode.name,
                         starsBefore = referenceStars,
                         starsAfter = finalStars,
+                        source = source,
+                        sanity = sanityStatus,
+                        fallback = fallback,
+                        fallbackReason = fallbackReason,
                         warnings = warnings.distinct(),
                         processedAtMillis = now
                     )
@@ -1267,7 +1249,7 @@ class JpegStacker(private val context: Context) {
                     profile = profile,
                     starCount = finalStars,
                     warnings = warnings.distinct(),
-                    additionalFiles = additionalProfileFiles.toList()
+                    additionalFiles = emptyList()
                 )
             } catch (error: OutOfMemoryError) {
                 throw IllegalStateException(
@@ -1285,13 +1267,20 @@ class JpegStacker(private val context: Context) {
                 ) {
                     reference.recycle()
                 }
-                urbanStrongOutput?.takeUnless(Bitmap::isRecycled)?.recycle()
+                safeIntermediate?.takeUnless(Bitmap::isRecycled)?.recycle()
                 preparedFrames.forEach {
                     it.bitmap.takeUnless(Bitmap::isRecycled)?.recycle()
                 }
             }
         }
         stackResult.exceptionOrNull()?.let { error ->
+            Log.i(
+                "AstroPhotoProfile",
+                "profile=${profile.name} source=${source.metadataValue} inputFrames=${frames.size} " +
+                    "alignedFrames=0 alignmentFailures=0 stackingMethod=unknown " +
+                    "starsBefore=-1 starsAfter=-1 backgroundBefore=-1 backgroundAfter=-1 " +
+                    "sanity=failed fallback=none fallbackReason=${error.message.orEmpty()} outputName="
+            )
             Log.e(
                 "AstroPhotoProcessing",
                 "Profile ${profile.title} failed at $currentStage: ${error.message}",
@@ -1330,70 +1319,6 @@ class JpegStacker(private val context: Context) {
             result.filePath?.let { decodeSampledFile(it, maxSize) }
         }
     }
-
-    private data class AstroProfileRecipe(
-        val roi: AstroRoi,
-        val roiName: String,
-        val sensitivity: StarDetectionSensitivity,
-        val backgroundMode: BackgroundRemovalMode,
-        val stretchMode: AstroStretchMode,
-        val starBoostMode: StarBoostMode,
-        val useSignalPreservingSigma: Boolean,
-        val sigma: Double,
-        val aggressiveAlignment: Boolean
-    )
-
-    private fun AstroProcessingProfile.recipe(frameCount: Int): AstroProfileRecipe =
-        when (this) {
-            AstroProcessingProfile.NORMAL -> AstroProfileRecipe(
-                roi = AstroRoi.Full,
-                roiName = "Full",
-                sensitivity = StarDetectionSensitivity.MEDIUM,
-                backgroundMode = BackgroundRemovalMode.NONE,
-                stretchMode = AstroStretchMode.OFF,
-                starBoostMode = StarBoostMode.OFF,
-                useSignalPreservingSigma = false,
-                sigma = 2.0,
-                aggressiveAlignment = false
-            )
-            AstroProcessingProfile.DEEP_SKY -> AstroProfileRecipe(
-                roi = AstroRoi.Full,
-                roiName = "Full frame",
-                sensitivity = StarDetectionSensitivity.MEDIUM,
-                backgroundMode = BackgroundRemovalMode.SOFT,
-                stretchMode = if (frameCount >= 6) {
-                    AstroStretchMode.MEDIUM
-                } else {
-                    AstroStretchMode.SOFT
-                },
-                starBoostMode = StarBoostMode.SOFT,
-                useSignalPreservingSigma = frameCount >= 6,
-                sigma = if (frameCount >= 15) 2.5 else 2.0,
-                aggressiveAlignment = false
-            )
-            AstroProcessingProfile.URBAN_SKY -> AstroProfileRecipe(
-                roi = AstroRoi.Top70,
-                roiName = "Top 70%",
-                sensitivity = StarDetectionSensitivity.MEDIUM,
-                backgroundMode = BackgroundRemovalMode.URBAN,
-                stretchMode = AstroStretchMode.MEDIUM,
-                starBoostMode = StarBoostMode.SOFT,
-                useSignalPreservingSigma = frameCount >= 6,
-                sigma = 2.0,
-                aggressiveAlignment = false
-            )
-            AstroProcessingProfile.MAX_STARS -> AstroProfileRecipe(
-                roi = AstroRoi.Top70,
-                roiName = "Top 70%",
-                sensitivity = StarDetectionSensitivity.HIGH,
-                backgroundMode = BackgroundRemovalMode.STRONG,
-                stretchMode = AstroStretchMode.STRONG,
-                starBoostMode = StarBoostMode.STRONG,
-                useSignalPreservingSigma = frameCount >= 6,
-                sigma = 2.5,
-                aggressiveAlignment = true
-            )
-        }
 
     private fun readDimensions(frame: SessionFrame): Pair<Int, Int>? {
         return readOrientedJpegDimensions { openFrame(frame) }
@@ -1533,9 +1458,9 @@ class JpegStacker(private val context: Context) {
                         }
                     }
                     outputRow[x] = if (signalPreserving) {
-                        val red = sigmaClippedChannel(redValues, sigma, true)
-                        val green = sigmaClippedChannel(greenValues, sigma, true)
-                        val blue = sigmaClippedChannel(blueValues, sigma, true)
+                        val red = signalPreservingSigmaChannel(redValues, sigma)
+                        val green = signalPreservingSigmaChannel(greenValues, sigma)
+                        val blue = signalPreservingSigmaChannel(blueValues, sigma)
                         0xFF000000.toInt() or
                             (red shl 16) or
                             (green shl 8) or
@@ -1558,57 +1483,6 @@ class JpegStacker(private val context: Context) {
         } catch (error: Throwable) {
             output.recycle()
             throw error
-        }
-    }
-
-    private fun sigmaClippedChannel(
-        values: IntArray,
-        sigma: Double,
-        signalPreserving: Boolean = false
-    ): Int {
-        val effectiveSigma = if (signalPreserving) maxOf(2.0, sigma) else sigma
-        val mean = values.average()
-        var squaredDifferenceSum = 0.0
-        values.forEach { value ->
-            val difference = value - mean
-            squaredDifferenceSum += difference * difference
-        }
-        val standardDeviation = sqrt(squaredDifferenceSum / values.size)
-        val threshold = effectiveSigma * standardDeviation
-        val sorted = if (signalPreserving && values.size >= 4) {
-            values.copyOf().also { java.util.Arrays.sort(it) }
-        } else {
-            null
-        }
-        val preserveBrightFloor = sorted?.let {
-            val max = it.last()
-            val second = it[it.lastIndex - 1]
-            if (
-                max >= mean + threshold &&
-                second >= mean + threshold * 0.65 &&
-                max - second <= 45
-            ) {
-                second
-            } else {
-                null
-            }
-        }
-        var acceptedSum = 0L
-        var acceptedCount = 0
-        values.forEach { value ->
-            if (
-                standardDeviation == 0.0 ||
-                kotlin.math.abs(value - mean) <= threshold ||
-                (preserveBrightFloor != null && value >= preserveBrightFloor)
-            ) {
-                acceptedSum += value
-                acceptedCount++
-            }
-        }
-        return if (acceptedCount > 0) {
-            (acceptedSum.toDouble() / acceptedCount).roundToInt().coerceIn(0, 255)
-        } else {
-            mean.roundToInt().coerceIn(0, 255)
         }
     }
 
@@ -1717,6 +1591,77 @@ class JpegStacker(private val context: Context) {
         } finally {
             if (thumbnail !== bitmap) thumbnail.recycle()
         }
+    }
+
+    private fun alignProfileFrame(
+        reference: Bitmap,
+        candidate: Bitmap,
+        recipe: AstroProfileRecipe
+    ): StarAlignmentResult {
+        val referenceSample = createManualAlignmentSample(reference)
+        val candidateSample = createManualAlignmentSample(candidate)
+        val maximumSampleShift = ceil(30f / referenceSample.scaleX).toInt().coerceAtLeast(1)
+        val diagnostic = alignManualImages(
+            referenceSample.image,
+            candidateSample.image,
+            safeMode = !recipe.aggressiveAlignment,
+            maxShiftPx = maximumSampleShift,
+            roi = recipe.alignmentRoi
+        )
+        val applied = diagnostic.method != "none"
+        return StarAlignmentResult(
+            dx = if (applied) {
+                (diagnostic.shift.dx * referenceSample.scaleX).roundToInt().coerceIn(-30, 30)
+            } else 0,
+            dy = if (applied) {
+                (diagnostic.shift.dy * referenceSample.scaleY).roundToInt().coerceIn(-30, 30)
+            } else 0,
+            applied = applied,
+            confidence = diagnostic.confidence,
+            referenceStars = 0,
+            candidateStars = diagnostic.starsDetected,
+            matchedStars = diagnostic.matches,
+            method = diagnostic.method,
+            warning = if (applied) null else "Profile alignment is uncertain"
+        )
+    }
+
+    private fun bitmapToArgbImage(bitmap: Bitmap): ArgbPixelImage {
+        val pixels = IntArray(bitmap.width * bitmap.height)
+        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        return ArgbPixelImage(bitmap.width, bitmap.height, pixels)
+    }
+
+    private fun bitmapFromArgbImage(image: ArgbPixelImage): Bitmap =
+        Bitmap.createBitmap(image.width, image.height, Bitmap.Config.ARGB_8888).apply {
+            setPixels(image.pixels, 0, image.width, 0, 0, image.width, image.height)
+        }
+
+    private fun analyzeProfileBitmap(
+        bitmap: Bitmap,
+        recipe: AstroProfileRecipe
+    ): ProfileSanityMetrics = analyzeProfileImage(
+        bitmapToArgbImage(bitmap),
+        recipe.roi,
+        recipe.sensitivity
+    )
+
+    private fun logProfileStage(
+        profile: AstroProcessingProfile,
+        source: ManualStackingSource,
+        stage: String,
+        metrics: ProfileSanityMetrics
+    ) {
+        Log.i(
+            "AstroPhotoProfileStage",
+            "profile=${profile.name} source=${source.metadataValue} stage=$stage " +
+                "median=${metrics.medianLuminance} low=${metrics.lowPercentile} " +
+                "high=${metrics.highPercentile} black=${metrics.blackPercent} " +
+                "white=${metrics.whitePercent} stars=${metrics.stars} " +
+                "starContrast=${metrics.medianStarContrast} " +
+                "backgroundSpread=${metrics.backgroundSpread} " +
+                "banding=${metrics.largeScaleBanding}"
+        )
     }
 
     private suspend fun averageFrames(
@@ -2030,27 +1975,7 @@ class JpegStacker(private val context: Context) {
                 fillColor = 0xFF000000.toInt()
             )
 
-            for (pixelIndex in 0 until pixelCount) {
-                val oldColor = averagePixels[pixelIndex]
-                val newColor = nextPixels[pixelIndex]
-                val red = runningAverageChannel(
-                    old = oldColor ushr 16 and 0xFF,
-                    next = newColor ushr 16 and 0xFF,
-                    frameNumber = frameNumber
-                )
-                val green = runningAverageChannel(
-                    old = oldColor ushr 8 and 0xFF,
-                    next = newColor ushr 8 and 0xFF,
-                    frameNumber = frameNumber
-                )
-                val blue = runningAverageChannel(
-                    old = oldColor and 0xFF,
-                    next = newColor and 0xFF,
-                    frameNumber = frameNumber
-                )
-                averagePixels[pixelIndex] =
-                    0xFF000000.toInt() or (red shl 16) or (green shl 8) or blue
-            }
+            updateRunningAverageArgb(averagePixels, nextPixels, frameNumber, pixelCount)
 
             average.setPixels(averagePixels, 0, width, 0, top, width, rows)
             top += rows
@@ -2457,6 +2382,10 @@ class JpegStacker(private val context: Context) {
         starBoost: String,
         starsBefore: Int,
         starsAfter: Int,
+        source: ManualStackingSource,
+        sanity: String,
+        fallback: String,
+        fallbackReason: String,
         warnings: List<String>,
         processedAtMillis: Long
     ) {
@@ -2469,6 +2398,7 @@ class JpegStacker(private val context: Context) {
             appendLine("processedFile: Processed/$fileName")
             appendLine("processedType: Astro profile JPEG")
             appendLine("profile: ${profile.title}")
+            appendLine("source=${source.metadataValue}")
             appendLine("method: $method")
             appendLine("framesUsed: $framesUsed")
             appendLine("framesRejected: $framesRejected")
@@ -2481,6 +2411,9 @@ class JpegStacker(private val context: Context) {
             appendLine("starBoost: $starBoost")
             appendLine("starsBefore: $starsBefore")
             appendLine("starsAfter: $starsAfter")
+            appendLine("sanity: $sanity")
+            appendLine("fallback: $fallback")
+            appendLine("fallbackReason: $fallbackReason")
             warnings.forEachIndexed { index, warning ->
                 appendLine("profileWarning${index + 1}: $warning")
             }
@@ -2911,6 +2844,49 @@ fun JpegStackingBlock(
         }
     }
 
+    fun startProfile(profile: AstroProcessingProfile) {
+        val validSource = sourceSelection as? StackingSourceSelection.Valid
+        if (validSource == null) {
+            status = sourceError ?: "Источник кадров недоступен"
+            return
+        }
+        if (validSource.frames.size < profile.minimumFrames) {
+            status = "Для ${profile.title} нужно минимум ${profile.minimumFrames} кадров"
+            return
+        }
+        stacking = true
+        progressCurrent = 0
+        progressTotal = validSource.frames.size
+        status = "Подготовка профиля ${profile.title}..."
+        coroutineScope.launch {
+            val profileResult = stacker.profileStack(
+                session = session,
+                frames = validSource.frames,
+                profile = profile,
+                source = stackingSource,
+                framesRejected = badFrames.size + validSource.missingCropCount
+            ) { message, current, total ->
+                status = message
+                progressCurrent = current
+                progressTotal = total
+            }
+            stacking = false
+            profileResult.fold(
+                onSuccess = { created ->
+                    profileResults = profileResults + created
+                    status = buildString {
+                        append("Готово: ${created.fileName}")
+                        created.warnings.forEach { append("\n$it") }
+                    }
+                    onStackCompleted()
+                },
+                onFailure = { error ->
+                    status = error.message ?: "Профильная обработка не удалась"
+                }
+            )
+        }
+    }
+
     Card(
         colors = CardDefaults.cardColors(containerColor = Color(0xFF151A24))
     ) {
@@ -3001,11 +2977,6 @@ fun JpegStackingBlock(
                         } else {
                             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                         }
-                        Text(
-                            text = "Кнопки профилей и ручной обработки временно отключены.",
-                            color = Color(0xFFB8BECC),
-                            style = MaterialTheme.typography.bodySmall
-                        )
                     }
                 }
             }
@@ -3013,27 +2984,39 @@ fun JpegStackingBlock(
                 text = "Обработка неба",
                 fontWeight = FontWeight.SemiBold
             )
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFF241F12)
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Text(
-                        text = "Профили звёздной обработки временно отключены",
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFFFFCC80)
-                    )
-                    Text(
-                        text = "Чтобы восстановить стабильность, кнопки «Чистое небо», «Город / окно» и «Максимум звёзд» сейчас не запускают обработку. Используйте ручную обработку ниже: Average, Average + Dark, Median или Sigma.",
-                        color = Color(0xFFB8BECC),
-                        style = MaterialTheme.typography.bodySmall
-                    )
+            AstroProcessingProfile.entries.filterNot { it == AstroProcessingProfile.NORMAL }
+                .forEach { profile ->
+                    val enoughFrames = selectedFrames.size >= profile.minimumFrames
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF101722))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(profile.title, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                profile.description,
+                                color = Color(0xFFB8BECC),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Text(
+                                "Минимум: ${profile.minimumFrames} • Доступно: ${selectedFrames.size} • " +
+                                    "Source: ${stackingSource.metadataValue}",
+                                color = if (enoughFrames) Color(0xFFA5D6A7) else Color(0xFFFFCC80),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Button(
+                                onClick = { startProfile(profile) },
+                                enabled = !loading && !stacking && operationsEnabled &&
+                                    sourceError == null && enoughFrames,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Запустить ${profile.title}")
+                            }
+                        }
+                    }
                 }
-            }
             if (profileResults.isNotEmpty()) {
                 Card(
                     colors = CardDefaults.cardColors(

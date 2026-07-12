@@ -140,6 +140,19 @@ data class CroppedFrameRecord(
     val frame: SessionFrame
 )
 
+internal fun resolveCroppedFrameRecords(
+    manifest: CropManifest,
+    frames: List<SessionFrame>
+): List<CroppedFrameRecord> {
+    val byName = frames.filter { it.category == SessionFrameCategory.CROPPED_JPEG }
+        .associateBy { it.fileName }
+    return manifest.entries.mapNotNull { entry ->
+        byName[entry.croppedFileName]?.let { frame ->
+            CroppedFrameRecord(entry, frame.copy(originalKey = entry.originalKey))
+        }
+    }.sortedBy { it.entry.originalKey }
+}
+
 enum class ManualStackingSource(val metadataValue: String) {
     ORIGINAL("original"),
     CROPPED("cropped")

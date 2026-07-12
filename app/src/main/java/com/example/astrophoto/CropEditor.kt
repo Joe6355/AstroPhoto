@@ -25,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,14 +36,11 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.launch
-
-private enum class CropDragHandle { MOVE, TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT }
-
-private data class PreviewBounds(val left: Float, val top: Float, val width: Float, val height: Float)
 
 @Composable
 fun CropEditorDialog(
@@ -105,18 +103,37 @@ fun CropEditorDialog(
                     val bounds = remember(containerWidth, containerHeight, bitmap.width, bitmap.height) {
                         previewBounds(containerWidth, containerHeight, bitmap.width, bitmap.height)
                     }
-                    var handle by remember { mutableStateOf(CropDragHandle.MOVE) }
+                    val density = LocalDensity.current
+                    val touchRadiusPx = with(density) { 24.dp.toPx() }
+                    val minimumSizePx = with(density) { 48.dp.toPx() }
+                    val visibleHandleRadiusPx = with(density) { 6.dp.toPx() }
+                    val currentCrop by rememberUpdatedState(crop)
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .pointerInput(bounds, crop) {
+                            .pointerInput(bounds, touchRadiusPx, minimumSizePx) {
+                                var handle = CropDragHandle.NONE
                                 detectDragGestures(
                                     onDragStart = { position ->
-                                        handle = cropHandle(position, bounds, crop)
+                                        handle = cropHandle(
+                                            position.x,
+                                            position.y,
+                                            bounds,
+                                            currentCrop,
+                                            touchRadiusPx
+                                        )
                                     },
                                     onDrag = { change, amount ->
+                                        if (handle == CropDragHandle.NONE) return@detectDragGestures
                                         change.consume()
-                                        crop = dragCrop(crop, handle, amount.x / bounds.width, amount.y / bounds.height)
+                                        crop = dragCrop(
+                                            crop = currentCrop,
+                                            handle = handle,
+                                            dx = amount.x / bounds.width,
+                                            dy = amount.y / bounds.height,
+                                            minimumWidth = minimumSizePx / bounds.width,
+                                            minimumHeight = minimumSizePx / bounds.height
+                                        )
                                     }
                                 )
                             }
@@ -140,6 +157,18 @@ fun CropEditorDialog(
                                 ),
                                 style = Stroke(width = 3.dp.toPx())
                             )
+                            cropHandlePoints(bounds, crop).values.forEach { point ->
+                                drawCircle(
+                                    color = Color(0xFFFFD54F),
+                                    radius = visibleHandleRadiusPx,
+                                    center = Offset(point.x, point.y)
+                                )
+                                drawCircle(
+                                    color = Color(0xFF3A3000),
+                                    radius = visibleHandleRadiusPx / 2.4f,
+                                    center = Offset(point.x, point.y)
+                                )
+                            }
                         }
                     }
                 }
@@ -168,10 +197,12 @@ fun CropEditorDialog(
                         busy = true
                         scope.launch {
                             val result = repository.applyToAll(session, originals, crop)
-                            onSaved(
-                                "Apply to all: обработано ${result.processed}, " +
-                                    "пропущено ${result.skipped}, ошибок ${result.failed}"
-                            )
+                            val firstFailure = result.failures.firstOrNull()?.let {
+                                "\n${it.fileName}: ${it.reason}"
+                            }.orEmpty()
+                            val message = "Apply to all: обработано ${result.processed}, " +
+                                "пропущено ${result.skipped}, ошибок ${result.failed}$firstFailure"
+                            if (result.processed > 0) onSaved(message) else status = message
                             busy = false
                         }
                     },
@@ -180,72 +211,5 @@ fun CropEditorDialog(
                 ) { Text("Применить ко всем") }
             }
         }
-    }
-}
-
-private fun previewBounds(
-    containerWidth: Float,
-    containerHeight: Float,
-    imageWidth: Int,
-    imageHeight: Int
-): PreviewBounds {
-    val scale = minOf(containerWidth / imageWidth, containerHeight / imageHeight)
-    val width = imageWidth * scale
-    val height = imageHeight * scale
-    return PreviewBounds((containerWidth - width) / 2f, (containerHeight - height) / 2f, width, height)
-}
-
-private fun cropHandle(
-    position: Offset,
-    bounds: PreviewBounds,
-    crop: NormalizedCropRect
-): CropDragHandle {
-    val x = ((position.x - bounds.left) / bounds.width).coerceIn(0f, 1f)
-    val y = ((position.y - bounds.top) / bounds.height).coerceIn(0f, 1f)
-    val threshold = 0.12f
-    return when {
-        kotlin.math.abs(x - crop.left) < threshold && kotlin.math.abs(y - crop.top) < threshold ->
-            CropDragHandle.TOP_LEFT
-        kotlin.math.abs(x - crop.right) < threshold && kotlin.math.abs(y - crop.top) < threshold ->
-            CropDragHandle.TOP_RIGHT
-        kotlin.math.abs(x - crop.left) < threshold && kotlin.math.abs(y - crop.bottom) < threshold ->
-            CropDragHandle.BOTTOM_LEFT
-        kotlin.math.abs(x - crop.right) < threshold && kotlin.math.abs(y - crop.bottom) < threshold ->
-            CropDragHandle.BOTTOM_RIGHT
-        else -> CropDragHandle.MOVE
-    }
-}
-
-private fun dragCrop(
-    crop: NormalizedCropRect,
-    handle: CropDragHandle,
-    dx: Float,
-    dy: Float
-): NormalizedCropRect {
-    val minimum = 0.02f
-    return when (handle) {
-        CropDragHandle.MOVE -> {
-            val width = crop.right - crop.left
-            val height = crop.bottom - crop.top
-            val left = (crop.left + dx).coerceIn(0f, 1f - width)
-            val top = (crop.top + dy).coerceIn(0f, 1f - height)
-            NormalizedCropRect(left, top, left + width, top + height)
-        }
-        CropDragHandle.TOP_LEFT -> crop.copy(
-            left = (crop.left + dx).coerceIn(0f, crop.right - minimum),
-            top = (crop.top + dy).coerceIn(0f, crop.bottom - minimum)
-        )
-        CropDragHandle.TOP_RIGHT -> crop.copy(
-            right = (crop.right + dx).coerceIn(crop.left + minimum, 1f),
-            top = (crop.top + dy).coerceIn(0f, crop.bottom - minimum)
-        )
-        CropDragHandle.BOTTOM_LEFT -> crop.copy(
-            left = (crop.left + dx).coerceIn(0f, crop.right - minimum),
-            bottom = (crop.bottom + dy).coerceIn(crop.top + minimum, 1f)
-        )
-        CropDragHandle.BOTTOM_RIGHT -> crop.copy(
-            right = (crop.right + dx).coerceIn(crop.left + minimum, 1f),
-            bottom = (crop.bottom + dy).coerceIn(crop.top + minimum, 1f)
-        )
     }
 }

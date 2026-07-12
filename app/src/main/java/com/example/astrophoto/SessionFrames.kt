@@ -598,8 +598,12 @@ fun SessionFramesScreen(
                 cropEntry?.let { entry ->
                     coroutineScope.launch {
                         cropsRepository.deleteCrop(session, entry)
-                        selectedFrame = null
-                        refreshKey++
+                            .onSuccess {
+                                cropMessage = "Обрезка удалена; оригинал сохранён"
+                                selectedFrame = null
+                                refreshKey++
+                            }
+                            .onFailure { cropMessage = it.message ?: "Не удалось удалить обрезку" }
                     }
                 }
             },
@@ -698,24 +702,57 @@ private fun SessionFrameCard(
                     modifier = Modifier.padding(top = 4.dp),
                     color = status.second
                 )
-                Row {
-                    TextButton(onClick = onToggleBad) {
-                        Text("Брак")
+                val canCrop = frame.category == SessionFrameCategory.LIGHTS_JPEG ||
+                    frame.category == SessionFrameCategory.CROPPED_JPEG
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    TextButton(
+                        onClick = onToggleBad,
+                        contentPadding = PaddingValues(horizontal = 2.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(
+                            "Брак",
+                            maxLines = 1,
+                            softWrap = false,
+                            style = MaterialTheme.typography.labelSmall
+                        )
                     }
-                    TextButton(onClick = onToggleFavorite) {
-                        Text("Избранное")
+                    TextButton(
+                        onClick = onToggleFavorite,
+                        contentPadding = PaddingValues(horizontal = 2.dp),
+                        modifier = Modifier.weight(1.45f)
+                    ) {
+                        Text(
+                            "Избранное",
+                            maxLines = 1,
+                            softWrap = false,
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                    if (canCrop) {
+                        TextButton(
+                            onClick = onCrop,
+                            contentPadding = PaddingValues(horizontal = 2.dp),
+                            modifier = Modifier.weight(1.35f)
+                        ) {
+                            Text(
+                                if (cropEntry == null) "Обрезать" else "Заново",
+                                maxLines = 1,
+                                softWrap = false,
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
                     }
                 }
-                if (frame.category == SessionFrameCategory.LIGHTS_JPEG ||
-                    frame.category == SessionFrameCategory.CROPPED_JPEG
-                ) {
-                    Row {
-                        TextButton(onClick = onCrop) {
-                            Text(if (cropEntry == null) "Обрезать" else "Обрезать заново")
-                        }
-                        if (cropEntry != null) {
-                            TextButton(onClick = onDeleteCrop) { Text("Удалить обрезку") }
-                        }
+                if (cropEntry != null) {
+                    TextButton(
+                        onClick = onDeleteCrop,
+                        contentPadding = PaddingValues(horizontal = 2.dp)
+                    ) {
+                        Text("Удалить обрезку", maxLines = 1, softWrap = false)
                     }
                 }
             }

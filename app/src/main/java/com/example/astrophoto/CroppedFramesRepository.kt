@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -15,7 +16,14 @@ import java.io.FileOutputStream
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 
-data class CropBatchResult(val processed: Int, val skipped: Int, val failed: Int)
+data class CropBatchFailure(val fileName: String, val reason: String)
+
+data class CropBatchResult(
+    val processed: Int,
+    val skipped: Int,
+    val failed: Int,
+    val failures: List<CropBatchFailure> = emptyList()
+)
 
 class CroppedFramesRepository(private val context: Context) {
     suspend fun loadManifest(session: SessionSummary): CropManifest = withContext(Dispatchers.IO) {
@@ -26,15 +34,7 @@ class CroppedFramesRepository(private val context: Context) {
     fun records(
         manifest: CropManifest,
         frames: List<SessionFrame>
-    ): List<CroppedFrameRecord> {
-        val byName = frames.filter { it.category == SessionFrameCategory.CROPPED_JPEG }
-            .associateBy { it.fileName }
-        return manifest.entries.mapNotNull { entry ->
-            byName[entry.croppedFileName]?.let { frame ->
-                CroppedFrameRecord(entry, frame.copy(originalKey = entry.originalKey))
-            }
-        }.sortedBy { it.entry.originalKey }
-    }
+    ): List<CroppedFrameRecord> = resolveCroppedFrameRecords(manifest, frames)
 
     suspend fun loadEditorPreview(frame: SessionFrame, maxSize: Int = 2048): Bitmap? =
         withContext(Dispatchers.IO) {
@@ -59,30 +59,46 @@ class CroppedFramesRepository(private val context: Context) {
         val bitmap = decodeOrientedJpeg(openStream = { openFrame(original) })
             ?: error("Не удалось прочитать JPEG: ${original.fileName}")
         try {
-            val rect = normalizedRect.toPixelRect(bitmap.width, bitmap.height)
+            val validatedRect = normalizedRect.validated()
+            val rect = validatedRect.toPixelRect(bitmap.width, bitmap.height)
+            val currentManifest = readManifest(session)?.let(CropManifest::decode) ?: CropManifest()
+            val previousCropName = currentManifest.find(original.key)?.croppedFileName
             val cropped = Bitmap.createBitmap(bitmap, rect.left, rect.top, rect.width, rect.height)
-            val fileName = deterministicCropFileName(original.key)
             try {
-                writeBitmapAtomically(session, fileName, cropped)
+                var savedEntry: CropManifestEntry? = null
+                persistCropAfterVerifiedWrite(
+                    writeImage = {
+                        stageBitmapReplacement(
+                            session,
+                            deterministicCropFileName(original.key),
+                            cropped,
+                            previousCropName
+                        )
+                    },
+                    updateManifest = { stored ->
+                        val entry = CropManifestEntry(
+                            originalKey = original.key,
+                            originalFileName = original.fileName,
+                            croppedFileName = stored.fileName,
+                            normalizedRect = validatedRect,
+                            pixelRect = rect,
+                            originalWidth = bitmap.width,
+                            originalHeight = bitmap.height,
+                            croppedWidth = rect.width,
+                            croppedHeight = rect.height,
+                            updatedAtMillis = System.currentTimeMillis()
+                        )
+                        val manifest = currentManifest.replace(entry)
+                        writeManifestAtomically(session, manifest.encode())
+                        savedEntry = entry
+                    },
+                    commitImage = StagedStoredFile::commit,
+                    rollbackImage = StagedStoredFile::rollback
+                )
+                checkNotNull(savedEntry)
             } finally {
                 cropped.recycle()
             }
-            val entry = CropManifestEntry(
-                originalKey = original.key,
-                originalFileName = original.fileName,
-                croppedFileName = fileName,
-                normalizedRect = normalizedRect.validated(),
-                pixelRect = rect,
-                originalWidth = bitmap.width,
-                originalHeight = bitmap.height,
-                croppedWidth = rect.width,
-                croppedHeight = rect.height,
-                updatedAtMillis = System.currentTimeMillis()
-            )
-            val manifest = (readManifest(session)?.let(CropManifest::decode) ?: CropManifest())
-                .replace(entry)
-            writeManifestAtomically(session, manifest.encode())
-            entry
         } finally {
             bitmap.recycle()
         }
@@ -93,28 +109,25 @@ class CroppedFramesRepository(private val context: Context) {
         originals: List<SessionFrame>,
         normalizedRect: NormalizedCropRect
     ): CropBatchResult = withContext(Dispatchers.IO) {
-        var processed = 0
-        var skipped = 0
-        var failed = 0
-        originals.forEach { frame ->
-            if (frame.category != SessionFrameCategory.LIGHTS_JPEG) {
-                skipped++
-            } else {
-                runCatching { saveCrop(session, frame, normalizedRect) }
-                    .onSuccess { processed++ }
-                    .onFailure { failed++ }
-            }
+        processCropBatch(originals) { frame ->
+            saveCrop(session, frame, normalizedRect)
         }
-        CropBatchResult(processed, skipped, failed)
     }
 
     suspend fun deleteCrop(session: SessionSummary, entry: CropManifestEntry): Result<Unit> =
         withContext(Dispatchers.IO) {
             runCatching {
-                deleteStoredFile(session, entry.croppedFileName)
-                val manifest = (readManifest(session)?.let(CropManifest::decode) ?: CropManifest())
-                    .remove(entry.originalKey)
-                writeManifestAtomically(session, manifest.encode())
+                val stagedDelete = stageStoredFileDeletion(session, entry.croppedFileName)
+                try {
+                    val manifest = (
+                        readManifest(session)?.let(CropManifest::decode) ?: CropManifest()
+                    ).remove(entry.originalKey)
+                    writeManifestAtomically(session, manifest.encode())
+                    stagedDelete.commit()
+                } catch (error: Throwable) {
+                    runCatching(stagedDelete::rollback).onFailure(error::addSuppressed)
+                    throw error
+                }
             }
         }
 
@@ -132,7 +145,12 @@ class CroppedFramesRepository(private val context: Context) {
         return legacyFile(session, MANIFEST_NAME).takeIf(File::exists)?.readText()
     }
 
-    private fun writeBitmapAtomically(session: SessionSummary, fileName: String, bitmap: Bitmap) {
+    private fun stageBitmapReplacement(
+        session: SessionSummary,
+        fileName: String,
+        bitmap: Bitmap,
+        previousFileName: String?
+    ): StagedStoredFile {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val temporaryName = "tmp_${System.nanoTime()}_$fileName"
             val uri = insertPending(session, temporaryName, "image/jpeg")
@@ -140,12 +158,17 @@ class CroppedFramesRepository(private val context: Context) {
                 context.contentResolver.openOutputStream(uri, "w")?.use { output ->
                     check(bitmap.compress(Bitmap.CompressFormat.JPEG, 95, output))
                 } ?: error("Не удалось записать crop JPEG")
-                replacePending(session, uri, fileName)
+                return stageMediaStoreReplacement(
+                    session = session,
+                    pending = uri,
+                    finalName = fileName,
+                    requireExactName = false,
+                    existingName = previousFileName ?: fileName
+                )
             } catch (error: Throwable) {
                 context.contentResolver.delete(uri, null, null)
                 throw error
             }
-            return
         }
         val target = legacyFile(session, fileName)
         target.parentFile?.mkdirs()
@@ -155,7 +178,8 @@ class CroppedFramesRepository(private val context: Context) {
                 check(bitmap.compress(Bitmap.CompressFormat.JPEG, 95, output))
                 output.fd.sync()
             }
-            moveReplacing(temporary, target)
+            val previous = previousFileName?.let { legacyFile(session, it) } ?: target
+            return stageLegacyReplacement(temporary, target, previous)
         } finally {
             temporary.delete()
         }
@@ -169,7 +193,14 @@ class CroppedFramesRepository(private val context: Context) {
                 context.contentResolver.openOutputStream(uri, "w")?.bufferedWriter()?.use {
                     it.write(content)
                 } ?: error("Не удалось записать crop manifest")
-                replacePending(session, uri, MANIFEST_NAME)
+                val staged = stageMediaStoreReplacement(
+                    session = session,
+                    pending = uri,
+                    finalName = MANIFEST_NAME,
+                    requireExactName = true,
+                    existingName = MANIFEST_NAME
+                )
+                staged.commit()
             } catch (error: Throwable) {
                 context.contentResolver.delete(uri, null, null)
                 throw error
@@ -181,7 +212,7 @@ class CroppedFramesRepository(private val context: Context) {
         val temporary = File(target.parentFile, ".${target.name}.${System.nanoTime()}.tmp")
         try {
             FileOutputStream(temporary).bufferedWriter().use { it.write(content) }
-            moveReplacing(temporary, target)
+            stageLegacyReplacement(temporary, target, target).commit()
         } finally {
             temporary.delete()
         }
@@ -211,15 +242,52 @@ class CroppedFramesRepository(private val context: Context) {
         check(updated == 1) { "Не удалось опубликовать derived crop file" }
     }
 
-    private fun replacePending(session: SessionSummary, pending: Uri, finalName: String) {
-        val existing = findMediaStoreFile(session, finalName)
+    private fun stageMediaStoreReplacement(
+        session: SessionSummary,
+        pending: Uri,
+        finalName: String,
+        requireExactName: Boolean,
+        existingName: String
+    ): StagedStoredFile {
+        val existing = findMediaStoreFile(session, existingName)
         val backupName = existing?.let { "old_${System.nanoTime()}_$finalName" }
         if (existing != null && backupName != null) renameMediaStoreFile(existing, backupName)
         try {
             publishPending(pending, finalName)
-            existing?.let { context.contentResolver.delete(it, null, null) }
+            val saved = storedMediaFile(pending)
+                ?: error("Не удалось проверить derived crop file")
+            check(saved.relativePath == mediaStorePath(session)) {
+                "Derived crop сохранён вне папки Cropped"
+            }
+            check(saved.sizeBytes > 0L) { "Derived crop file пуст" }
+            if (requireExactName) {
+                check(saved.displayName == finalName) {
+                    "MediaStore изменил имя служебного файла"
+                }
+            }
+            return object : StagedStoredFile {
+                override val fileName = saved.displayName
+
+                override fun commit() {
+                    existing?.let { old ->
+                        runCatching { context.contentResolver.delete(old, null, null) }
+                            .onFailure { error ->
+                                Log.w("AstroPhotoCrop", "Failed to remove replaced crop backup", error)
+                            }
+                    }
+                }
+
+                override fun rollback() {
+                    context.contentResolver.delete(pending, null, null)
+                    if (existing != null) renameMediaStoreFile(existing, existingName)
+                }
+            }
         } catch (error: Throwable) {
-            if (existing != null) renameMediaStoreFile(existing, finalName)
+            context.contentResolver.delete(pending, null, null)
+            if (existing != null) {
+                runCatching { renameMediaStoreFile(existing, existingName) }
+                    .onFailure(error::addSuppressed)
+            }
             throw error
         }
     }
@@ -248,11 +316,93 @@ class CroppedFramesRepository(private val context: Context) {
         }
     }
 
-    private fun deleteStoredFile(session: SessionSummary, name: String) {
+    private fun storedMediaFile(uri: Uri): StoredMediaFile? =
+        context.contentResolver.query(
+            uri,
+            arrayOf(
+                MediaStore.Files.FileColumns.DISPLAY_NAME,
+                MediaStore.Files.FileColumns.RELATIVE_PATH,
+                MediaStore.Files.FileColumns.SIZE
+            ),
+            null,
+            null,
+            null
+        )?.use { cursor ->
+            if (!cursor.moveToFirst()) return@use null
+            StoredMediaFile(
+                displayName = cursor.getString(0).orEmpty(),
+                relativePath = cursor.getString(1).orEmpty(),
+                sizeBytes = cursor.getLong(2)
+            )
+        }
+
+    private fun stageStoredFileDeletion(
+        session: SessionSummary,
+        name: String
+    ): StagedDeletion {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            findMediaStoreFile(session, name)?.let { context.contentResolver.delete(it, null, null) }
-        } else {
-            legacyFile(session, name).delete()
+            val existing = findMediaStoreFile(session, name) ?: return StagedDeletion.None
+            renameMediaStoreFile(existing, "deleted_${System.nanoTime()}_$name")
+            return object : StagedDeletion {
+                override fun commit() {
+                    runCatching { context.contentResolver.delete(existing, null, null) }
+                        .onFailure { error ->
+                            Log.w("AstroPhotoCrop", "Failed to remove deleted crop backup", error)
+                        }
+                }
+
+                override fun rollback() {
+                    renameMediaStoreFile(existing, name)
+                }
+            }
+        }
+        val target = legacyFile(session, name)
+        if (!target.exists()) return StagedDeletion.None
+        val backup = File(target.parentFile, ".deleted.${System.nanoTime()}.${target.name}")
+        moveReplacing(target, backup)
+        return object : StagedDeletion {
+            override fun commit() {
+                backup.delete()
+            }
+
+            override fun rollback() {
+                if (backup.exists()) moveReplacing(backup, target)
+            }
+        }
+    }
+
+    private fun stageLegacyReplacement(
+        source: File,
+        target: File,
+        previous: File
+    ): StagedStoredFile {
+        val backup = previous.takeIf(File::exists)?.let {
+            File(previous.parentFile, ".old.${System.nanoTime()}.${previous.name}")
+        }
+        if (backup != null) moveReplacing(previous, backup)
+        try {
+            moveReplacing(source, target)
+            check(target.exists() && target.isFile && target.length() > 0L) {
+                "Derived crop file не был сохранён"
+            }
+        } catch (error: Throwable) {
+            target.delete()
+            if (backup?.exists() == true) {
+                runCatching { moveReplacing(backup, previous) }.onFailure(error::addSuppressed)
+            }
+            throw error
+        }
+        return object : StagedStoredFile {
+            override val fileName = target.name
+
+            override fun commit() {
+                backup?.delete()
+            }
+
+            override fun rollback() {
+                target.delete()
+                if (backup?.exists() == true) moveReplacing(backup, previous)
+            }
         }
     }
 
@@ -275,6 +425,28 @@ class CroppedFramesRepository(private val context: Context) {
             )
         } catch (_: Exception) {
             Files.move(source.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
+    }
+
+    private data class StoredMediaFile(
+        val displayName: String,
+        val relativePath: String,
+        val sizeBytes: Long
+    )
+
+    private interface StagedStoredFile {
+        val fileName: String
+        fun commit()
+        fun rollback()
+    }
+
+    private interface StagedDeletion {
+        fun commit()
+        fun rollback()
+
+        data object None : StagedDeletion {
+            override fun commit() = Unit
+            override fun rollback() = Unit
         }
     }
 
