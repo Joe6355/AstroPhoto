@@ -49,6 +49,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
@@ -388,13 +389,25 @@ class JpegStacker(private val context: Context) {
                     checkNotNull(stacked),
                     resultFileName
                 )
-                val savedMaster = runCatching {
+                val savedMaster = try {
                     saveBitmap(
                         session,
                         checkNotNull(masterDark),
                         masterDarkFileName
                     )
-                }.getOrNull()
+                } catch (error: CancellationException) {
+                    deleteSavedJpeg(savedResult)
+                    throw error
+                } catch (_: Exception) {
+                    null
+                }
+                try {
+                    currentCoroutineContext().ensureActive()
+                } catch (error: CancellationException) {
+                    savedMaster?.let(::deleteSavedJpeg)
+                    deleteSavedJpeg(savedResult)
+                    throw error
+                }
                 val infoUpdated = runCatching {
                     appendDarkStackSessionInfo(
                         session = session,
@@ -1274,6 +1287,7 @@ class JpegStacker(private val context: Context) {
             }
         }
         stackResult.exceptionOrNull()?.let { error ->
+            if (error is CancellationException) throw error
             Log.i(
                 "AstroPhotoProfile",
                 "profile=${profile.name} source=${source.metadataValue} inputFrames=${frames.size} " +
@@ -1287,15 +1301,11 @@ class JpegStacker(private val context: Context) {
                 error
             )
             return@withContext Result.failure(
-                if (error is CancellationException) {
+                IllegalStateException(
+                    "Ошибка на этапе: $currentStage. " +
+                        (error.message ?: "Неизвестная ошибка"),
                     error
-                } else {
-                    IllegalStateException(
-                        "Ошибка на этапе: $currentStage. " +
-                            (error.message ?: "Неизвестная ошибка"),
-                        error
-                    )
-                }
+                )
             )
         }
         stackResult
@@ -2089,11 +2099,12 @@ class JpegStacker(private val context: Context) {
         val filePath: String?
     )
 
-    private fun saveBitmap(
+    private suspend fun saveBitmap(
         session: SessionSummary,
         bitmap: Bitmap,
         fileName: String
     ): SavedJpeg {
+        currentCoroutineContext().ensureActive()
         val jpegQuality = CameraSettingsStore(context).load().jpegQuality
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val resolver = context.contentResolver
@@ -2119,6 +2130,7 @@ class JpegStacker(private val context: Context) {
                         error("Не удалось сохранить результат")
                     }
                 } ?: error("Не удалось сохранить результат")
+                currentCoroutineContext().ensureActive()
                 resolver.update(
                     uri,
                     ContentValues().apply {
@@ -2148,6 +2160,7 @@ class JpegStacker(private val context: Context) {
                     resolver.delete(uri, null, null)
                     error("Файл результата не был сохранён")
                 }
+                currentCoroutineContext().ensureActive()
                 val savedFileName = savedInfo.first
                 return SavedJpeg(
                     fileName = savedFileName,
@@ -2189,6 +2202,7 @@ class JpegStacker(private val context: Context) {
                     error("Не удалось сохранить результат")
                 }
             }
+            currentCoroutineContext().ensureActive()
             require(tempFile.length() > 0L) { "Файл результата не был сохранён" }
             try {
                 Files.move(tempFile.toPath(), file.toPath())
@@ -2199,6 +2213,7 @@ class JpegStacker(private val context: Context) {
                     error
                 )
             }
+            currentCoroutineContext().ensureActive()
             require(file.length() > 0L) { "Файл результата не был сохранён" }
         } catch (error: Exception) {
             tempFile.delete()
@@ -2211,6 +2226,14 @@ class JpegStacker(private val context: Context) {
             contentUri = null,
             filePath = file.absolutePath
         )
+    }
+
+    private fun deleteSavedJpeg(saved: SavedJpeg) {
+        saved.contentUri?.let { uri ->
+            runCatching { context.contentResolver.delete(Uri.parse(uri), null, null) }
+            return
+        }
+        saved.filePath?.let { path -> runCatching { File(path).delete() } }
     }
 
     private fun mediaStoreProcessedNameExists(
@@ -2631,6 +2654,7 @@ fun JpegStackingBlock(
     }
     var shadowOffset by remember(session.folderName) { mutableIntStateOf(16) }
     var stacking by remember(session.folderName) { mutableStateOf(false) }
+    var processingJob by remember(session.folderName) { mutableStateOf<Job?>(null) }
     var progressCurrent by remember(session.folderName) { mutableIntStateOf(0) }
     var progressTotal by remember(session.folderName) { mutableIntStateOf(0) }
     var status by remember(session.folderName) { mutableStateOf<String?>(null) }
@@ -2723,6 +2747,7 @@ fun JpegStackingBlock(
     }
 
     fun startStacking() {
+        if (stacking || processingJob?.isActive == true) return
         stacking = true
         progressCurrent = 0
         progressTotal = when {
@@ -2733,7 +2758,7 @@ fun JpegStackingBlock(
         }
         result = null
         status = "Подготовка кадров..."
-        coroutineScope.launch {
+        processingJob = coroutineScope.launch {
             try {
                 val stackResult = when {
                     sigmaMode -> stacker.sigmaStack(
@@ -2796,7 +2821,9 @@ fun JpegStackingBlock(
                         }
                     )
                 }
-                stacking = false
+                stackResult.exceptionOrNull()?.let { error ->
+                    if (error is CancellationException) throw error
+                }
                 stackResult.fold(
                     onSuccess = {
                         result = it
@@ -2831,20 +2858,21 @@ fun JpegStackingBlock(
                         status = message
                     }
                 )
+            } catch (error: CancellationException) {
+                status = "Обработка остановлена"
+                throw error
             } catch (error: Throwable) {
                 Log.e("AstroPhotoProcessing", "Manual processing crashed", error)
+                status = error.message ?: "Не удалось выполнить обработку"
+            } finally {
                 stacking = false
-                val message = if (error is CancellationException) {
-                    "Обработка остановлена"
-                } else {
-                    error.message ?: "Не удалось выполнить обработку"
-                }
-                status = message
+                processingJob = null
             }
         }
     }
 
     fun startProfile(profile: AstroProcessingProfile) {
+        if (stacking || processingJob?.isActive == true) return
         val validSource = sourceSelection as? StackingSourceSelection.Valid
         if (validSource == null) {
             status = sourceError ?: "Источник кадров недоступен"
@@ -2858,32 +2886,42 @@ fun JpegStackingBlock(
         progressCurrent = 0
         progressTotal = validSource.frames.size
         status = "Подготовка профиля ${profile.title}..."
-        coroutineScope.launch {
-            val profileResult = stacker.profileStack(
-                session = session,
-                frames = validSource.frames,
-                profile = profile,
-                source = stackingSource,
-                framesRejected = badFrames.size + validSource.missingCropCount
-            ) { message, current, total ->
-                status = message
-                progressCurrent = current
-                progressTotal = total
-            }
-            stacking = false
-            profileResult.fold(
-                onSuccess = { created ->
-                    profileResults = profileResults + created
-                    status = buildString {
-                        append("Готово: ${created.fileName}")
-                        created.warnings.forEach { append("\n$it") }
-                    }
-                    onStackCompleted()
-                },
-                onFailure = { error ->
-                    status = error.message ?: "Профильная обработка не удалась"
+        processingJob = coroutineScope.launch {
+            try {
+                val profileResult = stacker.profileStack(
+                    session = session,
+                    frames = validSource.frames,
+                    profile = profile,
+                    source = stackingSource,
+                    framesRejected = badFrames.size + validSource.missingCropCount
+                ) { message, current, total ->
+                    status = message
+                    progressCurrent = current
+                    progressTotal = total
                 }
-            )
+                profileResult.exceptionOrNull()?.let { error ->
+                    if (error is CancellationException) throw error
+                }
+                profileResult.fold(
+                    onSuccess = { created ->
+                        profileResults = profileResults + created
+                        status = buildString {
+                            append("Готово: ${created.fileName}")
+                            created.warnings.forEach { append("\n$it") }
+                        }
+                        onStackCompleted()
+                    },
+                    onFailure = { error ->
+                        status = error.message ?: "Профильная обработка не удалась"
+                    }
+                )
+            } catch (error: CancellationException) {
+                status = "Обработка остановлена"
+                throw error
+            } finally {
+                stacking = false
+                processingJob = null
+            }
         }
     }
 
@@ -2976,6 +3014,16 @@ fun JpegStackingBlock(
                             )
                         } else {
                             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        }
+                        TextButton(
+                            onClick = {
+                                status = "Остановка обработки..."
+                                processingJob?.cancel()
+                            },
+                            enabled = processingJob?.isActive == true,
+                            modifier = Modifier.align(Alignment.End)
+                        ) {
+                            Text("Остановить")
                         }
                     }
                 }
