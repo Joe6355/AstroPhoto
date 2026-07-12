@@ -151,6 +151,8 @@ data class EditedImageSaveResult(
 )
 
 class ProcessedImageEditor(private val context: Context) {
+    private val sourceResolver = ProcessedImageSourceResolver(context)
+
     suspend fun loadPreview(
         source: ProcessedResult,
         maxDimension: Int = 1600
@@ -457,9 +459,15 @@ class ProcessedImageEditor(private val context: Context) {
         }
 
     private fun openSource(source: ProcessedResult): InputStream? =
-        source.contentUri?.let {
-            context.contentResolver.openInputStream(Uri.parse(it))
-        } ?: source.filePath?.let { File(it).inputStream() }
+        sourceResolver.openInputStream(
+            imageSourceReference(
+                displayName = source.fileName,
+                displayPath = source.displayPath,
+                relativePath = source.relativePath,
+                providerUri = source.contentUri,
+                legacyFilePath = source.filePath
+            )
+        )
 
     private fun applyInPlace(bitmap: Bitmap, settings: ImageAdjustments) {
         require(bitmap.isMutable) { "Bitmap недоступен для редактирования" }

@@ -26,6 +26,21 @@ class BackgroundRemoval {
         if (mode == BackgroundRemovalMode.NONE) {
             return BackgroundRemovalResult(mode, neutralOffset = 0, strength = 0f)
         }
+        val pixels = IntArray(bitmap.width * bitmap.height)
+        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        val result = applyInPlace(ArgbPixelImage(bitmap.width, bitmap.height, pixels), mode, roi)
+        bitmap.setPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        return result
+    }
+
+    fun applyInPlace(
+        image: ArgbPixelImage,
+        mode: BackgroundRemovalMode,
+        roi: AstroRoi = AstroRoi.Full
+    ): BackgroundRemovalResult {
+        if (mode == BackgroundRemovalMode.NONE) {
+            return BackgroundRemovalResult(mode, neutralOffset = 0, strength = 0f)
+        }
         val strength = when (mode) {
             BackgroundRemovalMode.SOFT -> 0.28f
             BackgroundRemovalMode.STRONG -> 0.48f
@@ -38,23 +53,21 @@ class BackgroundRemoval {
             BackgroundRemovalMode.URBAN -> 32
             BackgroundRemovalMode.NONE -> 0
         }
-        val rect = roi.toRect(bitmap.width, bitmap.height)
-        val model = buildBackgroundModel(bitmap, rect)
-        val row = IntArray(bitmap.width)
-        for (y in 0 until bitmap.height) {
-            bitmap.getPixels(row, 0, bitmap.width, 0, y, bitmap.width, 1)
-            for (x in 0 until bitmap.width) {
-                val bg = model.backgroundAt(x, y, bitmap.width, bitmap.height)
-                val color = row[x]
+        val rect = roi.toPixelRect(image.width, image.height)
+        val model = buildBackgroundModel(image, rect)
+        for (y in 0 until image.height) {
+            for (x in 0 until image.width) {
+                val bg = model.backgroundAt(x, y, image.width, image.height)
+                val index = y * image.width + x
+                val color = image.pixels[index]
                 val red = correctChannel(color ushr 16 and 0xFF, bg.red, neutralOffset, strength)
                 val green = correctChannel(color ushr 8 and 0xFF, bg.green, neutralOffset, strength)
                 val blue = correctChannel(color and 0xFF, bg.blue, neutralOffset, strength)
-                row[x] = 0xFF000000.toInt() or (red shl 16) or (green shl 8) or blue
+                image.pixels[index] = 0xFF000000.toInt() or (red shl 16) or (green shl 8) or blue
             }
-            bitmap.setPixels(row, 0, bitmap.width, 0, y, bitmap.width, 1)
         }
         if (mode == BackgroundRemovalMode.URBAN) {
-            neutralizeUrbanTint(bitmap, rect)
+            neutralizeUrbanTint(image, rect)
         }
         return BackgroundRemovalResult(
             mode = mode,
@@ -107,18 +120,18 @@ class BackgroundRemoval {
         }
     }
 
-    private fun buildBackgroundModel(bitmap: Bitmap, roi: android.graphics.Rect): BackgroundModel {
+    private fun buildBackgroundModel(image: ArgbPixelImage, roi: PixelRect): BackgroundModel {
         val gridWidth = 24
         val gridHeight = 24
         val cells = Array(gridHeight) { Array(gridWidth) { Cell() } }
-        val sampleStep = maxOf(1, minOf(bitmap.width, bitmap.height) / 900)
+        val sampleStep = maxOf(1, minOf(image.width, image.height) / 900)
         val histogram = IntArray(256)
         var samples = 0L
         var y = roi.top
         while (y < roi.bottom) {
             var x = roi.left
             while (x < roi.right) {
-                histogram[StarDetector.luminance(bitmap.getPixel(x, y))]++
+                histogram[pixelLuminance(image.pixelAt(x, y))]++
                 samples++
                 x += sampleStep
             }
@@ -127,14 +140,14 @@ class BackgroundRemoval {
         val skyMedian = StarDetector.percentile(histogram, samples.coerceAtLeast(1L), 0.55)
         val brightLimit = (skyMedian + 70).coerceIn(40, 235)
         y = 0
-        while (y < bitmap.height) {
+        while (y < image.height) {
             var x = 0
-            while (x < bitmap.width) {
-                val color = bitmap.getPixel(x, y)
-                val lum = StarDetector.luminance(color)
+            while (x < image.width) {
+                val color = image.pixelAt(x, y)
+                val lum = pixelLuminance(color)
                 if (lum <= brightLimit || lum < 180) {
-                    val gx = ((x.toFloat() / bitmap.width) * gridWidth).toInt().coerceIn(0, gridWidth - 1)
-                    val gy = ((y.toFloat() / bitmap.height) * gridHeight).toInt().coerceIn(0, gridHeight - 1)
+                    val gx = ((x.toFloat() / image.width) * gridWidth).toInt().coerceIn(0, gridWidth - 1)
+                    val gy = ((y.toFloat() / image.height) * gridHeight).toInt().coerceIn(0, gridHeight - 1)
                     val cell = cells[gy][gx]
                     cell.red += (color ushr 16 and 0xFF).toFloat()
                     cell.green += (color ushr 8 and 0xFF).toFloat()
@@ -221,18 +234,18 @@ class BackgroundRemoval {
         return corrected.roundToInt().coerceIn(0, 255)
     }
 
-    private fun neutralizeUrbanTint(bitmap: Bitmap, roi: android.graphics.Rect) {
+    private fun neutralizeUrbanTint(image: ArgbPixelImage, roi: PixelRect) {
         var redSum = 0L
         var greenSum = 0L
         var blueSum = 0L
         var count = 0
-        val step = maxOf(1, minOf(roi.width(), roi.height()) / 500)
+        val step = maxOf(1, minOf(roi.width, roi.height) / 500)
         var y = roi.top
         while (y < roi.bottom) {
             var x = roi.left
             while (x < roi.right) {
-                val color = bitmap.getPixel(x, y)
-                val lum = StarDetector.luminance(color)
+                val color = image.pixelAt(x, y)
+                val lum = pixelLuminance(color)
                 if (lum in 16..190) {
                     redSum += color ushr 16 and 0xFF
                     greenSum += color ushr 8 and 0xFF
@@ -248,20 +261,18 @@ class BackgroundRemoval {
         val greenAvg = greenSum.toFloat() / count
         val blueAvg = blueSum.toFloat() / count
         val neutral = (redAvg + greenAvg + blueAvg) / 3f
-        val row = IntArray(bitmap.width)
-        for (yy in 0 until bitmap.height) {
-            bitmap.getPixels(row, 0, bitmap.width, 0, yy, bitmap.width, 1)
-            for (x in 0 until bitmap.width) {
-                val color = row[x]
+        for (yy in 0 until image.height) {
+            for (x in 0 until image.width) {
+                val index = yy * image.width + x
+                val color = image.pixels[index]
                 val red = ((color ushr 16 and 0xFF) + (neutral - redAvg) * 0.22f)
                     .roundToInt().coerceIn(0, 255)
                 val green = ((color ushr 8 and 0xFF) + (neutral - greenAvg) * 0.22f)
                     .roundToInt().coerceIn(0, 255)
                 val blue = ((color and 0xFF) + (neutral - blueAvg) * 0.22f)
                     .roundToInt().coerceIn(0, 255)
-                row[x] = 0xFF000000.toInt() or (red shl 16) or (green shl 8) or blue
+                image.pixels[index] = 0xFF000000.toInt() or (red shl 16) or (green shl 8) or blue
             }
-            bitmap.setPixels(row, 0, bitmap.width, 0, yy, bitmap.width, 1)
         }
     }
 }

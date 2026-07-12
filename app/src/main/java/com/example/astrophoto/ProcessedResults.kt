@@ -95,6 +95,7 @@ data class ProcessedResult(
     val displayPath: String,
     val contentUri: String?,
     val filePath: String?,
+    val relativePath: String? = null,
     val isReadable: Boolean = true,
     val errorMessage: String? = null
 )
@@ -108,7 +109,8 @@ private data class ComparisonImage(
     val label: String,
     val displayPath: String,
     val contentUri: String?,
-    val filePath: String?
+    val filePath: String?,
+    val relativePath: String?
 )
 
 private sealed interface ViewerImageState {
@@ -257,18 +259,14 @@ private class ProcessedResultsRepository(private val context: Context) {
         result: ProcessedResult,
         maxSize: Int = 3072
     ): ImageLoadResult {
-        val pathOrUri = result.pathOrUri()
-            ?: return missingImageSource(result.fileName)
-        return imageLoader.loadBitmapForViewer(pathOrUri, maxSize)
+        return imageLoader.loadBitmapForViewer(result.imageSource(), maxSize)
     }
 
     suspend fun loadComparisonImage(
         image: ComparisonImage,
         maxSize: Int = 1400
     ): ImageLoadResult {
-        val pathOrUri = image.pathOrUri()
-            ?: return missingImageSource(image.label)
-        return imageLoader.loadBitmapForViewer(pathOrUri, maxSize)
+        return imageLoader.loadBitmapForViewer(image.imageSource(), maxSize)
     }
 
     private fun loadMediaStoreResults(
@@ -334,6 +332,7 @@ private class ProcessedResultsRepository(private val context: Context) {
                             "Processed/$fileName",
                     contentUri = uri.toString(),
                     filePath = null,
+                    relativePath = relativePath,
                     isReadable = readable,
                     errorMessage = processedFileProblem(fileName, mimeType, size)
                 )
@@ -371,6 +370,7 @@ private class ProcessedResultsRepository(private val context: Context) {
                     displayPath = file.absolutePath,
                     contentUri = null,
                     filePath = file.absolutePath,
+                    relativePath = null,
                     isReadable = readable,
                     errorMessage = processedFileProblem(file.name, null, size)
                         ?: if (!file.canRead()) {
@@ -1094,8 +1094,11 @@ private fun ProcessedResultCard(
         thumbnail == null &&
         !thumbnailFailed
     val hasKnownProblem = !result.isReadable || result.errorMessage != null
-    val canOpen = result.pathOrUri() != null
-    val canEdit = result.isReadable && !thumbnailLoading
+    val source = result.imageSource()
+    val canOpen = !source.providerUri.isNullOrBlank() ||
+        !source.relativePath.isNullOrBlank() ||
+        !source.legacyFilePath.isNullOrBlank()
+    val canEdit = result.isReadable && canOpen && !thumbnailLoading
     Card(
         onClick = {
             if (canOpen) onClick()
@@ -1509,21 +1512,33 @@ private fun ProcessedResult.toComparisonImage(): ComparisonImage =
         label = fileName,
         displayPath = displayPath,
         contentUri = contentUri,
-        filePath = filePath
+        filePath = filePath,
+        relativePath = relativePath
     )
 
-private fun ProcessedResult.pathOrUri(): String? =
-    (contentUri ?: filePath)?.takeIf { it.isNotBlank() }
+private fun ProcessedResult.imageSource(): ImageSourceReference = imageSourceReference(
+    displayName = fileName,
+    displayPath = displayPath,
+    relativePath = relativePath,
+    providerUri = contentUri,
+    legacyFilePath = filePath
+)
 
-private fun ComparisonImage.pathOrUri(): String? =
-    (contentUri ?: filePath)?.takeIf { it.isNotBlank() }
+private fun ComparisonImage.imageSource(): ImageSourceReference = imageSourceReference(
+    displayName = label,
+    displayPath = displayPath,
+    relativePath = relativePath,
+    providerUri = contentUri,
+    legacyFilePath = filePath
+)
 
 private fun SessionFrame.toComparisonImage(): ComparisonImage =
     ComparisonImage(
         label = fileName,
         displayPath = displayPath,
         contentUri = contentUri,
-        filePath = filePath
+        filePath = filePath,
+        relativePath = null
     )
 
 private fun resultContentUri(context: Context, result: ProcessedResult): Uri? =

@@ -49,6 +49,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
@@ -56,11 +57,11 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
+import java.nio.file.Files
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.ceil
-import kotlin.math.ln
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
@@ -96,7 +97,8 @@ class JpegStacker(private val context: Context) {
             message: String
         ) -> Unit = { _, _, _ -> },
         alignmentSafe: Boolean = true,
-        autoStretch: Boolean = false
+        autoStretch: Boolean = false,
+        source: ManualStackingSource = ManualStackingSource.ORIGINAL
     ): Result<JpegStackResult> = withContext(Dispatchers.IO) {
         runCatching {
             require(frames.size >= 2) {
@@ -111,6 +113,11 @@ class JpegStacker(private val context: Context) {
             val dimensions = frames.map { frame ->
                 readDimensions(frame)
                     ?: error("Не удалось прочитать JPEG: ${frame.fileName}")
+            }
+            if (source == ManualStackingSource.CROPPED) {
+                require(dimensions.distinct().size == 1) {
+                    "Selected cropped frames have different dimensions"
+                }
             }
             val targetWidth = dimensions.minOf { it.first }
             val targetHeight = dimensions.minOf { it.second }
@@ -172,7 +179,8 @@ class JpegStacker(private val context: Context) {
                                 candidate = prepared,
                                 frameNumber = index + 1,
                                 totalFrames = frames.size,
-                                safeMode = alignmentSafe
+                                safeMode = alignmentSafe,
+                                source = source
                             ) { current, total, message ->
                                 withContext(Dispatchers.Main.immediate) {
                                     onAlignment(current, total, message)
@@ -186,7 +194,7 @@ class JpegStacker(private val context: Context) {
                             average = prepared.copy(Bitmap.Config.ARGB_8888, true)
                                 ?: error("Не удалось подготовить JPEG")
                         } else {
-                            addToRunningAverage(
+                            addToManualRunningAverage(
                                 average = checkNotNull(average),
                                 next = prepared,
                                 frameNumber = index + 1,
@@ -207,29 +215,27 @@ class JpegStacker(private val context: Context) {
                     applyAstroStretchInPlace(output)
                 }
                 val now = System.currentTimeMillis()
-                val timestamp = SimpleDateFormat(
-                    "yyyyMMdd_HHmmss",
-                    Locale.US
-                ).format(Date(now))
-                val fileName = if (alignFrames) {
-                    "StackedAligned_$timestamp.jpg"
+                val outputType = if (alignFrames) {
+                    ProcessedOutputType.AVERAGE_ALIGNED
                 } else {
-                    "Stacked_$timestamp.jpg"
+                    ProcessedOutputType.AVERAGE
                 }
+                val fileName = buildProcessedResultBaseName(outputType, now)
                 val saved = saveBitmap(session, output, fileName)
                 val infoUpdated = runCatching {
                     appendSessionInfo(
                         session = session,
-                        fileName = fileName,
+                        fileName = saved.fileName,
                         frameCount = frames.size,
                         alignmentEnabled = alignFrames,
                         astroStretchApplied = autoStretch,
+                        source = source,
                         processedAtMillis = now
                     )
                 }.isSuccess
 
                 JpegStackResult(
-                    fileName = fileName,
+                    fileName = saved.fileName,
                     displayPath = saved.displayPath,
                     contentUri = saved.contentUri,
                     filePath = saved.filePath,
@@ -257,6 +263,8 @@ class JpegStacker(private val context: Context) {
         alignFrames: Boolean = false,
         alignmentSafe: Boolean = true,
         autoStretch: Boolean = false,
+        source: ManualStackingSource = ManualStackingSource.ORIGINAL,
+        darkCrop: CropManifestEntry? = null,
         onProgress: suspend (
             message: String,
             current: Int,
@@ -285,19 +293,39 @@ class JpegStacker(private val context: Context) {
                 readDimensions(frame)
                     ?: error("Не удалось прочитать JPEG: ${frame.fileName}")
             }
-            val targetWidth = dimensions.minOf { it.first }
-            val targetHeight = dimensions.minOf { it.second }
-            require(targetWidth > 0 && targetHeight > 0) {
-                "Не удалось прочитать JPEG"
+            val lightShapes = dimensions.take(lightFrames.size).map { dimension ->
+                decodedPixelFrameShape(dimension.first, dimension.second)
             }
+            val darkShapes = dimensions.drop(lightFrames.size).map { dimension ->
+                decodedPixelFrameShape(dimension.first, dimension.second)
+            }
+            if (darkCrop == null) {
+                when (val validation = validateDarkFrames(darkShapes, lightShapes)) {
+                    is DarkValidationResult.Valid -> Unit
+                    is DarkValidationResult.Invalid -> error(validation.message)
+                }
+            } else {
+                require(source == ManualStackingSource.CROPPED) {
+                    "Dark crop is only valid for cropped Light frames"
+                }
+                require(lightShapes.all {
+                    it.width == darkCrop.croppedWidth && it.height == darkCrop.croppedHeight
+                }) { "Cropped Light dimensions do not match crop metadata" }
+                require(darkShapes.all {
+                    it.width == darkCrop.originalWidth && it.height == darkCrop.originalHeight
+                }) { "Dark frame dimensions do not match original Light dimensions" }
+            }
+            val targetWidth = darkCrop?.croppedWidth ?: lightShapes.first().width
+            val targetHeight = darkCrop?.croppedHeight ?: lightShapes.first().height
 
             var masterDark: Bitmap? = null
+            var croppedMasterDark: Bitmap? = null
             var stacked: Bitmap? = null
             try {
                 masterDark = averageFrames(
                     frames = darkFrames,
-                    targetWidth = targetWidth,
-                    targetHeight = targetHeight
+                    targetWidth = darkCrop?.originalWidth ?: targetWidth,
+                    targetHeight = darkCrop?.originalHeight ?: targetHeight
                 ) { current, total ->
                     withContext(Dispatchers.Main.immediate) {
                         onProgress(
@@ -308,14 +336,27 @@ class JpegStacker(private val context: Context) {
                     }
                 }
 
+                if (darkCrop != null) {
+                    val rect = darkCrop.pixelRect
+                    require(rect.width == targetWidth && rect.height == targetHeight)
+                    croppedMasterDark = Bitmap.createBitmap(
+                        checkNotNull(masterDark),
+                        rect.left,
+                        rect.top,
+                        rect.width,
+                        rect.height
+                    )
+                }
+
                 stacked = calibrateAndAverageLights(
                     lightFrames = lightFrames,
-                    masterDark = checkNotNull(masterDark),
+                    masterDark = croppedMasterDark ?: checkNotNull(masterDark),
                     targetWidth = targetWidth,
                     targetHeight = targetHeight,
                     shadowOffset = shadowOffset,
                     alignFrames = alignFrames,
-                    alignmentSafe = alignmentSafe
+                    alignmentSafe = alignmentSafe,
+                    source = source
                 ) { message, current, total ->
                     withContext(Dispatchers.Main.immediate) {
                         onProgress(
@@ -330,16 +371,16 @@ class JpegStacker(private val context: Context) {
                     onProgress("Сохранение результата...", 0, 1)
                 }
                 val now = System.currentTimeMillis()
-                val timestamp = SimpleDateFormat(
-                    "yyyyMMdd_HHmmss",
-                    Locale.US
-                ).format(Date(now))
-                val resultFileName = if (alignFrames) {
-                    "StackedDarkAligned_$timestamp.jpg"
+                val resultType = if (alignFrames) {
+                    ProcessedOutputType.AVERAGE_DARK_ALIGNED
                 } else {
-                    "StackedDark_$timestamp.jpg"
+                    ProcessedOutputType.AVERAGE_DARK
                 }
-                val masterDarkFileName = "MasterDark_$timestamp.jpg"
+                val resultFileName = buildProcessedResultBaseName(resultType, now)
+                val masterDarkFileName = buildProcessedResultBaseName(
+                    ProcessedOutputType.MASTER_DARK,
+                    now
+                )
                 if (autoStretch) {
                     applyAstroStretchInPlace(checkNotNull(stacked))
                 }
@@ -348,31 +389,42 @@ class JpegStacker(private val context: Context) {
                     checkNotNull(stacked),
                     resultFileName
                 )
-                val savedMaster = runCatching {
+                val savedMaster = try {
                     saveBitmap(
                         session,
                         checkNotNull(masterDark),
                         masterDarkFileName
                     )
-                }.getOrNull()
+                } catch (error: CancellationException) {
+                    deleteSavedJpeg(savedResult)
+                    throw error
+                } catch (_: Exception) {
+                    null
+                }
+                try {
+                    currentCoroutineContext().ensureActive()
+                } catch (error: CancellationException) {
+                    savedMaster?.let(::deleteSavedJpeg)
+                    deleteSavedJpeg(savedResult)
+                    throw error
+                }
                 val infoUpdated = runCatching {
                     appendDarkStackSessionInfo(
                         session = session,
-                        resultFileName = resultFileName,
-                        masterDarkFileName = savedMaster?.let {
-                            masterDarkFileName
-                        },
+                        resultFileName = savedResult.fileName,
+                        masterDarkFileName = savedMaster?.fileName,
                         lightFrameCount = lightFrames.size,
                         darkFrameCount = darkFrames.size,
                         shadowOffset = shadowOffset,
                         alignmentEnabled = alignFrames,
                         astroStretchApplied = autoStretch,
+                        source = source,
                         processedAtMillis = now
                     )
                 }.isSuccess
 
                 JpegStackResult(
-                    fileName = resultFileName,
+                    fileName = savedResult.fileName,
                     displayPath = savedResult.displayPath,
                     contentUri = savedResult.contentUri,
                     filePath = savedResult.filePath,
@@ -380,7 +432,7 @@ class JpegStacker(private val context: Context) {
                     sessionInfoUpdated = infoUpdated,
                     darkFrameCount = darkFrames.size,
                     shadowOffset = shadowOffset,
-                    masterDarkFileName = savedMaster?.let { masterDarkFileName },
+                    masterDarkFileName = savedMaster?.fileName,
                     masterDarkDisplayPath = savedMaster?.displayPath,
                     alignmentEnabled = alignFrames,
                     astroStretchApplied = autoStretch
@@ -392,6 +444,7 @@ class JpegStacker(private val context: Context) {
                 )
             } finally {
                 stacked?.takeUnless(Bitmap::isRecycled)?.recycle()
+                croppedMasterDark?.takeUnless(Bitmap::isRecycled)?.recycle()
                 masterDark?.takeUnless(Bitmap::isRecycled)?.recycle()
             }
         }
@@ -403,6 +456,7 @@ class JpegStacker(private val context: Context) {
         alignFrames: Boolean,
         alignmentSafe: Boolean = true,
         autoStretch: Boolean = false,
+        source: ManualStackingSource = ManualStackingSource.ORIGINAL,
         onProgress: suspend (
             message: String,
             current: Int,
@@ -420,6 +474,11 @@ class JpegStacker(private val context: Context) {
             val dimensions = selectedFrames.map { frame ->
                 readDimensions(frame)
                     ?: error("Не удалось прочитать кадр: ${frame.fileName}")
+            }
+            if (source == ManualStackingSource.CROPPED) {
+                require(dimensions.distinct().size == 1) {
+                    "Selected cropped frames have different dimensions"
+                }
             }
             val commonWidth = dimensions.minOf { it.first }
             val commonHeight = dimensions.minOf { it.second }
@@ -444,7 +503,7 @@ class JpegStacker(private val context: Context) {
             var output: Bitmap? = null
 
             try {
-                var alignmentReference: AlignmentReference? = null
+                var alignmentReference: ManualAlignmentReference? = null
                 selectedFrames.forEachIndexed { index, frame ->
                     currentCoroutineContext().ensureActive()
                     withContext(Dispatchers.Main.immediate) {
@@ -469,7 +528,8 @@ class JpegStacker(private val context: Context) {
                                 candidate = bitmap,
                                 frameNumber = index + 1,
                                 totalFrames = selectedFrames.size,
-                                safeMode = alignmentSafe
+                                safeMode = alignmentSafe,
+                                source = source
                             ) { current, total, message ->
                                 withContext(Dispatchers.Main.immediate) {
                                     onProgress(message, current, total)
@@ -481,7 +541,7 @@ class JpegStacker(private val context: Context) {
                     }
                     if (alignFrames && index == 0) {
                         alignmentReference = try {
-                            createGrayscaleSample(bitmap)
+                            createManualAlignmentSample(bitmap)
                         } catch (_: Exception) {
                             withContext(Dispatchers.Main.immediate) {
                                 onProgress(
@@ -522,15 +582,12 @@ class JpegStacker(private val context: Context) {
                     onProgress("Сохранение результата...", 0, 1)
                 }
                 val now = System.currentTimeMillis()
-                val timestamp = SimpleDateFormat(
-                    "yyyyMMdd_HHmmss",
-                    Locale.US
-                ).format(Date(now))
-                val fileName = if (alignFrames) {
-                    "MedianAligned_$timestamp.jpg"
+                val outputType = if (alignFrames) {
+                    ProcessedOutputType.MEDIAN_ALIGNED
                 } else {
-                    "Median_$timestamp.jpg"
+                    ProcessedOutputType.MEDIAN
                 }
+                val fileName = buildProcessedResultBaseName(outputType, now)
                 if (autoStretch) {
                     applyAstroStretchInPlace(checkNotNull(output))
                 }
@@ -538,16 +595,17 @@ class JpegStacker(private val context: Context) {
                 val infoUpdated = runCatching {
                     appendMedianSessionInfo(
                         session = session,
-                        fileName = fileName,
+                        fileName = saved.fileName,
                         frameCount = selectedFrames.size,
                         alignmentEnabled = alignFrames,
                         downscaled = downscaled,
                         astroStretchApplied = autoStretch,
+                        source = source,
                         processedAtMillis = now
                     )
                 }.isSuccess
                 JpegStackResult(
-                    fileName = fileName,
+                    fileName = saved.fileName,
                     displayPath = saved.displayPath,
                     contentUri = saved.contentUri,
                     filePath = saved.filePath,
@@ -579,6 +637,7 @@ class JpegStacker(private val context: Context) {
         alignFrames: Boolean,
         alignmentSafe: Boolean = true,
         autoStretch: Boolean = false,
+        source: ManualStackingSource = ManualStackingSource.ORIGINAL,
         onProgress: suspend (
             message: String,
             current: Int,
@@ -600,6 +659,11 @@ class JpegStacker(private val context: Context) {
             val dimensions = selectedFrames.map { frame ->
                 readDimensions(frame)
                     ?: error("Не удалось прочитать кадр: ${frame.fileName}")
+            }
+            if (source == ManualStackingSource.CROPPED) {
+                require(dimensions.distinct().size == 1) {
+                    "Selected cropped frames have different dimensions"
+                }
             }
             val commonWidth = dimensions.minOf { it.first }
             val commonHeight = dimensions.minOf { it.second }
@@ -624,7 +688,7 @@ class JpegStacker(private val context: Context) {
             var output: Bitmap? = null
 
             try {
-                var alignmentReference: AlignmentReference? = null
+                var alignmentReference: ManualAlignmentReference? = null
                 selectedFrames.forEachIndexed { index, frame ->
                     currentCoroutineContext().ensureActive()
                     withContext(Dispatchers.Main.immediate) {
@@ -649,7 +713,8 @@ class JpegStacker(private val context: Context) {
                                 candidate = bitmap,
                                 frameNumber = index + 1,
                                 totalFrames = selectedFrames.size,
-                                safeMode = alignmentSafe
+                                safeMode = alignmentSafe,
+                                source = source
                             ) { current, total, message ->
                                 withContext(Dispatchers.Main.immediate) {
                                     onProgress(message, current, total)
@@ -661,7 +726,7 @@ class JpegStacker(private val context: Context) {
                     }
                     if (alignFrames && index == 0) {
                         alignmentReference = try {
-                            createGrayscaleSample(bitmap)
+                            createManualAlignmentSample(bitmap)
                         } catch (_: Exception) {
                             withContext(Dispatchers.Main.immediate) {
                                 onProgress(
@@ -703,15 +768,12 @@ class JpegStacker(private val context: Context) {
                     onProgress("Сохранение результата...", 0, 1)
                 }
                 val now = System.currentTimeMillis()
-                val timestamp = SimpleDateFormat(
-                    "yyyyMMdd_HHmmss",
-                    Locale.US
-                ).format(Date(now))
-                val fileName = if (alignFrames) {
-                    "SigmaAligned_$timestamp.jpg"
+                val outputType = if (alignFrames) {
+                    ProcessedOutputType.SIGMA_ALIGNED
                 } else {
-                    "Sigma_$timestamp.jpg"
+                    ProcessedOutputType.SIGMA
                 }
+                val fileName = buildProcessedResultBaseName(outputType, now)
                 if (autoStretch) {
                     applyAstroStretchInPlace(checkNotNull(output))
                 }
@@ -719,17 +781,18 @@ class JpegStacker(private val context: Context) {
                 val infoUpdated = runCatching {
                     appendSigmaSessionInfo(
                         session = session,
-                        fileName = fileName,
+                        fileName = saved.fileName,
                         frameCount = selectedFrames.size,
                         sigma = sigma,
                         alignmentEnabled = alignFrames,
                         downscaled = downscaled,
                         astroStretchApplied = autoStretch,
+                        source = source,
                         processedAtMillis = now
                     )
                 }.isSuccess
                 JpegStackResult(
-                    fileName = fileName,
+                    fileName = saved.fileName,
                     displayPath = saved.displayPath,
                     contentUri = saved.contentUri,
                     filePath = saved.filePath,
@@ -758,6 +821,7 @@ class JpegStacker(private val context: Context) {
         session: SessionSummary,
         frames: List<SessionFrame>,
         profile: AstroProcessingProfile,
+        source: ManualStackingSource = ManualStackingSource.ORIGINAL,
         framesRejected: Int = 0,
         onProgress: suspend (
             message: String,
@@ -773,16 +837,24 @@ class JpegStacker(private val context: Context) {
             require(frames.size >= 2) {
                 "Недостаточно JPEG кадров для профильной обработки"
             }
+            require(frames.size >= profile.minimumFrames) {
+                "Для профиля ${profile.title} рекомендуется минимум ${profile.minimumFrames} кадров"
+            }
             require(frames.all { it.category == SessionFrameCategory.LIGHTS_JPEG }) {
                 "Профили обработки используют только Lights/JPEG"
             }
             currentStage = "Выбор рецепта"
-            val recipe = profile.recipe(frames.size)
+            val recipe = profileRecipe(profile, frames.size)
             val selectedFrames = frames.take(MAX_PROFILE_FRAMES)
             currentStage = "Чтение размеров кадров"
             val dimensions = selectedFrames.map { frame ->
                 readDimensions(frame)
                     ?: error("Не удалось прочитать кадр: ${frame.fileName}")
+            }
+            if (source == ManualStackingSource.CROPPED) {
+                require(dimensions.distinct().size == 1) {
+                    "Selected cropped frames have different dimensions"
+                }
             }
             val commonWidth = dimensions.minOf { it.first }
             val commonHeight = dimensions.minOf { it.second }
@@ -805,21 +877,22 @@ class JpegStacker(private val context: Context) {
             val targetHeight = (commonHeight * scale).roundToInt().coerceAtLeast(1)
             val downscaled = targetWidth < commonWidth || targetHeight < commonHeight
             val detector = StarDetector()
-            val aligner = StarAlignment(detector)
             val backgroundRemoval = BackgroundRemoval()
             val stretch = AstroStretch()
             val starBoost = StarBoost()
             val warnings = mutableListOf<String>()
             var output: Bitmap? = null
+            var safeIntermediate: Bitmap? = null
             val preparedFrames = mutableListOf<MedianPreparedFrame>()
             var referenceBitmap: Bitmap? = null
             var alignmentApplied = 0
             var alignmentRejected = 0
+            var starAlignmentApplied = 0
             var referenceStars = 0
             var finalStars = 0
-            var urbanStrongOutput: Bitmap? = null
-            var urbanStrongStars = 0
-            val additionalProfileFiles = mutableListOf<String>()
+            var sanityStatus = "passed"
+            var fallback = "none"
+            var fallbackReason = ""
 
             try {
                 currentStage = "Подготовка профильной обработки"
@@ -871,13 +944,10 @@ class JpegStacker(private val context: Context) {
                         val bitmap = decodeMedianFrame(frame, targetWidth, targetHeight)
                             ?: error("Не удалось прочитать кадр: ${frame.fileName}")
                         val alignment = try {
-                            aligner.align(
+                            alignProfileFrame(
                                 reference = checkNotNull(referenceBitmap),
                                 candidate = bitmap,
-                                roi = recipe.roi,
-                                sensitivity = recipe.sensitivity,
-                                maxShiftPx = 30,
-                                aggressive = recipe.aggressiveAlignment
+                                recipe = recipe
                             )
                         } catch (error: Exception) {
                             Log.e(
@@ -890,6 +960,7 @@ class JpegStacker(private val context: Context) {
                         }
                         if (alignment?.applied == true) {
                             alignmentApplied++
+                            if (alignment.method == "stars") starAlignmentApplied++
                         } else {
                             alignmentRejected++
                         }
@@ -947,13 +1018,10 @@ class JpegStacker(private val context: Context) {
                             ?: error("Не удалось прочитать кадр: ${frame.fileName}")
                         try {
                             val alignment = try {
-                                aligner.align(
+                                alignProfileFrame(
                                     reference = checkNotNull(referenceBitmap),
                                     candidate = bitmap,
-                                    roi = recipe.roi,
-                                    sensitivity = recipe.sensitivity,
-                                    maxShiftPx = 30,
-                                    aggressive = recipe.aggressiveAlignment
+                                    recipe = recipe
                                 )
                             } catch (error: Exception) {
                                 Log.e(
@@ -966,6 +1034,7 @@ class JpegStacker(private val context: Context) {
                             }
                             if (alignment?.applied == true) {
                                 alignmentApplied++
+                                if (alignment.method == "stars") starAlignmentApplied++
                             } else {
                                 alignmentRejected++
                             }
@@ -983,6 +1052,20 @@ class JpegStacker(private val context: Context) {
                             bitmap.recycle()
                         }
                     }
+                }
+
+                if (recipe.requiresAlignment && starAlignmentApplied != selectedFrames.size - 1) {
+                    error(
+                        "Профиль ${profile.title} требует подтверждённого звёздного " +
+                            "выравнивания каждого кадра"
+                    )
+                }
+                safeIntermediate = checkNotNull(output).copy(Bitmap.Config.ARGB_8888, true)
+                    ?: error("Не удалось сохранить безопасный промежуточный stack")
+                val beforeMetrics = analyzeProfileBitmap(checkNotNull(safeIntermediate), recipe)
+                logProfileStage(profile, source, "alignedStack", beforeMetrics)
+                if (recipe.useSignalPreservingSigma) {
+                    logProfileStage(profile, source, "signalPreservingStack", beforeMetrics)
                 }
 
                 currentStage = "Удаление фона"
@@ -1004,8 +1087,10 @@ class JpegStacker(private val context: Context) {
                     )
                     warnings += "Удаление фона не удалось, сохранён stack без этого шага."
                 }
-                if (profile == AstroProcessingProfile.URBAN_SKY) {
-                    urbanStrongOutput = checkNotNull(output).copy(Bitmap.Config.ARGB_8888, true)
+                val backgroundMetrics = analyzeProfileBitmap(checkNotNull(output), recipe)
+                logProfileStage(profile, source, "backgroundRemoval", backgroundMetrics)
+                if (recipe.backgroundMode == BackgroundRemovalMode.URBAN) {
+                    logProfileStage(profile, source, "cityNeutralization", backgroundMetrics)
                 }
                 currentStage = "Astro Stretch"
                 withContext(Dispatchers.Main.immediate) {
@@ -1022,6 +1107,12 @@ class JpegStacker(private val context: Context) {
                     )
                     warnings += "Astro Stretch не удался, сохранён результат без stretch."
                 }
+                logProfileStage(
+                    profile,
+                    source,
+                    "stretch",
+                    analyzeProfileBitmap(checkNotNull(output), recipe)
+                )
                 val starsForBoost = try {
                     detector.detect(
                         bitmap = checkNotNull(output),
@@ -1056,60 +1147,47 @@ class JpegStacker(private val context: Context) {
                     )
                     warnings += "Star Boost не удался, сохранён результат без усиления звёзд."
                 }
-                urbanStrongOutput?.let { strongBitmap ->
-                    currentStage = "UrbanSkyStrong"
-                    withContext(Dispatchers.Main.immediate) {
-                        onProgress("UrbanSkyStrong...", 2, 3)
+                logProfileStage(
+                    profile,
+                    source,
+                    "starBoost",
+                    analyzeProfileBitmap(checkNotNull(output), recipe)
+                )
+                currentStage = "Sanity check"
+                var afterMetrics = analyzeProfileBitmap(checkNotNull(output), recipe)
+                when (val sanity = evaluateProfileSanity(beforeMetrics, afterMetrics)) {
+                    is ProfileSanityResult.Passed -> sanityStatus = "passed"
+                    is ProfileSanityResult.Failed -> {
+                        sanityStatus = "failed"
+                        val aggressive = profile == AstroProcessingProfile.MAX_STARS ||
+                            profile == AstroProcessingProfile.URBAN_SKY_STRONG
+                        if (!aggressive) error("Profile sanity failed: ${sanity.reason}")
+                        when (val recovered = recoverStarsFromIntermediate(
+                            bitmapToArgbImage(checkNotNull(safeIntermediate)),
+                            recipe.roi,
+                            recipe.sensitivity,
+                            sanity.reason
+                        )) {
+                            is RecoveredStarsResult.Recovered -> {
+                                output?.recycle()
+                                output = bitmapFromArgbImage(recovered.image)
+                                afterMetrics = recovered.sanity.metrics
+                                sanityStatus = "passed"
+                                fallback = "RecoveredStars"
+                                fallbackReason = sanity.reason
+                                warnings += "Использован RecoveredStars: ${sanity.reason}"
+                            }
+                            is RecoveredStarsResult.Failed -> error(recovered.reason)
+                        }
                     }
-                    try {
-                        stretch.applyInPlace(strongBitmap, AstroStretchMode.STRONG)
-                            .warning
-                            ?.let { warnings += "UrbanSkyStrong: $it" }
-                        val strongStarsForBoost = detector.detect(
-                            bitmap = strongBitmap,
-                            roi = recipe.roi,
-                            sensitivity = StarDetectionSensitivity.HIGH
-                        )
-                        starBoost.applyInPlace(
-                            bitmap = strongBitmap,
-                            stars = strongStarsForBoost.stars,
-                            mode = StarBoostMode.STRONG
-                        ).warning?.let { warnings += "UrbanSkyStrong: $it" }
-                        urbanStrongStars = detector.detect(
-                            bitmap = strongBitmap,
-                            roi = recipe.roi,
-                            sensitivity = StarDetectionSensitivity.HIGH
-                        ).stars.size
-                    } catch (error: Exception) {
-                        Log.e(
-                            "AstroPhotoProcessing",
-                            "UrbanSkyStrong failed: ${error.message}",
-                            error
-                        )
-                        warnings += "UrbanSkyStrong не удалось создать: ${error.message.orEmpty()}"
-                        urbanStrongOutput?.recycle()
-                        urbanStrongOutput = null
-                    }
                 }
-                currentStage = "Финальный поиск звёзд"
-                finalStars = try {
-                    detector.detect(
-                        bitmap = checkNotNull(output),
-                        roi = recipe.roi,
-                        sensitivity = recipe.sensitivity
-                    ).stars.size
-                } catch (error: Exception) {
-                    Log.e(
-                        "AstroPhotoProcessing",
-                        "Final star detection failed: ${error.message}",
-                        error
-                    )
-                    warnings += "Финальный подсчёт звёзд не удался."
-                    0
-                }
-                if (referenceStars >= 6 && finalStars < (referenceStars * 0.55f).roundToInt()) {
-                    warnings += "Этот результат мог скрыть часть звёзд"
-                }
+                finalStars = afterMetrics.stars
+                logProfileStage(
+                    profile,
+                    source,
+                    if (fallback == "RecoveredStars") "recoveredSanity" else "finalSanity",
+                    afterMetrics
+                )
                 if (profile == AstroProcessingProfile.MAX_STARS) {
                     warnings += "Режим может усилить шум и артефакты"
                 }
@@ -1124,57 +1202,20 @@ class JpegStacker(private val context: Context) {
                 val now = System.currentTimeMillis()
                 val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
                     .format(Date(now))
-                val prefix = if (
-                    profile == AstroProcessingProfile.DEEP_SKY &&
-                    alignmentApplied > 0
-                ) {
-                    "DeepSkyAligned"
-                } else {
-                    profile.filePrefix
-                }
+                val prefix = if (fallback == "RecoveredStars") "RecoveredStars" else profile.filePrefix
                 val fileName = "${prefix}_$timestamp.jpg"
+                Log.i(
+                    "AstroPhotoProfile",
+                    "profile=${profile.name} source=${source.metadataValue} " +
+                        "inputFrames=${selectedFrames.size} alignedFrames=$alignmentApplied " +
+                        "alignmentFailures=$alignmentRejected stackingMethod=" +
+                        "${if (recipe.useSignalPreservingSigma) "signalPreservingSigma" else "average"} " +
+                        "starsBefore=${beforeMetrics.stars} starsAfter=${afterMetrics.stars} " +
+                        "backgroundBefore=${beforeMetrics.background} " +
+                        "backgroundAfter=${afterMetrics.background} sanity=$sanityStatus " +
+                        "fallback=$fallback fallbackReason=$fallbackReason outputName=$fileName"
+                )
                 val saved = saveBitmap(session, checkNotNull(output), fileName)
-                urbanStrongOutput?.let { strongBitmap ->
-                    val strongFileName = "UrbanSkyStrong_$timestamp.jpg"
-                    runCatching {
-                        saveBitmap(session, strongBitmap, strongFileName)
-                    }.onSuccess {
-                        additionalProfileFiles += strongFileName
-                        runCatching {
-                            appendProfileSessionInfo(
-                                session = session,
-                                fileName = strongFileName,
-                                profile = profile,
-                                method = if (recipe.useSignalPreservingSigma) {
-                                    "Signal-preserving sigma ${recipe.sigma} + Urban strong"
-                                } else {
-                                    "Average + Star Safe + Urban strong"
-                                },
-                                framesUsed = selectedFrames.size,
-                                framesRejected = framesRejected + (frames.size - selectedFrames.size),
-                                alignmentMode = if (recipe.aggressiveAlignment) {
-                                    "STAR_AGGRESSIVE"
-                                } else {
-                                    "STAR_SAFE"
-                                },
-                                alignmentApplied = alignmentApplied,
-                                alignmentRejected = alignmentRejected,
-                                roiMode = recipe.roiName,
-                                backgroundRemoval = BackgroundRemovalMode.URBAN.name,
-                                stretchMode = AstroStretchMode.STRONG.name,
-                                starBoost = StarBoostMode.STRONG.name,
-                                starsBefore = referenceStars,
-                                starsAfter = urbanStrongStars,
-                                warnings = warnings.distinct(),
-                                processedAtMillis = now
-                            )
-                        }.onFailure {
-                            warnings += "UrbanSkyStrong СЃРѕС…СЂР°РЅС‘РЅ, РЅРѕ session_info.txt РЅРµ РѕР±РЅРѕРІР»С‘РЅ"
-                        }
-                    }.onFailure { error ->
-                        warnings += "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕС…СЂР°РЅРёС‚СЊ UrbanSkyStrong: ${error.message.orEmpty()}"
-                    }
-                }
                 val infoUpdated = runCatching {
                     appendProfileSessionInfo(
                         session = session,
@@ -1200,6 +1241,10 @@ class JpegStacker(private val context: Context) {
                         starBoost = recipe.starBoostMode.name,
                         starsBefore = referenceStars,
                         starsAfter = finalStars,
+                        source = source,
+                        sanity = sanityStatus,
+                        fallback = fallback,
+                        fallbackReason = fallbackReason,
                         warnings = warnings.distinct(),
                         processedAtMillis = now
                     )
@@ -1217,7 +1262,7 @@ class JpegStacker(private val context: Context) {
                     profile = profile,
                     starCount = finalStars,
                     warnings = warnings.distinct(),
-                    additionalFiles = additionalProfileFiles.toList()
+                    additionalFiles = emptyList()
                 )
             } catch (error: OutOfMemoryError) {
                 throw IllegalStateException(
@@ -1235,28 +1280,32 @@ class JpegStacker(private val context: Context) {
                 ) {
                     reference.recycle()
                 }
-                urbanStrongOutput?.takeUnless(Bitmap::isRecycled)?.recycle()
+                safeIntermediate?.takeUnless(Bitmap::isRecycled)?.recycle()
                 preparedFrames.forEach {
                     it.bitmap.takeUnless(Bitmap::isRecycled)?.recycle()
                 }
             }
         }
         stackResult.exceptionOrNull()?.let { error ->
+            if (error is CancellationException) throw error
+            Log.i(
+                "AstroPhotoProfile",
+                "profile=${profile.name} source=${source.metadataValue} inputFrames=${frames.size} " +
+                    "alignedFrames=0 alignmentFailures=0 stackingMethod=unknown " +
+                    "starsBefore=-1 starsAfter=-1 backgroundBefore=-1 backgroundAfter=-1 " +
+                    "sanity=failed fallback=none fallbackReason=${error.message.orEmpty()} outputName="
+            )
             Log.e(
                 "AstroPhotoProcessing",
                 "Profile ${profile.title} failed at $currentStage: ${error.message}",
                 error
             )
             return@withContext Result.failure(
-                if (error is CancellationException) {
+                IllegalStateException(
+                    "Ошибка на этапе: $currentStage. " +
+                        (error.message ?: "Неизвестная ошибка"),
                     error
-                } else {
-                    IllegalStateException(
-                        "Ошибка на этапе: $currentStage. " +
-                            (error.message ?: "Неизвестная ошибка"),
-                        error
-                    )
-                }
+                )
             )
         }
         stackResult
@@ -1281,90 +1330,12 @@ class JpegStacker(private val context: Context) {
         }
     }
 
-    private data class AstroProfileRecipe(
-        val roi: AstroRoi,
-        val roiName: String,
-        val sensitivity: StarDetectionSensitivity,
-        val backgroundMode: BackgroundRemovalMode,
-        val stretchMode: AstroStretchMode,
-        val starBoostMode: StarBoostMode,
-        val useSignalPreservingSigma: Boolean,
-        val sigma: Double,
-        val aggressiveAlignment: Boolean
-    )
-
-    private fun AstroProcessingProfile.recipe(frameCount: Int): AstroProfileRecipe =
-        when (this) {
-            AstroProcessingProfile.NORMAL -> AstroProfileRecipe(
-                roi = AstroRoi.Full,
-                roiName = "Full",
-                sensitivity = StarDetectionSensitivity.MEDIUM,
-                backgroundMode = BackgroundRemovalMode.NONE,
-                stretchMode = AstroStretchMode.OFF,
-                starBoostMode = StarBoostMode.OFF,
-                useSignalPreservingSigma = false,
-                sigma = 2.0,
-                aggressiveAlignment = false
-            )
-            AstroProcessingProfile.DEEP_SKY -> AstroProfileRecipe(
-                roi = AstroRoi.Full,
-                roiName = "Full frame",
-                sensitivity = StarDetectionSensitivity.MEDIUM,
-                backgroundMode = BackgroundRemovalMode.SOFT,
-                stretchMode = if (frameCount >= 6) {
-                    AstroStretchMode.MEDIUM
-                } else {
-                    AstroStretchMode.SOFT
-                },
-                starBoostMode = StarBoostMode.SOFT,
-                useSignalPreservingSigma = frameCount >= 6,
-                sigma = if (frameCount >= 15) 2.5 else 2.0,
-                aggressiveAlignment = false
-            )
-            AstroProcessingProfile.URBAN_SKY -> AstroProfileRecipe(
-                roi = AstroRoi.Top70,
-                roiName = "Top 70%",
-                sensitivity = StarDetectionSensitivity.MEDIUM,
-                backgroundMode = BackgroundRemovalMode.URBAN,
-                stretchMode = AstroStretchMode.MEDIUM,
-                starBoostMode = StarBoostMode.SOFT,
-                useSignalPreservingSigma = frameCount >= 6,
-                sigma = 2.0,
-                aggressiveAlignment = false
-            )
-            AstroProcessingProfile.MAX_STARS -> AstroProfileRecipe(
-                roi = AstroRoi.Top70,
-                roiName = "Top 70%",
-                sensitivity = StarDetectionSensitivity.HIGH,
-                backgroundMode = BackgroundRemovalMode.STRONG,
-                stretchMode = AstroStretchMode.STRONG,
-                starBoostMode = StarBoostMode.STRONG,
-                useSignalPreservingSigma = frameCount >= 6,
-                sigma = 2.5,
-                aggressiveAlignment = true
-            )
-        }
-
     private fun readDimensions(frame: SessionFrame): Pair<Int, Int>? {
-        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        openFrame(frame)?.use { BitmapFactory.decodeStream(it, null, options) }
-        return if (options.outWidth > 0 && options.outHeight > 0) {
-            options.outWidth to options.outHeight
-        } else {
-            null
-        }
+        return readOrientedJpegDimensions { openFrame(frame) }
     }
 
     private fun decodeFrame(frame: SessionFrame): Bitmap? =
-        openFrame(frame)?.use { stream ->
-            BitmapFactory.decodeStream(
-                stream,
-                null,
-                BitmapFactory.Options().apply {
-                    inPreferredConfig = Bitmap.Config.ARGB_8888
-                }
-            )
-        }
+        decodeOrientedJpeg(openStream = { openFrame(frame) })
 
     private fun openFrame(frame: SessionFrame): InputStream? =
         if (frame.contentUri != null) {
@@ -1372,28 +1343,6 @@ class JpegStacker(private val context: Context) {
         } else {
             frame.filePath?.let { File(it).inputStream() }
         }
-
-    private data class AlignmentReference(
-        val grayscale: ByteArray,
-        val width: Int,
-        val height: Int,
-        val scaleX: Float,
-        val scaleY: Float
-    )
-
-    private data class AlignmentShift(
-        val dx: Int,
-        val dy: Int,
-        val score: Double = 0.0,
-        val confidence: Double = 1.0
-    ) {
-        val isZero: Boolean
-            get() = dx == 0 && dy == 0
-
-        companion object {
-            val Zero = AlignmentShift(0, 0)
-        }
-    }
 
     private data class MedianPreparedFrame(
         val bitmap: Bitmap,
@@ -1413,16 +1362,7 @@ class JpegStacker(private val context: Context) {
         ) {
             sampleSize *= 2
         }
-        val decoded = openFrame(frame)?.use {
-            BitmapFactory.decodeStream(
-                it,
-                null,
-                BitmapFactory.Options().apply {
-                    inSampleSize = sampleSize
-                    inPreferredConfig = Bitmap.Config.ARGB_8888
-                }
-            )
-        } ?: return null
+        val decoded = decodeOrientedJpeg({ openFrame(frame) }, sampleSize) ?: return null
         if (decoded.width == targetWidth && decoded.height == targetHeight) {
             return decoded
         }
@@ -1448,6 +1388,7 @@ class JpegStacker(private val context: Context) {
         try {
             val sourceRows = Array(frames.size) { IntArray(width) }
             val outputRow = IntArray(width)
+            val colors = IntArray(frames.size)
             val redValues = IntArray(frames.size)
             val greenValues = IntArray(frames.size)
             val blueValues = IntArray(frames.size)
@@ -1467,22 +1408,14 @@ class JpegStacker(private val context: Context) {
                 }
                 for (x in 0 until width) {
                     frames.indices.forEach { index ->
-                        val color = sourceRows[index][x]
-                        redValues[index] = color ushr 16 and 0xFF
-                        greenValues[index] = color ushr 8 and 0xFF
-                        blueValues[index] = color and 0xFF
+                        colors[index] = sourceRows[index][x]
                     }
-                    java.util.Arrays.sort(redValues)
-                    java.util.Arrays.sort(greenValues)
-                    java.util.Arrays.sort(blueValues)
-                    val red = medianChannel(redValues)
-                    val green = medianChannel(greenValues)
-                    val blue = medianChannel(blueValues)
-                    outputRow[x] =
-                        0xFF000000.toInt() or
-                            (red shl 16) or
-                            (green shl 8) or
-                            blue
+                    outputRow[x] = medianArgbPixel(
+                        colors = colors,
+                        redValues = redValues,
+                        greenValues = greenValues,
+                        blueValues = blueValues
+                    )
                 }
                 output.setPixels(outputRow, 0, width, 0, y, width, 1)
                 onRowCompleted(y + 1)
@@ -1491,15 +1424,6 @@ class JpegStacker(private val context: Context) {
         } catch (error: Throwable) {
             output.recycle()
             throw error
-        }
-    }
-
-    private fun medianChannel(values: IntArray): Int {
-        val middle = values.size / 2
-        return if (values.size % 2 == 1) {
-            values[middle]
-        } else {
-            (values[middle - 1] + values[middle]) / 2
         }
     }
 
@@ -1515,6 +1439,7 @@ class JpegStacker(private val context: Context) {
         try {
             val sourceRows = Array(frames.size) { IntArray(width) }
             val outputRow = IntArray(width)
+            val colors = IntArray(frames.size)
             val redValues = IntArray(frames.size)
             val greenValues = IntArray(frames.size)
             val blueValues = IntArray(frames.size)
@@ -1535,18 +1460,31 @@ class JpegStacker(private val context: Context) {
                 for (x in 0 until width) {
                     frames.indices.forEach { index ->
                         val color = sourceRows[index][x]
-                        redValues[index] = color ushr 16 and 0xFF
-                        greenValues[index] = color ushr 8 and 0xFF
-                        blueValues[index] = color and 0xFF
+                        colors[index] = color
+                        if (signalPreserving) {
+                            redValues[index] = color ushr 16 and 0xFF
+                            greenValues[index] = color ushr 8 and 0xFF
+                            blueValues[index] = color and 0xFF
+                        }
                     }
-                    val red = sigmaClippedChannel(redValues, sigma, signalPreserving)
-                    val green = sigmaClippedChannel(greenValues, sigma, signalPreserving)
-                    val blue = sigmaClippedChannel(blueValues, sigma, signalPreserving)
-                    outputRow[x] =
+                    outputRow[x] = if (signalPreserving) {
+                        val red = signalPreservingSigmaChannel(redValues, sigma)
+                        val green = signalPreservingSigmaChannel(greenValues, sigma)
+                        val blue = signalPreservingSigmaChannel(blueValues, sigma)
                         0xFF000000.toInt() or
                             (red shl 16) or
                             (green shl 8) or
                             blue
+                    } else {
+                        sigmaClipArgbPixel(
+                            colors = colors,
+                            sigmaThreshold = sigma,
+                            iterations = 1,
+                            redValues = redValues,
+                            greenValues = greenValues,
+                            blueValues = blueValues
+                        )
+                    }
                 }
                 output.setPixels(outputRow, 0, width, 0, y, width, 1)
                 onRowCompleted(y + 1)
@@ -1558,77 +1496,33 @@ class JpegStacker(private val context: Context) {
         }
     }
 
-    private fun sigmaClippedChannel(
-        values: IntArray,
-        sigma: Double,
-        signalPreserving: Boolean = false
-    ): Int {
-        val effectiveSigma = if (signalPreserving) maxOf(2.0, sigma) else sigma
-        val mean = values.average()
-        var squaredDifferenceSum = 0.0
-        values.forEach { value ->
-            val difference = value - mean
-            squaredDifferenceSum += difference * difference
-        }
-        val standardDeviation = sqrt(squaredDifferenceSum / values.size)
-        val threshold = effectiveSigma * standardDeviation
-        val sorted = if (signalPreserving && values.size >= 4) {
-            values.copyOf().also { java.util.Arrays.sort(it) }
-        } else {
-            null
-        }
-        val preserveBrightFloor = sorted?.let {
-            val max = it.last()
-            val second = it[it.lastIndex - 1]
-            if (
-                max >= mean + threshold &&
-                second >= mean + threshold * 0.65 &&
-                max - second <= 45
-            ) {
-                second
-            } else {
-                null
-            }
-        }
-        var acceptedSum = 0L
-        var acceptedCount = 0
-        values.forEach { value ->
-            if (
-                standardDeviation == 0.0 ||
-                kotlin.math.abs(value - mean) <= threshold ||
-                (preserveBrightFloor != null && value >= preserveBrightFloor)
-            ) {
-                acceptedSum += value
-                acceptedCount++
-            }
-        }
-        return if (acceptedCount > 0) {
-            (acceptedSum.toDouble() / acceptedCount).roundToInt().coerceIn(0, 255)
-        } else {
-            mean.roundToInt().coerceIn(0, 255)
-        }
-    }
+    private data class ManualAlignmentReference(
+        val image: ArgbPixelImage,
+        val scaleX: Float,
+        val scaleY: Float
+    )
 
     private fun createAlignmentReference(
         frame: SessionFrame,
         targetWidth: Int,
         targetHeight: Int
-    ): AlignmentReference {
+    ): ManualAlignmentReference {
         val bitmap = decodePreparedFrame(frame, targetWidth, targetHeight)
             ?: error("Не удалось подготовить опорный кадр")
         return try {
-            createGrayscaleSample(bitmap)
+            createManualAlignmentSample(bitmap)
         } finally {
             bitmap.recycle()
         }
     }
 
     private suspend fun findAlignmentOrZero(
-        reference: AlignmentReference,
+        reference: ManualAlignmentReference,
         candidate: Bitmap,
         frameNumber: Int,
         totalFrames: Int,
         safeMode: Boolean,
+        source: ManualStackingSource,
         onAlignment: suspend (
             current: Int,
             total: Int,
@@ -1641,27 +1535,30 @@ class JpegStacker(private val context: Context) {
             "Выравнивание кадра $frameNumber из $totalFrames"
         )
         return try {
-            val shift = findAlignment(reference, candidate)
-            if (
-                safeMode &&
-                !shift.isZero &&
-                (
-                    shift.confidence < MIN_SAFE_ALIGNMENT_CONFIDENCE ||
-                        shift.score > MAX_SAFE_ALIGNMENT_SCORE
-                    )
-            ) {
-                onAlignment(
-                    frameNumber,
-                    totalFrames,
-                    "Выравнивание кадра $frameNumber: низкая уверенность, сдвиг не применён"
-                )
-                return AlignmentShift.Zero
-            }
+            val candidateSample = createManualAlignmentSample(candidate)
+            val maxShift = ceil(30f / reference.scaleX).toInt().coerceAtLeast(1)
+            val diagnostic = alignManualImages(
+                reference.image,
+                candidateSample.image,
+                safeMode = safeMode,
+                maxShiftPx = maxShift
+            )
+            val shift = diagnostic.shift.copy(
+                dx = (diagnostic.shift.dx * reference.scaleX).roundToInt().coerceIn(-30, 30),
+                dy = (diagnostic.shift.dy * reference.scaleY).roundToInt().coerceIn(-30, 30)
+            )
+            Log.i(
+                "AstroPhotoAlignment",
+                "source=${source.metadataValue} starsDetected=${diagnostic.starsDetected} " +
+                    "matches=${diagnostic.matches} shiftX=${shift.dx} shiftY=${shift.dy} " +
+                    "confidence=${"%.3f".format(Locale.US, diagnostic.confidence)} " +
+                    "method=${diagnostic.method} fallbackReason=${diagnostic.fallbackReason.orEmpty()}"
+            )
             onAlignment(
                 frameNumber,
                 totalFrames,
                 "Выравнивание кадра $frameNumber из $totalFrames: " +
-                    "dx=${shift.dx}, dy=${shift.dy}"
+                    "dx=${shift.dx}, dy=${shift.dy}, method=${diagnostic.method}"
             )
             shift
         } catch (error: CancellationException) {
@@ -1677,7 +1574,7 @@ class JpegStacker(private val context: Context) {
         }
     }
 
-    private fun createGrayscaleSample(bitmap: Bitmap): AlignmentReference {
+    private fun createManualAlignmentSample(bitmap: Bitmap): ManualAlignmentReference {
         val maxDimension = 640f
         val scale = minOf(
             1f,
@@ -1696,25 +1593,8 @@ class JpegStacker(private val context: Context) {
         try {
             val pixels = IntArray(width * height)
             thumbnail.getPixels(pixels, 0, width, 0, 0, width, height)
-            val grayscale = ByteArray(pixels.size)
-            var minimum = 255
-            var maximum = 0
-            pixels.forEachIndexed { index, color ->
-                val red = color ushr 16 and 0xFF
-                val green = color ushr 8 and 0xFF
-                val blue = color and 0xFF
-                val value = (red * 77 + green * 150 + blue * 29) ushr 8
-                grayscale[index] = value.toByte()
-                minimum = minOf(minimum, value)
-                maximum = maxOf(maximum, value)
-            }
-            require(maximum - minimum >= 8) {
-                "Недостаточно деталей для выравнивания"
-            }
-            return AlignmentReference(
-                grayscale = grayscale,
-                width = width,
-                height = height,
+            return ManualAlignmentReference(
+                image = ArgbPixelImage(width, height, pixels),
                 scaleX = bitmap.width.toFloat() / width,
                 scaleY = bitmap.height.toFloat() / height
             )
@@ -1723,94 +1603,74 @@ class JpegStacker(private val context: Context) {
         }
     }
 
-    private fun findAlignment(
-        reference: AlignmentReference,
-        candidateBitmap: Bitmap
-    ): AlignmentShift {
-        val candidate = createGrayscaleSample(candidateBitmap)
-        require(
-            candidate.width == reference.width &&
-                candidate.height == reference.height
-        ) {
-            "Размеры кадров не совпадают"
+    private fun alignProfileFrame(
+        reference: Bitmap,
+        candidate: Bitmap,
+        recipe: AstroProfileRecipe
+    ): StarAlignmentResult {
+        val referenceSample = createManualAlignmentSample(reference)
+        val candidateSample = createManualAlignmentSample(candidate)
+        val maximumSampleShift = ceil(30f / referenceSample.scaleX).toInt().coerceAtLeast(1)
+        val diagnostic = alignManualImages(
+            referenceSample.image,
+            candidateSample.image,
+            safeMode = !recipe.aggressiveAlignment,
+            maxShiftPx = maximumSampleShift,
+            roi = recipe.alignmentRoi
+        )
+        val applied = diagnostic.method != "none"
+        return StarAlignmentResult(
+            dx = if (applied) {
+                (diagnostic.shift.dx * referenceSample.scaleX).roundToInt().coerceIn(-30, 30)
+            } else 0,
+            dy = if (applied) {
+                (diagnostic.shift.dy * referenceSample.scaleY).roundToInt().coerceIn(-30, 30)
+            } else 0,
+            applied = applied,
+            confidence = diagnostic.confidence,
+            referenceStars = 0,
+            candidateStars = diagnostic.starsDetected,
+            matchedStars = diagnostic.matches,
+            method = diagnostic.method,
+            warning = if (applied) null else "Profile alignment is uncertain"
+        )
+    }
+
+    private fun bitmapToArgbImage(bitmap: Bitmap): ArgbPixelImage {
+        val pixels = IntArray(bitmap.width * bitmap.height)
+        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        return ArgbPixelImage(bitmap.width, bitmap.height, pixels)
+    }
+
+    private fun bitmapFromArgbImage(image: ArgbPixelImage): Bitmap =
+        Bitmap.createBitmap(image.width, image.height, Bitmap.Config.ARGB_8888).apply {
+            setPixels(image.pixels, 0, image.width, 0, 0, image.width, image.height)
         }
 
-        val maxDx = ceil(30f / reference.scaleX).toInt().coerceAtLeast(1)
-        val maxDy = ceil(30f / reference.scaleY).toInt().coerceAtLeast(1)
-        val sampleStep = maxOf(3, minOf(8, maxOf(maxDx, maxDy) / 4 + 2))
-        var bestScore = Double.MAX_VALUE
-        var bestDx = 0
-        var bestDy = 0
-        var zeroScore = Double.MAX_VALUE
+    private fun analyzeProfileBitmap(
+        bitmap: Bitmap,
+        recipe: AstroProfileRecipe
+    ): ProfileSanityMetrics = analyzeProfileImage(
+        bitmapToArgbImage(bitmap),
+        recipe.roi,
+        recipe.sensitivity
+    )
 
-        for (dy in -maxDy..maxDy) {
-            val startY = maxOf(2, -dy + 2)
-            val endY = minOf(reference.height - 2, reference.height - dy - 2)
-            if (endY <= startY) continue
-            for (dx in -maxDx..maxDx) {
-                val startX = maxOf(2, -dx + 2)
-                val endX = minOf(reference.width - 2, reference.width - dx - 2)
-                if (endX <= startX) continue
-
-                var difference = 0L
-                var samples = 0
-                var y = startY
-                while (y < endY) {
-                    var x = startX
-                    val referenceRow = y * reference.width
-                    val candidateRow = (y + dy) * candidate.width
-                    while (x < endX) {
-                        val referenceValue =
-                            reference.grayscale[referenceRow + x].toInt() and 0xFF
-                        val candidateValue =
-                            candidate.grayscale[candidateRow + x + dx].toInt() and 0xFF
-                        difference += kotlin.math.abs(
-                            referenceValue - candidateValue
-                        )
-                        samples++
-                        x += sampleStep
-                    }
-                    y += sampleStep
-                }
-                if (samples == 0) continue
-                val score = difference.toDouble() / samples
-                if (dx == 0 && dy == 0) {
-                    zeroScore = score
-                }
-                val currentDistance = kotlin.math.abs(dx) + kotlin.math.abs(dy)
-                val bestDistance =
-                    kotlin.math.abs(bestDx) + kotlin.math.abs(bestDy)
-                if (
-                    score < bestScore ||
-                    (score == bestScore && currentDistance < bestDistance)
-                ) {
-                    bestScore = score
-                    bestDx = dx
-                    bestDy = dy
-                }
-            }
-        }
-        require(bestScore < Double.MAX_VALUE) {
-            "Не удалось найти сдвиг"
-        }
-        val scaledDx = (bestDx * reference.scaleX).roundToInt().coerceIn(-30, 30)
-        val scaledDy = (bestDy * reference.scaleY).roundToInt().coerceIn(-30, 30)
-        val confidence = if (scaledDx == 0 && scaledDy == 0) {
-            1.0
-        } else {
-            val baseline = zeroScore.takeIf { it < Double.MAX_VALUE }
-                ?: bestScore
-            if (baseline <= 0.0) {
-                1.0
-            } else {
-                ((baseline - bestScore) / baseline).coerceIn(0.0, 1.0)
-            }
-        }
-        return AlignmentShift(
-            dx = scaledDx,
-            dy = scaledDy,
-            score = bestScore,
-            confidence = confidence
+    private fun logProfileStage(
+        profile: AstroProcessingProfile,
+        source: ManualStackingSource,
+        stage: String,
+        metrics: ProfileSanityMetrics
+    ) {
+        Log.i(
+            "AstroPhotoProfileStage",
+            "profile=${profile.name} source=${source.metadataValue} stage=$stage " +
+                "median=${metrics.medianLuminance} low=${metrics.lowPercentile} " +
+                "high=${metrics.highPercentile} black=${metrics.blackPercent} " +
+                "white=${metrics.whitePercent} stars=${metrics.stars} " +
+                "starContrast=${metrics.medianStarContrast} " +
+                "backgroundSpread=${metrics.backgroundSpread} " +
+                "banding=${metrics.largeScaleBanding}"
         )
     }
 
@@ -1824,17 +1684,25 @@ class JpegStacker(private val context: Context) {
         try {
             frames.forEachIndexed { index, frame ->
                 currentCoroutineContext().ensureActive()
-                var prepared = decodePreparedFrame(
-                    frame,
-                    targetWidth,
-                    targetHeight
-                ) ?: error("Не удалось прочитать JPEG: ${frame.fileName}")
+                var prepared = decodeFrame(frame)
+                    ?: error("Не удалось прочитать JPEG: ${frame.fileName}")
                 try {
+                    val validation = validateDarkFrames(
+                        darkFrames = listOf(
+                            decodedPixelFrameShape(prepared.width, prepared.height)
+                        ),
+                        lightFrames = listOf(
+                            decodedPixelFrameShape(targetWidth, targetHeight)
+                        )
+                    )
+                    if (validation is DarkValidationResult.Invalid) {
+                        error("${validation.message}: ${frame.fileName}")
+                    }
                     if (average == null) {
                         average = prepared.copy(Bitmap.Config.ARGB_8888, true)
                             ?: error("Не удалось подготовить JPEG")
                     } else {
-                        addToRunningAverage(
+                        addToMasterDarkRunningAverage(
                             average = checkNotNull(average),
                             next = prepared,
                             frameNumber = index + 1
@@ -1862,6 +1730,7 @@ class JpegStacker(private val context: Context) {
         shadowOffset: Int,
         alignFrames: Boolean,
         alignmentSafe: Boolean,
+        source: ManualStackingSource,
         onProgress: suspend (
             message: String,
             current: Int,
@@ -1911,7 +1780,8 @@ class JpegStacker(private val context: Context) {
                             candidate = light,
                             frameNumber = index + 1,
                             totalFrames = lightFrames.size,
-                            safeMode = alignmentSafe
+                            safeMode = alignmentSafe,
+                            source = source
                         ) { current, total, message ->
                             onProgress(message, current, total)
                         }
@@ -1978,6 +1848,7 @@ class JpegStacker(private val context: Context) {
         val averagePixels = IntArray(width * rowCount)
         val lightPixels = IntArray(width * rowCount)
         val darkPixels = IntArray(width * rowCount)
+        val calibratedPixels = IntArray(width * rowCount)
         var top = 0
 
         while (top < average.height) {
@@ -2013,38 +1884,23 @@ class JpegStacker(private val context: Context) {
                 dy = dy,
                 fillColor = 0xFF000000.toInt()
             )
+            subtractMasterDarkArgb(
+                lightPixels = lightPixels,
+                darkPixels = darkPixels,
+                outputPixels = calibratedPixels,
+                neutralOffset = shadowOffset,
+                pixelCount = pixelCount
+            )
 
             for (pixelIndex in 0 until pixelCount) {
-                val lightColor = lightPixels[pixelIndex]
-                val darkColor = darkPixels[pixelIndex]
-                val outsideFrame = lightColor ushr 24 == 0
-                val calibratedRed = if (outsideFrame) {
-                    0
+                val calibratedColor = if (lightPixels[pixelIndex] ushr 24 == 0) {
+                    0xFF000000.toInt()
                 } else {
-                    calibratedChannel(
-                        light = lightColor ushr 16 and 0xFF,
-                        dark = darkColor ushr 16 and 0xFF,
-                        shadowOffset = shadowOffset
-                    )
+                    calibratedPixels[pixelIndex]
                 }
-                val calibratedGreen = if (outsideFrame) {
-                    0
-                } else {
-                    calibratedChannel(
-                        light = lightColor ushr 8 and 0xFF,
-                        dark = darkColor ushr 8 and 0xFF,
-                        shadowOffset = shadowOffset
-                    )
-                }
-                val calibratedBlue = if (outsideFrame) {
-                    0
-                } else {
-                    calibratedChannel(
-                        light = lightColor and 0xFF,
-                        dark = darkColor and 0xFF,
-                        shadowOffset = shadowOffset
-                    )
-                }
+                val calibratedRed = calibratedColor ushr 16 and 0xFF
+                val calibratedGreen = calibratedColor ushr 8 and 0xFF
+                val calibratedBlue = calibratedColor and 0xFF
                 val oldColor = averagePixels[pixelIndex]
                 val red = if (frameNumber == 1) {
                     calibratedRed
@@ -2082,97 +1938,23 @@ class JpegStacker(private val context: Context) {
         }
     }
 
-    private fun calibratedChannel(
-        light: Int,
-        dark: Int,
-        shadowOffset: Int
-    ): Int {
-        val safeDark = (dark * SAFE_DARK_SUBTRACTION_STRENGTH).roundToInt()
-        return (light - safeDark + shadowOffset).coerceIn(0, 255)
-    }
-
     private fun applyAstroStretchInPlace(bitmap: Bitmap) {
-        val histogram = IntArray(256)
         val width = bitmap.width
         val row = IntArray(width)
-        var totalPixels = 0L
-
+        val histogram = IntArray(256)
         for (y in 0 until bitmap.height) {
             bitmap.getPixels(row, 0, width, 0, y, width, 1)
-            for (color in row) {
-                val red = color ushr 16 and 0xFF
-                val green = color ushr 8 and 0xFF
-                val blue = color and 0xFF
-                val luminance = (red * 77 + green * 150 + blue * 29) ushr 8
-                histogram[luminance]++
-                totalPixels++
-            }
+            row.forEach { color -> histogram[pixelLuminance(color)]++ }
         }
-
-        val black = histogramPercentile(histogram, totalPixels, 0.002)
-            .coerceIn(0, 28)
-        val white = histogramPercentile(histogram, totalPixels, 0.998)
-            .coerceIn(black + 24, 255)
-        val range = (white - black).coerceAtLeast(1).toFloat()
-        val strength = 8.0
-        val denominator = ln(1.0 + strength)
-
+        val parameters = manualAstroStretchParameters(
+            histogram,
+            width.toLong() * bitmap.height.toLong()
+        )
         for (y in 0 until bitmap.height) {
             bitmap.getPixels(row, 0, width, 0, y, width, 1)
-            for (x in 0 until width) {
-                val color = row[x]
-                val red = astroStretchChannel(
-                    color ushr 16 and 0xFF,
-                    black,
-                    range,
-                    strength,
-                    denominator
-                )
-                val green = astroStretchChannel(
-                    color ushr 8 and 0xFF,
-                    black,
-                    range,
-                    strength,
-                    denominator
-                )
-                val blue = astroStretchChannel(
-                    color and 0xFF,
-                    black,
-                    range,
-                    strength,
-                    denominator
-                )
-                row[x] =
-                    0xFF000000.toInt() or (red shl 16) or (green shl 8) or blue
-            }
+            row.indices.forEach { x -> row[x] = stretchArgbColor(row[x], parameters) }
             bitmap.setPixels(row, 0, width, 0, y, width, 1)
         }
-    }
-
-    private fun astroStretchChannel(
-        value: Int,
-        black: Int,
-        range: Float,
-        strength: Double,
-        denominator: Double
-    ): Int {
-        val normalized = ((value - black) / range).coerceIn(0f, 1f).toDouble()
-        val stretched = ln(1.0 + strength * normalized) / denominator
-        return (stretched * 255.0).roundToInt().coerceIn(0, 255)
-    }
-
-    private fun histogramPercentile(
-        histogram: IntArray,
-        totalPixels: Long,
-        percentile: Double
-    ): Int {
-        val target = (totalPixels * percentile).toLong().coerceAtLeast(1L)
-        var accumulated = 0L
-        histogram.forEachIndexed { index, count ->
-            accumulated += count
-            if (accumulated >= target) return index
-        }
-        return histogram.lastIndex
     }
 
     private suspend fun addToRunningAverage(
@@ -2203,28 +1985,74 @@ class JpegStacker(private val context: Context) {
                 fillColor = 0xFF000000.toInt()
             )
 
-            for (pixelIndex in 0 until pixelCount) {
-                val oldColor = averagePixels[pixelIndex]
-                val newColor = nextPixels[pixelIndex]
-                val red = runningAverageChannel(
-                    old = oldColor ushr 16 and 0xFF,
-                    next = newColor ushr 16 and 0xFF,
-                    frameNumber = frameNumber
-                )
-                val green = runningAverageChannel(
-                    old = oldColor ushr 8 and 0xFF,
-                    next = newColor ushr 8 and 0xFF,
-                    frameNumber = frameNumber
-                )
-                val blue = runningAverageChannel(
-                    old = oldColor and 0xFF,
-                    next = newColor and 0xFF,
-                    frameNumber = frameNumber
-                )
-                averagePixels[pixelIndex] =
-                    0xFF000000.toInt() or (red shl 16) or (green shl 8) or blue
-            }
+            updateRunningAverageArgb(averagePixels, nextPixels, frameNumber, pixelCount)
 
+            average.setPixels(averagePixels, 0, width, 0, top, width, rows)
+            top += rows
+        }
+    }
+
+    private suspend fun addToMasterDarkRunningAverage(
+        average: Bitmap,
+        next: Bitmap,
+        frameNumber: Int
+    ) {
+        val width = average.width
+        val rowCount = 32
+        val averagePixels = IntArray(width * rowCount)
+        val nextPixels = IntArray(width * rowCount)
+        var top = 0
+
+        while (top < average.height) {
+            currentCoroutineContext().ensureActive()
+            val rows = minOf(rowCount, average.height - top)
+            val pixelCount = width * rows
+            average.getPixels(averagePixels, 0, width, 0, top, width, rows)
+            next.getPixels(nextPixels, 0, width, 0, top, width, rows)
+            updateMasterDarkRunningAverageArgb(
+                averagePixels = averagePixels,
+                nextPixels = nextPixels,
+                frameNumber = frameNumber,
+                pixelCount = pixelCount
+            )
+            average.setPixels(averagePixels, 0, width, 0, top, width, rows)
+            top += rows
+        }
+    }
+
+    private suspend fun addToManualRunningAverage(
+        average: Bitmap,
+        next: Bitmap,
+        frameNumber: Int,
+        dx: Int,
+        dy: Int
+    ) {
+        val width = average.width
+        val rowCount = 32
+        val averagePixels = IntArray(width * rowCount)
+        val nextPixels = IntArray(width * rowCount)
+        var top = 0
+
+        while (top < average.height) {
+            currentCoroutineContext().ensureActive()
+            val rows = minOf(rowCount, average.height - top)
+            val pixelCount = width * rows
+            average.getPixels(averagePixels, 0, width, 0, top, width, rows)
+            readShiftedPixels(
+                bitmap = next,
+                destination = nextPixels,
+                top = top,
+                rows = rows,
+                dx = dx,
+                dy = dy,
+                fillColor = 0xFF000000.toInt()
+            )
+            updateRunningAverageArgb(
+                averagePixels = averagePixels,
+                nextPixels = nextPixels,
+                frameNumber = frameNumber,
+                pixelCount = pixelCount
+            )
             average.setPixels(averagePixels, 0, width, 0, top, width, rows)
             top += rows
         }
@@ -2242,22 +2070,17 @@ class JpegStacker(private val context: Context) {
         val width = bitmap.width
         destination.fill(fillColor, 0, width * rows)
 
-        val destinationX = maxOf(0, -dx)
-        val destinationRight = minOf(width, width - dx)
-        val copyWidth = destinationRight - destinationX
-        val destinationY = maxOf(top, -dy)
-        val destinationBottom = minOf(top + rows, bitmap.height - dy)
-        val copyRows = destinationBottom - destinationY
-        if (copyWidth <= 0 || copyRows <= 0) return
+        val region = shiftedCopyRegion(width, bitmap.height, top, rows, dx, dy)
+            ?: return
 
         bitmap.getPixels(
             destination,
-            (destinationY - top) * width + destinationX,
+            (region.destinationY - top) * width + region.destinationX,
             width,
-            destinationX + dx,
-            destinationY + dy,
-            copyWidth,
-            copyRows
+            region.sourceX,
+            region.sourceY,
+            region.width,
+            region.height
         )
     }
 
@@ -2270,26 +2093,31 @@ class JpegStacker(private val context: Context) {
     ) / frameNumber
 
     private data class SavedJpeg(
+        val fileName: String,
         val displayPath: String,
         val contentUri: String?,
         val filePath: String?
     )
 
-    private fun saveBitmap(
+    private suspend fun saveBitmap(
         session: SessionSummary,
         bitmap: Bitmap,
         fileName: String
     ): SavedJpeg {
+        currentCoroutineContext().ensureActive()
         val jpegQuality = CameraSettingsStore(context).load().jpegQuality
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val resolver = context.contentResolver
             val relativePath =
                 "${Environment.DIRECTORY_PICTURES}/AstroPhoto/" +
                     "${session.folderName}/Processed/"
+            val finalFileName = findUniqueProcessedResultName(fileName) { candidate ->
+                mediaStoreProcessedNameExists(relativePath, candidate)
+            }
             val uri = resolver.insert(
                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
                 ContentValues().apply {
-                    put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+                    put(MediaStore.Images.Media.DISPLAY_NAME, finalFileName)
                     put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
                     put(MediaStore.Images.Media.RELATIVE_PATH, relativePath)
                     put(MediaStore.Images.Media.IS_PENDING, 1)
@@ -2302,6 +2130,7 @@ class JpegStacker(private val context: Context) {
                         error("Не удалось сохранить результат")
                     }
                 } ?: error("Не удалось сохранить результат")
+                currentCoroutineContext().ensureActive()
                 resolver.update(
                     uri,
                     ContentValues().apply {
@@ -2310,22 +2139,33 @@ class JpegStacker(private val context: Context) {
                     null,
                     null
                 )
-                val savedSize = resolver.query(
+                val savedInfo = resolver.query(
                     uri,
-                    arrayOf(MediaStore.Images.Media.SIZE),
+                    arrayOf(
+                        MediaStore.Images.Media.DISPLAY_NAME,
+                        MediaStore.Images.Media.SIZE
+                    ),
                     null,
                     null,
                     null
                 )?.use { cursor ->
-                    if (cursor.moveToFirst()) cursor.getLong(0) else 0L
-                } ?: 0L
-                if (savedSize <= 0L) {
+                    if (cursor.moveToFirst()) {
+                        cursor.getString(0).orEmpty().ifBlank { finalFileName } to
+                            cursor.getLong(1)
+                    } else {
+                        finalFileName to 0L
+                    }
+                } ?: (finalFileName to 0L)
+                if (savedInfo.second <= 0L) {
                     resolver.delete(uri, null, null)
                     error("Файл результата не был сохранён")
                 }
+                currentCoroutineContext().ensureActive()
+                val savedFileName = savedInfo.first
                 return SavedJpeg(
+                    fileName = savedFileName,
                     displayPath =
-                        "Pictures/AstroPhoto/${session.folderName}/Processed/$fileName",
+                        "Pictures/AstroPhoto/${session.folderName}/Processed/$savedFileName",
                     contentUri = uri.toString(),
                     filePath = null
                 )
@@ -2346,29 +2186,71 @@ class JpegStacker(private val context: Context) {
         if (!directory.exists() && !directory.mkdirs()) {
             error("Не удалось создать папку Processed")
         }
-        val file = File(directory, fileName)
-        val tempFile = File(directory, "$fileName.tmp")
-        if (tempFile.exists()) tempFile.delete()
-        require(!file.exists()) { "Файл результата уже существует" }
+        val finalFileName = findUniqueProcessedResultName(fileName) { candidate ->
+            File(directory, candidate).exists() ||
+                File(directory, "$candidate.tmp").exists()
+        }
+        val file = File(directory, finalFileName)
+        val tempFile = File(directory, "$finalFileName.tmp")
+        var moved = false
         try {
-            FileOutputStream(tempFile).use { output ->
+            require(tempFile.createNewFile()) {
+                "Не удалось создать временный файл результата"
+            }
+            FileOutputStream(tempFile, false).use { output ->
                 if (!bitmap.compress(Bitmap.CompressFormat.JPEG, jpegQuality, output)) {
                     error("Не удалось сохранить результат")
                 }
             }
+            currentCoroutineContext().ensureActive()
             require(tempFile.length() > 0L) { "Файл результата не был сохранён" }
-            require(tempFile.renameTo(file)) { "Не удалось завершить сохранение результата" }
+            try {
+                Files.move(tempFile.toPath(), file.toPath())
+                moved = true
+            } catch (error: Exception) {
+                throw IllegalStateException(
+                    "Не удалось создать уникальный файл результата",
+                    error
+                )
+            }
+            currentCoroutineContext().ensureActive()
             require(file.length() > 0L) { "Файл результата не был сохранён" }
         } catch (error: Exception) {
             tempFile.delete()
-            file.delete()
+            if (moved) file.delete()
             throw error
         }
         return SavedJpeg(
+            fileName = finalFileName,
             displayPath = file.absolutePath,
             contentUri = null,
             filePath = file.absolutePath
         )
+    }
+
+    private fun deleteSavedJpeg(saved: SavedJpeg) {
+        saved.contentUri?.let { uri ->
+            runCatching { context.contentResolver.delete(Uri.parse(uri), null, null) }
+            return
+        }
+        saved.filePath?.let { path -> runCatching { File(path).delete() } }
+    }
+
+    private fun mediaStoreProcessedNameExists(
+        relativePath: String,
+        fileName: String
+    ): Boolean {
+        val resolver = context.contentResolver
+        return resolver.query(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            arrayOf(MediaStore.Images.Media._ID),
+            "${MediaStore.Images.Media.DISPLAY_NAME}=? AND " +
+                "${MediaStore.Images.Media.RELATIVE_PATH}=?",
+            arrayOf(fileName, relativePath),
+            null
+        )?.use { cursor ->
+            cursor.moveToFirst()
+        } ?: error("Не удалось проверить имя файла результата")
     }
 
     private fun appendSessionInfo(
@@ -2377,6 +2259,7 @@ class JpegStacker(private val context: Context) {
         frameCount: Int,
         alignmentEnabled: Boolean,
         astroStretchApplied: Boolean,
+        source: ManualStackingSource,
         processedAtMillis: Long
     ) {
         val processedAt = SimpleDateFormat(
@@ -2387,6 +2270,7 @@ class JpegStacker(private val context: Context) {
             appendLine()
             appendLine("processedFile: Processed/$fileName")
             appendLine("processedFrames: $frameCount")
+            appendLine("source=${source.metadataValue}")
             appendLine("alignmentEnabled: $alignmentEnabled")
             appendLine("astroStretchApplied: $astroStretchApplied")
             appendLine("processedAt: $processedAt")
@@ -2408,6 +2292,7 @@ class JpegStacker(private val context: Context) {
         shadowOffset: Int,
         alignmentEnabled: Boolean,
         astroStretchApplied: Boolean,
+        source: ManualStackingSource,
         processedAtMillis: Long
     ) {
         val processedAt = SimpleDateFormat(
@@ -2420,6 +2305,7 @@ class JpegStacker(private val context: Context) {
             appendLine("processedType: JPEG stacking + Dark Frames")
             appendLine("processedLightFrames: $lightFrameCount")
             appendLine("processedDarkFrames: $darkFrameCount")
+            appendLine("source=${source.metadataValue}")
             appendLine("shadowOffset: $shadowOffset")
             appendLine("darkSubtractionMode: Safe")
             appendLine("alignmentEnabled: $alignmentEnabled")
@@ -2444,6 +2330,7 @@ class JpegStacker(private val context: Context) {
         alignmentEnabled: Boolean,
         downscaled: Boolean,
         astroStretchApplied: Boolean,
+        source: ManualStackingSource,
         processedAtMillis: Long
     ) {
         val processedAt = SimpleDateFormat(
@@ -2455,6 +2342,7 @@ class JpegStacker(private val context: Context) {
             appendLine("processedFile: Processed/$fileName")
             appendLine("processedType: Median JPEG stacking")
             appendLine("medianFrames: $frameCount")
+            appendLine("source=${source.metadataValue}")
             appendLine("medianAlignmentEnabled: $alignmentEnabled")
             appendLine("medianDownscaled: $downscaled")
             appendLine("astroStretchApplied: $astroStretchApplied")
@@ -2475,6 +2363,7 @@ class JpegStacker(private val context: Context) {
         alignmentEnabled: Boolean,
         downscaled: Boolean,
         astroStretchApplied: Boolean,
+        source: ManualStackingSource,
         processedAtMillis: Long
     ) {
         val processedAt = SimpleDateFormat(
@@ -2487,6 +2376,7 @@ class JpegStacker(private val context: Context) {
             appendLine("processedType: Sigma clipping JPEG stacking")
             appendLine("sigmaValue: $sigma")
             appendLine("sigmaFrames: $frameCount")
+            appendLine("source=${source.metadataValue}")
             appendLine("sigmaAlignmentEnabled: $alignmentEnabled")
             appendLine("sigmaDownscaled: $downscaled")
             appendLine("astroStretchApplied: $astroStretchApplied")
@@ -2515,6 +2405,10 @@ class JpegStacker(private val context: Context) {
         starBoost: String,
         starsBefore: Int,
         starsAfter: Int,
+        source: ManualStackingSource,
+        sanity: String,
+        fallback: String,
+        fallbackReason: String,
         warnings: List<String>,
         processedAtMillis: Long
     ) {
@@ -2527,6 +2421,7 @@ class JpegStacker(private val context: Context) {
             appendLine("processedFile: Processed/$fileName")
             appendLine("processedType: Astro profile JPEG")
             appendLine("profile: ${profile.title}")
+            appendLine("source=${source.metadataValue}")
             appendLine("method: $method")
             appendLine("framesUsed: $framesUsed")
             appendLine("framesRejected: $framesRejected")
@@ -2539,6 +2434,9 @@ class JpegStacker(private val context: Context) {
             appendLine("starBoost: $starBoost")
             appendLine("starsBefore: $starsBefore")
             appendLine("starsAfter: $starsAfter")
+            appendLine("sanity: $sanity")
+            appendLine("fallback: $fallback")
+            appendLine("fallbackReason: $fallbackReason")
             warnings.forEachIndexed { index, warning ->
                 appendLine("profileWarning${index + 1}: $warning")
             }
@@ -2673,9 +2571,6 @@ class JpegStacker(private val context: Context) {
         private const val MAX_PROFILE_AVERAGE_PIXELS = 8_000_000L
         private const val MAX_COMPLEX_STACK_PIXELS_MANY_FRAMES = 2_500_000L
         private const val MAX_COMPLEX_STACK_PIXELS_MEDIUM_SERIES = 4_000_000L
-        private const val SAFE_DARK_SUBTRACTION_STRENGTH = 0.65f
-        private const val MIN_SAFE_ALIGNMENT_CONFIDENCE = 0.02
-        private const val MAX_SAFE_ALIGNMENT_SCORE = 55.0
         private val SUPPORTED_SIGMA_VALUES = setOf(1.5, 2.0, 2.5, 3.0)
     }
 }
@@ -2723,6 +2618,7 @@ fun JpegStackingBlock(
     val framesRepository = remember {
         SessionFramesRepository(context.applicationContext)
     }
+    val cropsRepository = remember { CroppedFramesRepository(context.applicationContext) }
     val marksStore = remember { FrameMarksStore(context.applicationContext) }
     val stacker = remember { JpegStacker(context.applicationContext) }
     val coroutineScope = rememberCoroutineScope()
@@ -2731,6 +2627,10 @@ fun JpegStackingBlock(
         mutableStateOf<List<SessionFrame>>(emptyList())
     }
     var marks by remember(session.folderName) { mutableStateOf(FrameMarks()) }
+    var cropManifest by remember(session.folderName) { mutableStateOf(CropManifest()) }
+    var stackingSource by remember(session.folderName) {
+        mutableStateOf(ManualStackingSource.ORIGINAL)
+    }
     var loading by remember(session.folderName) { mutableStateOf(true) }
     var favoritesOnly by remember(session.folderName) { mutableStateOf(false) }
     var stackingMode by remember(session.folderName) {
@@ -2754,6 +2654,7 @@ fun JpegStackingBlock(
     }
     var shadowOffset by remember(session.folderName) { mutableIntStateOf(16) }
     var stacking by remember(session.folderName) { mutableStateOf(false) }
+    var processingJob by remember(session.folderName) { mutableStateOf<Job?>(null) }
     var progressCurrent by remember(session.folderName) { mutableIntStateOf(0) }
     var progressTotal by remember(session.folderName) { mutableIntStateOf(0) }
     var status by remember(session.folderName) { mutableStateOf<String?>(null) }
@@ -2773,6 +2674,7 @@ fun JpegStackingBlock(
         if (!stacking) {
             loading = true
             frames = framesRepository.loadFrames(session)
+            cropManifest = cropsRepository.loadManifest(session)
             marks = marksStore.loadOrCreate(session)
             loading = false
         }
@@ -2789,9 +2691,22 @@ fun JpegStackingBlock(
     }
     val excludedLightKeys = marks.bad + marks.autoBad
     val badFrames = jpegFrames.filter { it.key in excludedLightKeys }
-    val goodFrames = jpegFrames.filterNot { it.key in excludedLightKeys }
-    val favoriteFrames = goodFrames.filter { it.key in marks.favorite }
-    val selectedFrames = if (favoritesOnly) favoriteFrames else goodFrames
+    val eligibleFrames = selectEligibleLightFrames(
+        frames = frames,
+        marks = marks,
+        favoritesOnly = false
+    )
+    val cropRecords = cropsRepository.records(cropManifest, frames)
+    val sourceSelection = resolveStackingSource(
+        originals = jpegFrames,
+        crops = cropRecords,
+        marks = marks,
+        favoritesOnly = favoritesOnly,
+        source = stackingSource
+    )
+    val selectedFrames = (sourceSelection as? StackingSourceSelection.Valid)?.frames.orEmpty()
+    val selectedCropEntries = (sourceSelection as? StackingSourceSelection.Valid)?.entries.orEmpty()
+    val sourceError = (sourceSelection as? StackingSourceSelection.Invalid)?.message
     val darkFrames = frames.filter {
         it.category == SessionFrameCategory.DARKS_JPEG
     }
@@ -2802,6 +2717,11 @@ fun JpegStackingBlock(
     val sigmaMode = stackingMode == JpegStackingMode.SIGMA
     val alignFrames = alignmentMode != StackAlignmentMode.OFF
     val alignmentSafe = alignmentMode == StackAlignmentMode.SAFE
+    val darkCropResult = if (useDarkFrames && stackingSource == ManualStackingSource.CROPPED) {
+        runCatching { commonDarkCrop(selectedCropEntries) }
+    } else {
+        null
+    }
 
     fun applyWorkflow(selectedWorkflow: StackProcessingWorkflow) {
         workflow = selectedWorkflow
@@ -2827,6 +2747,7 @@ fun JpegStackingBlock(
     }
 
     fun startStacking() {
+        if (stacking || processingJob?.isActive == true) return
         stacking = true
         progressCurrent = 0
         progressTotal = when {
@@ -2837,7 +2758,7 @@ fun JpegStackingBlock(
         }
         result = null
         status = "Подготовка кадров..."
-        coroutineScope.launch {
+        processingJob = coroutineScope.launch {
             try {
                 val stackResult = when {
                     sigmaMode -> stacker.sigmaStack(
@@ -2846,7 +2767,8 @@ fun JpegStackingBlock(
                         sigma = sigmaValue,
                         alignFrames = alignFrames,
                         alignmentSafe = alignmentSafe,
-                        autoStretch = autoStretchAfterStacking
+                        autoStretch = autoStretchAfterStacking,
+                        source = stackingSource
                     ) { message, current, total ->
                         progressCurrent = current
                         progressTotal = total
@@ -2857,7 +2779,8 @@ fun JpegStackingBlock(
                         frames = selectedFrames.take(MAX_MEDIAN_FRAMES_UI),
                         alignFrames = alignFrames,
                         alignmentSafe = alignmentSafe,
-                        autoStretch = autoStretchAfterStacking
+                        autoStretch = autoStretchAfterStacking,
+                        source = stackingSource
                     ) { message, current, total ->
                         progressCurrent = current
                         progressTotal = total
@@ -2870,7 +2793,9 @@ fun JpegStackingBlock(
                         shadowOffset = shadowOffset,
                         alignFrames = alignFrames,
                         alignmentSafe = alignmentSafe,
-                        autoStretch = autoStretchAfterStacking
+                        autoStretch = autoStretchAfterStacking,
+                        source = stackingSource,
+                        darkCrop = darkCropResult?.getOrNull()
                     ) { message, current, total ->
                         progressCurrent = current
                         progressTotal = total
@@ -2882,6 +2807,7 @@ fun JpegStackingBlock(
                         alignFrames = alignFrames,
                         alignmentSafe = alignmentSafe,
                         autoStretch = autoStretchAfterStacking,
+                        source = stackingSource,
                         onProgress = { current, total ->
                             progressCurrent = current
                             progressTotal = total
@@ -2895,7 +2821,9 @@ fun JpegStackingBlock(
                         }
                     )
                 }
-                stacking = false
+                stackResult.exceptionOrNull()?.let { error ->
+                    if (error is CancellationException) throw error
+                }
                 stackResult.fold(
                     onSuccess = {
                         result = it
@@ -2930,15 +2858,69 @@ fun JpegStackingBlock(
                         status = message
                     }
                 )
+            } catch (error: CancellationException) {
+                status = "Обработка остановлена"
+                throw error
             } catch (error: Throwable) {
                 Log.e("AstroPhotoProcessing", "Manual processing crashed", error)
+                status = error.message ?: "Не удалось выполнить обработку"
+            } finally {
                 stacking = false
-                val message = if (error is CancellationException) {
-                    "Обработка остановлена"
-                } else {
-                    error.message ?: "Не удалось выполнить обработку"
+                processingJob = null
+            }
+        }
+    }
+
+    fun startProfile(profile: AstroProcessingProfile) {
+        if (stacking || processingJob?.isActive == true) return
+        val validSource = sourceSelection as? StackingSourceSelection.Valid
+        if (validSource == null) {
+            status = sourceError ?: "Источник кадров недоступен"
+            return
+        }
+        if (validSource.frames.size < profile.minimumFrames) {
+            status = "Для ${profile.title} нужно минимум ${profile.minimumFrames} кадров"
+            return
+        }
+        stacking = true
+        progressCurrent = 0
+        progressTotal = validSource.frames.size
+        status = "Подготовка профиля ${profile.title}..."
+        processingJob = coroutineScope.launch {
+            try {
+                val profileResult = stacker.profileStack(
+                    session = session,
+                    frames = validSource.frames,
+                    profile = profile,
+                    source = stackingSource,
+                    framesRejected = badFrames.size + validSource.missingCropCount
+                ) { message, current, total ->
+                    status = message
+                    progressCurrent = current
+                    progressTotal = total
                 }
-                status = message
+                profileResult.exceptionOrNull()?.let { error ->
+                    if (error is CancellationException) throw error
+                }
+                profileResult.fold(
+                    onSuccess = { created ->
+                        profileResults = profileResults + created
+                        status = buildString {
+                            append("Готово: ${created.fileName}")
+                            created.warnings.forEach { append("\n$it") }
+                        }
+                        onStackCompleted()
+                    },
+                    onFailure = { error ->
+                        status = error.message ?: "Профильная обработка не удалась"
+                    }
+                )
+            } catch (error: CancellationException) {
+                status = "Обработка остановлена"
+                throw error
+            } finally {
+                stacking = false
+                processingJob = null
             }
         }
     }
@@ -2972,6 +2954,30 @@ fun JpegStackingBlock(
             Text("Найдено Lights/JPEG: ${jpegFrames.size}")
             Text("Light frames используется: ${selectedFrames.size}")
             Text("Исключено light-брака: ${badFrames.size}")
+            Text("Доступно Cropped JPEG: ${cropRecords.size}")
+            Text("Источник", fontWeight = FontWeight.SemiBold)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                ManualStackingSource.entries.forEach { option ->
+                    FilterChip(
+                        selected = stackingSource == option,
+                        onClick = { stackingSource = option },
+                        enabled = !loading && !stacking,
+                        label = {
+                            Text(
+                                if (option == ManualStackingSource.ORIGINAL) {
+                                    "Original JPEG"
+                                } else {
+                                    "Cropped JPEG"
+                                }
+                            )
+                        }
+                    )
+                }
+            }
+            sourceError?.let { Text(it, color = Color(0xFFFFAB91)) }
 
             if (stacking) {
                 Card(
@@ -3009,11 +3015,16 @@ fun JpegStackingBlock(
                         } else {
                             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                         }
-                        Text(
-                            text = "Кнопки профилей и ручной обработки временно отключены.",
-                            color = Color(0xFFB8BECC),
-                            style = MaterialTheme.typography.bodySmall
-                        )
+                        TextButton(
+                            onClick = {
+                                status = "Остановка обработки..."
+                                processingJob?.cancel()
+                            },
+                            enabled = processingJob?.isActive == true,
+                            modifier = Modifier.align(Alignment.End)
+                        ) {
+                            Text("Остановить")
+                        }
                     }
                 }
             }
@@ -3021,27 +3032,39 @@ fun JpegStackingBlock(
                 text = "Обработка неба",
                 fontWeight = FontWeight.SemiBold
             )
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFF241F12)
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Text(
-                        text = "Профили звёздной обработки временно отключены",
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFFFFCC80)
-                    )
-                    Text(
-                        text = "Чтобы восстановить стабильность, кнопки «Чистое небо», «Город / окно» и «Максимум звёзд» сейчас не запускают обработку. Используйте ручную обработку ниже: Average, Average + Dark, Median или Sigma.",
-                        color = Color(0xFFB8BECC),
-                        style = MaterialTheme.typography.bodySmall
-                    )
+            AstroProcessingProfile.entries.filterNot { it == AstroProcessingProfile.NORMAL }
+                .forEach { profile ->
+                    val enoughFrames = selectedFrames.size >= profile.minimumFrames
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF101722))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(profile.title, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                profile.description,
+                                color = Color(0xFFB8BECC),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Text(
+                                "Минимум: ${profile.minimumFrames} • Доступно: ${selectedFrames.size} • " +
+                                    "Source: ${stackingSource.metadataValue}",
+                                color = if (enoughFrames) Color(0xFFA5D6A7) else Color(0xFFFFCC80),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Button(
+                                onClick = { startProfile(profile) },
+                                enabled = !loading && !stacking && operationsEnabled &&
+                                    sourceError == null && enoughFrames,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Запустить ${profile.title}")
+                            }
+                        }
+                    }
                 }
-            }
             if (profileResults.isNotEmpty()) {
                 Card(
                     colors = CardDefaults.cardColors(
@@ -3391,7 +3414,13 @@ fun JpegStackingBlock(
             Button(
                 onClick = {
                     when {
-                        jpegFrames.isNotEmpty() && goodFrames.isEmpty() -> {
+                        sourceError != null -> {
+                            status = sourceError
+                        }
+                        darkCropResult?.isFailure == true -> {
+                            status = darkCropResult.exceptionOrNull()?.message
+                        }
+                        jpegFrames.isNotEmpty() && eligibleFrames.isEmpty() -> {
                             status = "Все кадры помечены как брак"
                         }
                         jpegFrames.size < 2 -> {

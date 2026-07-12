@@ -64,6 +64,7 @@ import java.util.Locale
 
 enum class SessionFrameCategory(val title: String) {
     LIGHTS_JPEG("Lights JPEG"),
+    CROPPED_JPEG("Cropped"),
     LIGHTS_RAW("Lights RAW"),
     DARKS_JPEG("Darks JPEG"),
     DARKS_RAW("Darks RAW")
@@ -77,11 +78,16 @@ data class SessionFrame(
     val createdAtMillis: Long,
     val displayPath: String,
     val contentUri: String?,
-    val filePath: String?
+    val filePath: String?,
+    val originalKey: String? = null
 ) {
     val isJpeg: Boolean
         get() = category == SessionFrameCategory.LIGHTS_JPEG ||
-            category == SessionFrameCategory.DARKS_JPEG
+            category == SessionFrameCategory.DARKS_JPEG ||
+            category == SessionFrameCategory.CROPPED_JPEG
+
+    val markKey: String
+        get() = originalKey ?: key
 }
 
 data class FrameMarks(
@@ -179,6 +185,7 @@ class SessionFramesRepository(private val context: Context) {
                 val category = frameCategory(path) ?: continue
                 val name = cursor.getString(nameIndex).orEmpty()
                 if (name.isBlank()) continue
+                if (category == SessionFrameCategory.CROPPED_JPEG && !name.isJpegFileName()) continue
                 val relative = "${path.removePrefix(basePath)}$name"
                 val uri = ContentUris.withAppendedId(collection, cursor.getLong(idIndex))
                 frames += SessionFrame(
@@ -209,6 +216,9 @@ class SessionFramesRepository(private val context: Context) {
             .mapNotNull { file ->
                 val relative = file.relativeTo(root).path.replace('\\', '/')
                 val category = frameCategory(relative) ?: return@mapNotNull null
+                if (category == SessionFrameCategory.CROPPED_JPEG && !file.name.isJpegFileName()) {
+                    return@mapNotNull null
+                }
                 SessionFrame(
                     key = relative,
                     fileName = file.name,
@@ -226,12 +236,18 @@ class SessionFramesRepository(private val context: Context) {
     private fun frameCategory(path: String): SessionFrameCategory? {
         val normalized = path.replace('\\', '/')
         return when {
+            normalized.contains("Lights/Cropped") -> SessionFrameCategory.CROPPED_JPEG
             normalized.contains("Lights/JPEG") -> SessionFrameCategory.LIGHTS_JPEG
             normalized.contains("Lights/RAW") -> SessionFrameCategory.LIGHTS_RAW
             normalized.contains("Darks/JPEG") -> SessionFrameCategory.DARKS_JPEG
             normalized.contains("Darks/RAW") -> SessionFrameCategory.DARKS_RAW
             else -> null
         }
+    }
+
+    private fun String.isJpegFileName(): Boolean {
+        val extension = substringAfterLast('.', "").lowercase(Locale.US)
+        return extension == "jpg" || extension == "jpeg"
     }
 
     private fun decodeSampledBitmap(path: String, maxSize: Int): Bitmap? {
@@ -388,6 +404,7 @@ fun SessionFramesScreen(
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val repository = remember { SessionFramesRepository(context.applicationContext) }
+    val cropsRepository = remember { CroppedFramesRepository(context.applicationContext) }
     val marksStore = remember { FrameMarksStore(context.applicationContext) }
     val coroutineScope = rememberCoroutineScope()
     var frames by remember { mutableStateOf<List<SessionFrame>>(emptyList()) }
@@ -395,12 +412,16 @@ fun SessionFramesScreen(
     var loading by remember { mutableStateOf(true) }
     var selectedCategory by remember { mutableStateOf(SessionFrameCategory.LIGHTS_JPEG) }
     var selectedFrame by remember { mutableStateOf<SessionFrame?>(null) }
+    var cropManifest by remember { mutableStateOf(CropManifest()) }
+    var cropOriginal by remember { mutableStateOf<SessionFrame?>(null) }
+    var cropMessage by remember { mutableStateOf<String?>(null) }
     var showingAutoSelection by remember { mutableStateOf(false) }
     var refreshKey by remember { androidx.compose.runtime.mutableIntStateOf(0) }
 
     LaunchedEffect(session.folderName, refreshKey) {
         loading = true
         frames = repository.loadFrames(session)
+        cropManifest = cropsRepository.loadManifest(session)
         marks = marksStore.loadOrCreate(session)
         val existingKeys = frames.mapTo(mutableSetOf()) { it.key }
         marks = FrameMarks(
@@ -433,7 +454,14 @@ fun SessionFramesScreen(
         }
     }
 
-    val visibleFrames = frames.filter { it.category == selectedCategory }
+    val cropRecords = cropsRepository.records(cropManifest, frames)
+    val originalLights = frames.filter { it.category == SessionFrameCategory.LIGHTS_JPEG }
+    val originalsByKey = originalLights.associateBy { it.key }
+    val visibleFrames = if (selectedCategory == SessionFrameCategory.CROPPED_JPEG) {
+        cropRecords.map { it.frame }
+    } else {
+        frames.filter { it.category == selectedCategory }
+    }
 
     Column(
         modifier = Modifier
@@ -472,6 +500,9 @@ fun SessionFramesScreen(
                 )
             }
         }
+        cropMessage?.let {
+            Text(it, color = Color(0xFFFFCC80), style = MaterialTheme.typography.bodySmall)
+        }
 
         when {
             loading -> {
@@ -495,14 +526,35 @@ fun SessionFramesScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(visibleFrames, key = { it.key }) { frame ->
+                        val cropEntry = if (frame.category == SessionFrameCategory.CROPPED_JPEG) {
+                            cropManifest.entries.firstOrNull { it.croppedFileName == frame.fileName }
+                        } else {
+                            cropManifest.find(frame.key)
+                        }
+                        val original = cropEntry?.let { originalsByKey[it.originalKey] }
+                            ?: frame.takeIf { it.category == SessionFrameCategory.LIGHTS_JPEG }
                         SessionFrameCard(
                             frame = frame,
                             marks = marks,
                             repository = repository,
+                            cropEntry = cropEntry,
                             onClick = { selectedFrame = frame },
-                            onToggleBad = { updateMarks(marks.toggleBad(frame.key)) },
+                            onToggleBad = { updateMarks(marks.toggleBad(frame.markKey)) },
                             onToggleFavorite = {
-                                updateMarks(marks.toggleFavorite(frame.key))
+                                updateMarks(marks.toggleFavorite(frame.markKey))
+                            },
+                            onCrop = { original?.let { cropOriginal = it } },
+                            onDeleteCrop = {
+                                cropEntry?.let { entry ->
+                                    coroutineScope.launch {
+                                        cropsRepository.deleteCrop(session, entry)
+                                            .onSuccess {
+                                                cropMessage = "Обрезка удалена; оригинал сохранён"
+                                                refreshKey++
+                                            }
+                                            .onFailure { cropMessage = it.message }
+                                    }
+                                }
                             }
                         )
                     }
@@ -514,10 +566,18 @@ fun SessionFramesScreen(
     selectedFrame?.let { frame ->
         val categoryFrames = frames.filter { it.category == frame.category }
         val index = categoryFrames.indexOfFirst { it.key == frame.key }
+        val cropEntry = if (frame.category == SessionFrameCategory.CROPPED_JPEG) {
+            cropManifest.entries.firstOrNull { it.croppedFileName == frame.fileName }
+        } else {
+            cropManifest.find(frame.key)
+        }
+        val cropSource = cropEntry?.let { originalsByKey[it.originalKey] }
+            ?: frame.takeIf { it.category == SessionFrameCategory.LIGHTS_JPEG }
         FrameViewerDialog(
             frame = frame,
             marks = marks,
             repository = repository,
+            cropEntry = cropEntry,
             hasPrevious = index > 0,
             hasNext = index >= 0 && index < categoryFrames.lastIndex,
             onPrevious = {
@@ -528,9 +588,42 @@ fun SessionFramesScreen(
                     selectedFrame = categoryFrames[index + 1]
                 }
             },
-            onToggleBad = { updateMarks(marks.toggleBad(frame.key)) },
-            onToggleFavorite = { updateMarks(marks.toggleFavorite(frame.key)) },
+            onToggleBad = { updateMarks(marks.toggleBad(frame.markKey)) },
+            onToggleFavorite = { updateMarks(marks.toggleFavorite(frame.markKey)) },
+            onCrop = {
+                selectedFrame = null
+                cropSource?.let { cropOriginal = it }
+            },
+            onDeleteCrop = {
+                cropEntry?.let { entry ->
+                    coroutineScope.launch {
+                        cropsRepository.deleteCrop(session, entry)
+                            .onSuccess {
+                                cropMessage = "Обрезка удалена; оригинал сохранён"
+                                selectedFrame = null
+                                refreshKey++
+                            }
+                            .onFailure { cropMessage = it.message ?: "Не удалось удалить обрезку" }
+                    }
+                }
+            },
             onDismiss = { selectedFrame = null }
+        )
+    }
+
+    cropOriginal?.let { original ->
+        CropEditorDialog(
+            session = session,
+            original = original,
+            originals = originalLights,
+            repository = cropsRepository,
+            initialRect = cropManifest.find(original.key)?.normalizedRect ?: NormalizedCropRect.Full,
+            onSaved = { message ->
+                cropMessage = message
+                cropOriginal = null
+                refreshKey++
+            },
+            onDismiss = { cropOriginal = null }
         )
     }
 }
@@ -540,9 +633,12 @@ private fun SessionFrameCard(
     frame: SessionFrame,
     marks: FrameMarks,
     repository: SessionFramesRepository,
+    cropEntry: CropManifestEntry?,
     onClick: () -> Unit,
     onToggleBad: () -> Unit,
-    onToggleFavorite: () -> Unit
+    onToggleFavorite: () -> Unit,
+    onCrop: () -> Unit,
+    onDeleteCrop: () -> Unit
 ) {
     var thumbnail by remember(frame.key) { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(frame.key) {
@@ -579,6 +675,13 @@ private fun SessionFrameCard(
                     .padding(start = if (frame.isJpeg) 12.dp else 0.dp)
             ) {
                 Text(frame.fileName, fontWeight = FontWeight.SemiBold)
+                cropEntry?.let {
+                    Text(
+                        "Источник: ${it.originalFileName} • ${it.croppedWidth}×${it.croppedHeight}",
+                        color = Color(0xFFB8BECC),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
                 Text(
                     "${formatFrameSize(frame.sizeBytes)} • ${
                         formatFrameDate(frame.createdAtMillis)
@@ -599,12 +702,57 @@ private fun SessionFrameCard(
                     modifier = Modifier.padding(top = 4.dp),
                     color = status.second
                 )
-                Row {
-                    TextButton(onClick = onToggleBad) {
-                        Text("Брак")
+                val canCrop = frame.category == SessionFrameCategory.LIGHTS_JPEG ||
+                    frame.category == SessionFrameCategory.CROPPED_JPEG
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    TextButton(
+                        onClick = onToggleBad,
+                        contentPadding = PaddingValues(horizontal = 2.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(
+                            "Брак",
+                            maxLines = 1,
+                            softWrap = false,
+                            style = MaterialTheme.typography.labelSmall
+                        )
                     }
-                    TextButton(onClick = onToggleFavorite) {
-                        Text("Избранное")
+                    TextButton(
+                        onClick = onToggleFavorite,
+                        contentPadding = PaddingValues(horizontal = 2.dp),
+                        modifier = Modifier.weight(1.45f)
+                    ) {
+                        Text(
+                            "Избранное",
+                            maxLines = 1,
+                            softWrap = false,
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                    if (canCrop) {
+                        TextButton(
+                            onClick = onCrop,
+                            contentPadding = PaddingValues(horizontal = 2.dp),
+                            modifier = Modifier.weight(1.35f)
+                        ) {
+                            Text(
+                                if (cropEntry == null) "Обрезать" else "Заново",
+                                maxLines = 1,
+                                softWrap = false,
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    }
+                }
+                if (cropEntry != null) {
+                    TextButton(
+                        onClick = onDeleteCrop,
+                        contentPadding = PaddingValues(horizontal = 2.dp)
+                    ) {
+                        Text("Удалить обрезку", maxLines = 1, softWrap = false)
                     }
                 }
             }
@@ -617,12 +765,15 @@ private fun FrameViewerDialog(
     frame: SessionFrame,
     marks: FrameMarks,
     repository: SessionFramesRepository,
+    cropEntry: CropManifestEntry?,
     hasPrevious: Boolean,
     hasNext: Boolean,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onToggleBad: () -> Unit,
     onToggleFavorite: () -> Unit,
+    onCrop: () -> Unit,
+    onDeleteCrop: () -> Unit,
     onDismiss: () -> Unit
 ) {
     var preview by remember(frame.key) { mutableStateOf<Bitmap?>(null) }
@@ -705,19 +856,36 @@ private fun FrameViewerDialog(
                     onClick = onToggleBad,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text(if (frame.key in marks.bad) "Снять брак" else "Брак")
+                    Text(if (frame.markKey in marks.bad) "Снять брак" else "Брак")
                 }
                 Button(
                     onClick = onToggleFavorite,
                     modifier = Modifier.weight(1f)
                 ) {
                     Text(
-                        if (frame.key in marks.favorite) {
+                        if (frame.markKey in marks.favorite) {
                             "Снять избранное"
                         } else {
                             "Избранное"
                         }
                     )
+                }
+            }
+            if (frame.category == SessionFrameCategory.LIGHTS_JPEG ||
+                frame.category == SessionFrameCategory.CROPPED_JPEG
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(onClick = onCrop, modifier = Modifier.weight(1f)) {
+                        Text(if (cropEntry == null) "Обрезать" else "Обрезать заново")
+                    }
+                    if (cropEntry != null) {
+                        Button(onClick = onDeleteCrop, modifier = Modifier.weight(1f)) {
+                            Text("Удалить обрезку")
+                        }
+                    }
                 }
             }
             Row(
@@ -736,7 +904,7 @@ private fun FrameViewerDialog(
 }
 
 private fun frameStatus(frame: SessionFrame, marks: FrameMarks): Pair<String, Color> =
-    when (frame.key) {
+    when (frame.markKey) {
         in marks.autoBad -> "Брак (авто)" to Color(0xFFEF9A9A)
         in marks.bad -> "Брак" to Color(0xFFEF9A9A)
         in marks.favorite -> "Избранный" to Color(0xFFFFD54F)

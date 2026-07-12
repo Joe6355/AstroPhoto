@@ -6,23 +6,31 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
-data class AstroRoi(
-    val left: Float,
-    val top: Float,
-    val right: Float,
-    val bottom: Float
-) {
-    fun toRect(width: Int, height: Int): Rect {
+data class PixelRect(val left: Int, val top: Int, val right: Int, val bottom: Int) {
+    val width: Int get() = right - left
+    val height: Int get() = bottom - top
+    operator fun contains(point: Pair<Int, Int>): Boolean =
+        point.first in left until right && point.second in top until bottom
+}
+
+data class AstroRoi(val left: Float, val top: Float, val right: Float, val bottom: Float) {
+    fun toPixelRect(width: Int, height: Int): PixelRect {
+        require(width > 0 && height > 0) { "ROI image dimensions must be positive" }
         val safeLeft = left.coerceIn(0f, 0.95f)
         val safeTop = top.coerceIn(0f, 0.95f)
         val safeRight = right.coerceIn(safeLeft + 0.05f, 1f)
         val safeBottom = bottom.coerceIn(safeTop + 0.05f, 1f)
-        return Rect(
+        return PixelRect(
             (safeLeft * width).roundToInt().coerceIn(0, width - 1),
             (safeTop * height).roundToInt().coerceIn(0, height - 1),
             (safeRight * width).roundToInt().coerceIn(1, width),
             (safeBottom * height).roundToInt().coerceIn(1, height)
         )
+    }
+
+    fun toRect(width: Int, height: Int): Rect {
+        val rect = toPixelRect(width, height)
+        return Rect(rect.left, rect.top, rect.right, rect.bottom)
     }
 
     companion object {
@@ -33,11 +41,7 @@ data class AstroRoi(
     }
 }
 
-enum class StarDetectionSensitivity {
-    LOW,
-    MEDIUM,
-    HIGH
-}
+enum class StarDetectionSensitivity { LOW, MEDIUM, HIGH }
 
 data class DetectedStar(
     val x: Int,
@@ -52,7 +56,7 @@ data class StarDetectionResult(
     val stars: List<DetectedStar>,
     val background: Float,
     val noise: Float,
-    val roi: Rect,
+    val roi: PixelRect,
     val confidence: Float
 )
 
@@ -63,18 +67,27 @@ class StarDetector {
         sensitivity: StarDetectionSensitivity = StarDetectionSensitivity.MEDIUM,
         maxStars: Int = 260
     ): StarDetectionResult {
-        val rect = roi.toRect(bitmap.width, bitmap.height)
-        val sampleStep = maxOf(1, minOf(rect.width(), rect.height()) / 700)
-        val histogram = IntArray(256)
-        val row = IntArray(rect.width())
-        var sampleCount = 0L
+        val pixels = IntArray(bitmap.width * bitmap.height)
+        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        return detect(ArgbPixelImage(bitmap.width, bitmap.height, pixels), roi, sensitivity, maxStars)
+    }
 
+    fun detect(
+        image: ArgbPixelImage,
+        roi: AstroRoi = AstroRoi.Full,
+        sensitivity: StarDetectionSensitivity = StarDetectionSensitivity.MEDIUM,
+        maxStars: Int = 260
+    ): StarDetectionResult {
+        require(maxStars >= 0) { "Maximum star count must not be negative" }
+        val rect = roi.toPixelRect(image.width, image.height)
+        val sampleStep = maxOf(1, minOf(rect.width, rect.height) / 700)
+        val histogram = IntArray(256)
+        var sampleCount = 0L
         var y = rect.top
         while (y < rect.bottom) {
-            bitmap.getPixels(row, 0, rect.width(), rect.left, y, rect.width(), 1)
-            var x = 0
-            while (x < rect.width()) {
-                histogram[luminance(row[x])]++
+            var x = rect.left
+            while (x < rect.right) {
+                histogram[pixelLuminance(image.pixelAt(x, y))]++
                 sampleCount++
                 x += sampleStep
             }
@@ -94,29 +107,30 @@ class StarDetector {
         val threshold = (median + noise * multiplier + 5f).coerceIn(8f, 245f)
         val candidates = mutableListOf<DetectedStar>()
         val margin = maxOf(3, sampleStep * 2)
-
         y = rect.top + margin
         while (y < rect.bottom - margin) {
             var x = rect.left + margin
             while (x < rect.right - margin) {
-                val value = luminance(bitmap.getPixel(x, y))
-                if (value >= threshold && isLocalMaximum(bitmap, x, y, sampleStep, value)) {
-                    val local = localStats(bitmap, x, y, sampleStep, threshold)
+                val value = pixelLuminance(image.pixelAt(x, y))
+                if (value >= threshold && isLocalMaximum(image, x, y, sampleStep, value)) {
+                    val local = localStats(image, x, y, sampleStep, threshold)
                     val contrast = value - local.background
-                    val isolatedEnough = local.brightCount in 1..local.maxBrightCount
-                    val notSaturatedBlob = local.saturatedCount <= 2 || contrast > noise * 4f
-                    if (contrast > noise * 0.9f && isolatedEnough && notSaturatedBlob) {
+                    if (
+                        contrast > noise * 0.9f &&
+                        local.brightCount in 1..local.maxBrightCount &&
+                        (local.saturatedCount <= 2 || contrast > noise * 4f)
+                    ) {
                         val confidence = (
                             contrast / (noise * 5f + 1f) +
                                 (255 - abs(value - 180)) / 255f * 0.25f
                             ).coerceIn(0.05f, 1f)
                         candidates += DetectedStar(
-                            x = x,
-                            y = y,
-                            brightness = value,
-                            localContrast = contrast,
-                            radius = local.radius,
-                            confidence = confidence
+                            local.centroidX,
+                            local.centroidY,
+                            value,
+                            contrast,
+                            local.radius,
+                            confidence
                         )
                     }
                 }
@@ -125,12 +139,21 @@ class StarDetector {
             y += sampleStep
         }
 
-        val stars = candidates
-            .sortedWith(
-                compareByDescending<DetectedStar> { it.confidence }
-                    .thenByDescending { it.localContrast }
-            )
-            .take(maxStars)
+        val rankedCandidates = candidates.sortedWith(
+            compareByDescending<DetectedStar> { it.confidence }
+                .thenByDescending { it.localContrast }
+                .thenBy { it.y }
+                .thenBy { it.x }
+        )
+        val distinctCandidates = mutableListOf<DetectedStar>()
+        for (candidate in rankedCandidates) {
+            if (distinctCandidates.size >= maxStars) break
+            val duplicate = distinctCandidates.any { kept ->
+                abs(candidate.x - kept.x) <= sampleStep && abs(candidate.y - kept.y) <= sampleStep
+            }
+            if (!duplicate) distinctCandidates += candidate
+        }
+        val stars = distinctCandidates
             .sortedByDescending { it.brightness }
         val confidence = when {
             stars.size >= 24 -> 1f
@@ -139,13 +162,7 @@ class StarDetector {
             stars.isNotEmpty() -> 0.2f
             else -> 0f
         }
-        return StarDetectionResult(
-            stars = stars,
-            background = median,
-            noise = noise,
-            roi = rect,
-            confidence = confidence
-        )
+        return StarDetectionResult(stars, median, noise, rect, confidence)
     }
 
     private data class LocalStats(
@@ -153,11 +170,13 @@ class StarDetector {
         val brightCount: Int,
         val saturatedCount: Int,
         val maxBrightCount: Int,
-        val radius: Float
+        val radius: Float,
+        val centroidX: Int,
+        val centroidY: Int
     )
 
     private fun localStats(
-        bitmap: Bitmap,
+        image: ArgbPixelImage,
         centerX: Int,
         centerY: Int,
         step: Int,
@@ -167,22 +186,27 @@ class StarDetector {
         var count = 0
         var brightCount = 0
         var saturatedCount = 0
+        var centroidWeight = 0L
+        var weightedX = 0L
+        var weightedY = 0L
         val radius = maxOf(2, step * 3)
-        val maxBrightCount = when {
-            step <= 1 -> 14
-            step == 2 -> 10
-            else -> 8
-        }
+        val maxBrightCount = if (step <= 1) 14 else if (step == 2) 10 else 8
         var y = centerY - radius
         while (y <= centerY + radius) {
-            if (y in 0 until bitmap.height) {
+            if (y in 0 until image.height) {
                 var x = centerX - radius
                 while (x <= centerX + radius) {
-                    if (x in 0 until bitmap.width) {
-                        val value = luminance(bitmap.getPixel(x, y))
+                    if (x in 0 until image.width) {
+                        val value = pixelLuminance(image.pixelAt(x, y))
                         sum += value
                         count++
-                        if (value >= threshold) brightCount++
+                        if (value >= threshold) {
+                            brightCount++
+                            val weight = (value - threshold.toInt() + 1).coerceAtLeast(1)
+                            centroidWeight += weight
+                            weightedX += x.toLong() * weight
+                            weightedY += y.toLong() * weight
+                        }
                         if (value >= 248) saturatedCount++
                     }
                     x += step
@@ -190,18 +214,19 @@ class StarDetector {
             }
             y += step
         }
-        val estimatedRadius = sqrt(brightCount.coerceAtLeast(1).toFloat())
         return LocalStats(
-            background = sum.toFloat() / count.coerceAtLeast(1),
-            brightCount = brightCount,
-            saturatedCount = saturatedCount,
-            maxBrightCount = maxBrightCount,
-            radius = estimatedRadius
+            sum.toFloat() / count.coerceAtLeast(1),
+            brightCount,
+            saturatedCount,
+            maxBrightCount,
+            sqrt(brightCount.coerceAtLeast(1).toFloat()),
+            if (centroidWeight > 0) (weightedX.toDouble() / centroidWeight).roundToInt() else centerX,
+            if (centroidWeight > 0) (weightedY.toDouble() / centroidWeight).roundToInt() else centerY
         )
     }
 
     private fun isLocalMaximum(
-        bitmap: Bitmap,
+        image: ArgbPixelImage,
         x: Int,
         y: Int,
         step: Int,
@@ -212,20 +237,15 @@ class StarDetector {
                 if (dx == 0 && dy == 0) continue
                 val nx = x + dx
                 val ny = y + dy
-                if (nx !in 0 until bitmap.width || ny !in 0 until bitmap.height) continue
-                if (luminance(bitmap.getPixel(nx, ny)) > value) return false
+                if (nx !in 0 until image.width || ny !in 0 until image.height) continue
+                if (pixelLuminance(image.pixelAt(nx, ny)) > value) return false
             }
         }
         return true
     }
 
     companion object {
-        fun luminance(color: Int): Int {
-            val red = color ushr 16 and 0xFF
-            val green = color ushr 8 and 0xFF
-            val blue = color and 0xFF
-            return (red * 77 + green * 150 + blue * 29) ushr 8
-        }
+        fun luminance(color: Int): Int = pixelLuminance(color)
 
         fun percentile(histogram: IntArray, total: Long, percentile: Double): Int {
             val target = (total * percentile).toLong().coerceAtLeast(1L)

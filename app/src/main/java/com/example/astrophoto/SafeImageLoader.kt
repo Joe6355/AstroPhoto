@@ -35,6 +35,8 @@ sealed interface ImageLoadResult {
 }
 
 class SafeImageLoader(private val context: Context) {
+    private val sourceResolver = ProcessedImageSourceResolver(context)
+
     suspend fun loadImageBounds(pathOrUri: String): Result<ImageBounds> =
         withContext(Dispatchers.IO) {
             runCatching {
@@ -50,11 +52,25 @@ class SafeImageLoader(private val context: Context) {
         loadBitmap(pathOrUri, maxSizePx, allowEmergencyDownsample = true)
     }
 
+    suspend fun loadBitmapForViewer(
+        source: ImageSourceReference,
+        maxSizePx: Int = 3072
+    ): ImageLoadResult = withContext(Dispatchers.IO) {
+        loadBitmap(source, maxSizePx, allowEmergencyDownsample = true)
+    }
+
     suspend fun loadBitmapThumbnail(
         pathOrUri: String,
         maxSizePx: Int = 256
     ): ImageLoadResult = withContext(Dispatchers.IO) {
         loadBitmap(pathOrUri, maxSizePx, allowEmergencyDownsample = false)
+    }
+
+    suspend fun loadBitmapThumbnail(
+        source: ImageSourceReference,
+        maxSizePx: Int = 256
+    ): ImageLoadResult = withContext(Dispatchers.IO) {
+        loadBitmap(source, maxSizePx, allowEmergencyDownsample = false)
     }
 
     fun isReadableJpeg(pathOrUri: String): Boolean {
@@ -71,6 +87,25 @@ class SafeImageLoader(private val context: Context) {
         } catch (_: OutOfMemoryError) {
             false
         }
+    }
+
+    fun isReadableJpeg(source: ImageSourceReference): Boolean {
+        val resolved = sourceResolver.resolve(source) ?: return false
+        return isReadableJpeg(resolved.pathOrUri)
+    }
+
+    private fun loadBitmap(
+        source: ImageSourceReference,
+        maxSizePx: Int,
+        allowEmergencyDownsample: Boolean
+    ): ImageLoadResult {
+        val resolved = sourceResolver.resolve(source)
+            ?: return imageError(
+                userTitle = "Файл не найден",
+                userMessage = "Возможно, он был удалён.",
+                technicalMessage = "Image source could not be resolved: ${source.displayName}"
+            )
+        return loadBitmap(resolved.pathOrUri, maxSizePx, allowEmergencyDownsample)
     }
 
     private fun loadBitmap(
