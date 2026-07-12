@@ -21,31 +21,23 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -81,8 +73,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -186,7 +179,11 @@ private fun AstroPhotoApp() {
         showExitDialog = false
     }
 
-    BackHandler(enabled = currentScreen != AppScreen.Camera && !showOnboarding && !showExitDialog) {
+    BackHandler(
+        enabled = (currentScreen != AppScreen.Camera || !cameraPermissionGranted) &&
+            !showOnboarding &&
+            !showExitDialog
+    ) {
         navigateBack()
     }
 
@@ -206,13 +203,15 @@ private fun AstroPhotoApp() {
         },
         contentColor = Color(0xFFF4F6FF)
     ) {
-        val screenAvailableWithoutCamera = currentScreen == AppScreen.About ||
+        val screenAvailableWithoutCamera = currentScreen == AppScreen.Diagnostics ||
+            currentScreen == AppScreen.DiagnosticsDetails ||
+            currentScreen == AppScreen.About ||
             currentScreen == AppScreen.Settings ||
             currentScreen == AppScreen.Help ||
             currentScreen == AppScreen.SelfCheck
         if (cameraPermissionGranted || screenAvailableWithoutCamera) {
             when (currentScreen) {
-                AppScreen.Diagnostics -> CameraDiagnosticsScreen(
+                AppScreen.Diagnostics -> AstroHomeScreen(
                     onOpenCamera = { navigateTo(AppScreen.Camera) },
                     onOpenSessions = { navigateTo(AppScreen.Sessions) },
                     onOpenSettings = {
@@ -232,6 +231,9 @@ private fun AstroPhotoApp() {
                         selfCheckReturnScreen = AppScreen.Diagnostics
                         navigateTo(AppScreen.SelfCheck)
                     }
+                )
+                AppScreen.DiagnosticsDetails -> CameraDiagnosticsScreen(
+                    onBack = { navigateBack() }
                 )
                 AppScreen.Camera -> CameraScreen(
                     onBackToDiagnostics = { navigateBack() },
@@ -303,6 +305,9 @@ private fun AstroPhotoApp() {
                     onOpenSelfCheck = {
                         selfCheckReturnScreen = AppScreen.Settings
                         navigateTo(AppScreen.SelfCheck)
+                    },
+                    onOpenDiagnostics = {
+                        navigateTo(AppScreen.DiagnosticsDetails)
                     },
                     onBack = { navigateBack() }
                 )
@@ -469,7 +474,7 @@ private fun PermissionScreen(
             fontWeight = FontWeight.Bold
         )
         Text(
-            text = "Диагностика камеры",
+            text = "Доступ к камере",
             modifier = Modifier.padding(top = 8.dp),
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -493,12 +498,7 @@ private fun PermissionScreen(
 
 @Composable
 private fun CameraDiagnosticsScreen(
-    onOpenCamera: () -> Unit,
-    onOpenSessions: () -> Unit,
-    onOpenSettings: () -> Unit,
-    onOpenHelp: () -> Unit,
-    onOpenAbout: () -> Unit,
-    onOpenSelfCheck: () -> Unit
+    onBack: () -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var state by remember { mutableStateOf<DiagnosticsState>(DiagnosticsState.Loading) }
@@ -521,12 +521,7 @@ private fun CameraDiagnosticsScreen(
         is DiagnosticsState.Error -> ErrorScreen(currentState.message)
         is DiagnosticsState.Ready -> DiagnosticsList(
             info = currentState.info,
-            onOpenCamera = onOpenCamera,
-            onOpenSessions = onOpenSessions,
-            onOpenSettings = onOpenSettings,
-            onOpenHelp = onOpenHelp,
-            onOpenAbout = onOpenAbout,
-            onOpenSelfCheck = onOpenSelfCheck
+            onBack = onBack
         )
     }
 }
@@ -574,12 +569,7 @@ private fun ErrorScreen(message: String) {
 @Composable
 private fun DiagnosticsList(
     info: CameraDiagnosticInfo,
-    onOpenCamera: () -> Unit,
-    onOpenSessions: () -> Unit,
-    onOpenSettings: () -> Unit,
-    onOpenHelp: () -> Unit,
-    onOpenAbout: () -> Unit,
-    onOpenSelfCheck: () -> Unit
+    onBack: () -> Unit
 ) {
     LazyColumn(
         modifier = Modifier
@@ -594,78 +584,10 @@ private fun DiagnosticsList(
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         item {
-            Text(
-                text = "AstroPhoto",
-                style = MaterialTheme.typography.headlineLarge,
-                fontWeight = FontWeight.Bold
+            com.example.astrophoto.ui.AstroTopBar(
+                title = "Диагностика камеры",
+                onBack = onBack
             )
-            Text(
-                text = "Диагностика камеры",
-                modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-
-        item {
-            Button(
-                onClick = onOpenCamera,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 56.dp)
-            ) {
-                Text("Открыть камеру")
-            }
-        }
-        item {
-            Button(
-                onClick = onOpenSessions,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 52.dp)
-            ) {
-                Text("Сессии")
-            }
-        }
-        item {
-            Button(
-                onClick = onOpenSettings,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 52.dp)
-            ) {
-                Text("Настройки приложения")
-            }
-        }
-        item {
-            Button(
-                onClick = onOpenHelp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 52.dp)
-            ) {
-                Text("Помощь")
-            }
-        }
-        item {
-            Button(
-                onClick = onOpenAbout,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 52.dp)
-            ) {
-                Text("О приложении")
-            }
-        }
-        item {
-            Button(
-                onClick = onOpenSelfCheck,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 52.dp)
-            ) {
-                Text("Самопроверка")
-            }
         }
 
         info.warning?.let { warning ->
@@ -750,7 +672,13 @@ private fun CameraScreen(
     var seriesDelaySeconds by remember { mutableStateOf(savedSettings.seriesDelaySeconds) }
     var startTimerSeconds by remember { mutableStateOf(savedSettings.startTimerSeconds) }
     var astroModeEnabled by remember { mutableStateOf(savedSettings.astroModeEnabled) }
-    var panelExpanded by remember { mutableStateOf(savedSettings.panelExpanded) }
+    var panelAnchor by rememberCameraPanelAnchor(
+        if (savedSettings.panelExpanded) {
+            CameraPanelAnchor.EXPANDED
+        } else {
+            CameraPanelAnchor.COLLAPSED
+        }
+    )
     var vibrationAfterSeries by remember {
         mutableStateOf(savedSettings.vibrationAfterSeries)
     }
@@ -780,8 +708,6 @@ private fun CameraScreen(
     }
     var exposureAssistantExpanded by remember { mutableStateOf(false) }
     var selectedPreset by remember { mutableStateOf<CameraPreset?>(null) }
-    var headerRevealToken by remember { mutableStateOf(0) }
-    var headerVisible by remember { mutableStateOf(true) }
     var astroDefaultsApplied by remember { mutableStateOf(false) }
     var seriesRunning by remember { mutableStateOf(false) }
     var seriesStopRequested by remember { mutableStateOf(false) }
@@ -977,7 +903,7 @@ private fun CameraScreen(
         seriesDelaySeconds,
         startTimerSeconds,
         astroModeEnabled,
-        panelExpanded,
+        panelAnchor,
         vibrationAfterSeries,
         soundAfterSeries,
         histogramEnabled,
@@ -999,7 +925,7 @@ private fun CameraScreen(
                 seriesDelaySeconds = seriesDelaySeconds,
                 startTimerSeconds = startTimerSeconds,
                 astroModeEnabled = astroModeEnabled,
-                panelExpanded = panelExpanded,
+                panelExpanded = panelAnchor != CameraPanelAnchor.COLLAPSED,
                 vibrationAfterSeries = vibrationAfterSeries,
                 soundAfterSeries = soundAfterSeries,
                 histogramEnabled = histogramEnabled,
@@ -1014,21 +940,20 @@ private fun CameraScreen(
         )
     }
 
-    LaunchedEffect(headerRevealToken) {
-        headerVisible = true
-        delay(4_000L)
-        headerVisible = false
-    }
-
-    LaunchedEffect(panelExpanded) {
-        if (panelExpanded) {
-            headerRevealToken++
-        }
-    }
-
     fun startCapture(captureType: UiCaptureType) {
-        if (seriesRunning || darkFramesRunning || testShotRunning) {
-            captureStatus = "Сначала остановите активную серию"
+        if (!canStartSingleCapture(
+                isCapturing = isCapturing,
+                seriesRunning = seriesRunning,
+                darkFramesRunning = darkFramesRunning,
+                testShotRunning = testShotRunning,
+                permissionRequestPending = pendingCaptureType != null
+            )
+        ) {
+            captureStatus = if (isCapturing || pendingCaptureType != null) {
+                "Съёмка уже выполняется"
+            } else {
+                "Сначала остановите активную серию"
+            }
             return
         }
         val preview = previewViewHolder[0]
@@ -1649,8 +1574,8 @@ private fun CameraScreen(
             requestDarkFramesStop()
         } else if (seriesRunning) {
             requestSeriesStop()
-        } else if (panelExpanded) {
-            panelExpanded = false
+        } else if (cameraPanelBackTarget(panelAnchor) != null) {
+            panelAnchor = CameraPanelAnchor.COLLAPSED
         } else {
             onBackToDiagnostics()
         }
@@ -1748,48 +1673,59 @@ private fun CameraScreen(
                 preview.setExposureAnalysisEnabled(histogramEnabled)
                 preview.setJpegQuality(jpegQuality)
             },
-            modifier = Modifier
-                .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectTapGestures {
-                        headerRevealToken++
-                    }
-                }
+            modifier = Modifier.fillMaxSize()
         )
 
-        AnimatedVisibility(
-            visible = headerVisible,
+        Surface(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
                 .safeDrawingPadding()
-                .padding(start = 16.dp, top = 16.dp, end = 16.dp),
-            enter = fadeIn(tween(300)),
-            exit = fadeOut(tween(500))
+                .padding(start = 12.dp, top = 12.dp, end = 12.dp),
+            color = Color.Black.copy(alpha = 0.62f),
+            contentColor = Color.White,
+            shape = MaterialTheme.shapes.medium
         ) {
-            Box(modifier = Modifier.fillMaxWidth()) {
-                Surface(
-                    modifier = Modifier.align(Alignment.TopStart),
-                    color = Color.Black.copy(alpha = 0.58f),
-                    shape = MaterialTheme.shapes.medium
-                ) {
-                    TextButton(onClick = ::handleBack) {
-                        Text("← Диагностика", color = Color.White)
-                    }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 56.dp)
+                    .padding(end = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = ::handleBack) {
+                    Text("Назад", color = Color.White)
                 }
-                Surface(
-                    modifier = Modifier.align(Alignment.TopCenter),
-                    color = Color.Black.copy(alpha = 0.58f),
-                    shape = MaterialTheme.shapes.medium
-                ) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "AstroPhoto Camera",
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        text = if (captureMode == UiCaptureMode.SERIES) {
+                            "Серия"
+                        } else {
+                            "Одиночный кадр"
+                        },
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
                         color = Color.White
                     )
+                    Text(
+                        text = when {
+                            seriesRunning -> "Кадр $seriesCurrentFrame из $seriesFrameCount"
+                            darkFramesRunning -> "Dark $darkFramesCurrent из $darkFramesCount"
+                            isCapturing -> captureStatus ?: "Съёмка…"
+                            else -> "${formatExposure(exposureTimeNs)} · ISO $iso"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFFD5DBE8),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
+                Text(
+                    text = cameraStatus,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFFD5DBE8),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
 
@@ -1798,7 +1734,7 @@ private fun CameraScreen(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .safeDrawingPadding()
-                    .padding(top = 58.dp, start = 20.dp, end = 20.dp),
+                    .padding(top = 76.dp, start = 20.dp, end = 20.dp),
                 color = MaterialTheme.colorScheme.errorContainer,
                 shape = MaterialTheme.shapes.medium
             ) {
@@ -1809,24 +1745,6 @@ private fun CameraScreen(
                 )
             }
         }
-        if (errorMessage == null) {
-            Surface(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .safeDrawingPadding()
-                    .padding(top = 52.dp, end = 12.dp),
-                color = Color.Black.copy(alpha = 0.5f),
-                shape = MaterialTheme.shapes.small
-            ) {
-                Text(
-                    text = cameraStatus,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFFD5DBE8)
-                )
-            }
-        }
-
         if (histogramEnabled || histogramError != null) {
             HistogramOverlay(
                 analysis = liveExposureAnalysis,
@@ -1838,204 +1756,187 @@ private fun CameraScreen(
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .safeDrawingPadding()
-                    .padding(top = 58.dp, start = 12.dp)
+                    .padding(top = 76.dp, start = 12.dp)
             )
         }
 
-        AnimatedVisibility(
-            visible = panelExpanded,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth(),
-            enter = slideInVertically(
-                animationSpec = tween(280),
-                initialOffsetY = { it }
-            ) + fadeIn(tween(220)),
-            exit = slideOutVertically(
-                animationSpec = tween(240),
-                targetOffsetY = { it }
-            ) + fadeOut(tween(180))
-        ) {
-            ManualControlsPanel(
-                capabilities = capabilities,
-                exposureTimeNs = exposureTimeNs,
-                iso = iso,
-                focusDistance = focusDistance,
-                focusMode = focusMode,
-                applyLongExposureToPreview = applyLongExposureToPreview,
-                isCapturing = isCapturing,
-                captureStatus = captureStatus,
-                exposureWarning = exposureWarning,
-                captureMode = captureMode,
-                singleFormat = singleFormat,
-                seriesFormat = seriesFormat,
-                seriesFrameCount = seriesFrameCount,
-                seriesDelaySeconds = seriesDelaySeconds,
-                startTimerSeconds = startTimerSeconds,
-                astroModeEnabled = astroModeEnabled,
-                vibrationAfterSeries = vibrationAfterSeries,
-                soundAfterSeries = soundAfterSeries,
-                histogramEnabled = histogramEnabled,
-                saveTestShots = saveTestShots,
-                testShotRunning = testShotRunning,
-                testShotStatus = testShotStatus,
-                lastTestShot = lastTestShot,
-                shootingGoal = shootingGoal,
-                exposureRecommendation = exposureRecommendation,
-                exposureAssistantExpanded = exposureAssistantExpanded,
-                currentSessionName = currentSession?.sessionName,
-                saveLocationStatus = saveLocationStatus,
-                storageInfo = storageInfo,
-                seriesRunning = seriesRunning,
-                seriesCurrentFrame = seriesCurrentFrame,
-                seriesCompletedFrames = seriesCompletedFrames,
-                seriesAction = seriesAction,
-                seriesMessage = seriesMessage,
-                darkFramesFormat = darkFramesFormat,
-                darkFramesCount = darkFramesCount,
-                darkFramesRunning = darkFramesRunning,
-                darkFramesCurrent = darkFramesCurrent,
-                darkFramesCompleted = darkFramesCompleted,
-                darkFramesAction = darkFramesAction,
-                darkFramesMessage = darkFramesMessage,
-                onCollapse = { panelExpanded = false },
-                onAstroModeChanged = ::setAstroMode,
-                onFocusModeChanged = {
-                    focusMode = it
-                    if (it == CameraFocusMode.INFINITY) focusDistance = 0f
-                },
-                onApplyLongExposureToPreviewChanged = {
-                    applyLongExposureToPreview = it
-                },
-                onVibrationAfterSeriesChanged = { vibrationAfterSeries = it },
-                onSoundAfterSeriesChanged = { soundAfterSeries = it },
-                onHistogramEnabledChanged = { enabled ->
-                    histogramEnabled = enabled
-                    liveExposureAnalysis = null
-                    histogramError = null
-                    if (!enabled) histogramExpanded = false
-                },
-                onSaveTestShotsChanged = { saveTestShots = it },
-                onTestShot = ::requestTestShot,
-                onTestShotDarker = { adjustTestExposure(brighter = false) },
-                onTestShotBrighter = { adjustTestExposure(brighter = true) },
-                onTestShotInfinityFocus = {
-                    focusMode = CameraFocusMode.INFINITY
-                    focusDistance = 0f
-                    testShotStatus = "Фокус установлен на ∞"
-                },
-                onShootingGoalChanged = { shootingGoal = it },
-                onExposureAssistantExpandedChanged = {
-                    exposureAssistantExpanded = it
-                },
-                onApplyExposureRecommendation = {
-                    exposureRecommendation?.let {
-                        applyExposureRecommendation(it, forceSeries = false)
-                    }
-                },
-                onAssistantTestShot = ::requestTestShot,
-                onAssistantStartSeries = {
-                    exposureRecommendation?.let {
-                        applyExposureRecommendation(it, forceSeries = true)
-                        requestSeriesStart()
-                    }
-                },
-                onPresetSelected = { selectedPreset = it },
-                onNewSession = {
-                    sessionNameInput = ""
-                    sessionNoteInput = ""
-                    sessionDialogVisible = true
-                },
-                onFinishSession = {
-                    currentSession?.let { session ->
-                        writeSessionInfo(session, singleFormat)
-                    }
-                    sessionStore.clear()
-                    currentSession = null
-                    saveLocationStatus = "Сессия завершена"
-                },
-                onCaptureModeChanged = { captureMode = it },
-                onSingleFormatChanged = { singleFormat = it },
-                onJpegCapture = { requestCapture(UiCaptureType.JPEG) },
-                onRawCapture = { requestCapture(UiCaptureType.RAW) },
-                onSeriesFormatChanged = { seriesFormat = it },
-                onSeriesFrameCountChanged = { seriesFrameCount = it },
-                onSeriesDelayChanged = { seriesDelaySeconds = it },
-                onStartTimerChanged = { startTimerSeconds = it },
-                onSeriesStart = ::requestSeriesStart,
-                onSeriesStop = ::requestSeriesStop,
-                onDarkFramesFormatChanged = { darkFramesFormat = it },
-                onDarkFramesCountChanged = { darkFramesCount = it },
-                onDarkFramesStart = ::requestDarkFramesStart,
-                onDarkFramesStop = ::requestDarkFramesStop,
-                onExposureChanged = {
-                    exposureWarning = null
-                    exposureTimeNs = it
-                },
-                onUnsupportedExposure = { maximumExposure ->
-                    exposureWarning =
-                        "Эта выдержка не поддерживается вашим телефоном. " +
-                        "Максимум: ${formatExposure(maximumExposure)}."
-                },
-                onIsoChanged = { iso = it },
-                onFocusChanged = { focusDistance = it },
-                onOpenHelp = onOpenHelp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .fillMaxHeight(0.72f)
-            )
+        val selectedPanelFormat = if (captureMode == UiCaptureMode.SERIES) {
+            seriesFormat
+        } else {
+            singleFormat
         }
-
-        AnimatedVisibility(
-            visible = !panelExpanded,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth(),
-            enter = slideInVertically(
-                animationSpec = tween(260),
-                initialOffsetY = { it }
-            ) + fadeIn(tween(220)),
-            exit = slideOutVertically(
-                animationSpec = tween(220),
-                targetOffsetY = { it }
-            ) + fadeOut(tween(160))
-        ) {
-            CompactCapturePanel(
-                capabilities = capabilities,
-                captureMode = captureMode,
-                singleFormat = singleFormat,
-                seriesFormat = seriesFormat,
-                exposureTimeNs = exposureTimeNs,
-                iso = iso,
-                focusDistance = focusDistance,
-                focusMode = focusMode,
-                seriesFrameCount = seriesFrameCount,
-                isCapturing = isCapturing,
-                captureStatus = captureStatus,
-                seriesRunning = seriesRunning,
-                seriesCurrentFrame = seriesCurrentFrame,
-                seriesCompletedFrames = seriesCompletedFrames,
-                seriesAction = seriesAction,
-                seriesMessage = seriesMessage,
-                darkFramesRunning = darkFramesRunning,
-                darkFramesCurrent = darkFramesCurrent,
-                darkFramesCount = darkFramesCount,
-                darkFramesCompleted = darkFramesCompleted,
-                darkFramesAction = darkFramesAction,
-                darkFramesMessage = darkFramesMessage,
-                testShotRunning = testShotRunning,
-                testShotStatus = testShotStatus,
-                lastTestShot = lastTestShot,
-                onExpand = { panelExpanded = true },
-                onSingleCapture = { requestCapture(singleFormat) },
-                onTestShot = ::requestTestShot,
-                onSeriesStart = ::requestSeriesStart,
-                onSeriesStop = ::requestSeriesStop,
-                onDarkFramesStop = ::requestDarkFramesStop,
-                modifier = Modifier
-                    .fillMaxWidth()
-            )
+        val panelSummary = buildString {
+            append(selectedPanelFormat.name)
+            append(" · ")
+            append(formatExposure(exposureTimeNs))
+            append(" · ISO ")
+            append(iso)
+            append(" · ")
+            append(formatFocusMode(focusMode, focusDistance))
         }
+        CameraSettingsPanel(
+            anchor = panelAnchor,
+            onAnchorChanged = { panelAnchor = it },
+            summary = panelSummary,
+            modifier = Modifier.fillMaxSize(),
+            collapsedContent = {
+                CompactCapturePanel(
+                    capabilities = capabilities,
+                    captureMode = captureMode,
+                    singleFormat = singleFormat,
+                    seriesFormat = seriesFormat,
+                    isCapturing = isCapturing,
+                    captureStatus = captureStatus,
+                    seriesRunning = seriesRunning,
+                    seriesCurrentFrame = seriesCurrentFrame,
+                    seriesFrameCount = seriesFrameCount,
+                    seriesCompletedFrames = seriesCompletedFrames,
+                    seriesAction = seriesAction,
+                    seriesMessage = seriesMessage,
+                    darkFramesRunning = darkFramesRunning,
+                    darkFramesCurrent = darkFramesCurrent,
+                    darkFramesCount = darkFramesCount,
+                    darkFramesCompleted = darkFramesCompleted,
+                    darkFramesAction = darkFramesAction,
+                    darkFramesMessage = darkFramesMessage,
+                    testShotRunning = testShotRunning,
+                    testShotStatus = testShotStatus,
+                    onSingleCapture = { requestCapture(singleFormat) },
+                    onSeriesStart = ::requestSeriesStart,
+                    onSeriesStop = ::requestSeriesStop,
+                    onDarkFramesStop = ::requestDarkFramesStop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            },
+            expandedContent = { panelScrollState ->
+                ManualControlsPanel(
+                    capabilities = capabilities,
+                    exposureTimeNs = exposureTimeNs,
+                    iso = iso,
+                    focusDistance = focusDistance,
+                    focusMode = focusMode,
+                    applyLongExposureToPreview = applyLongExposureToPreview,
+                    isCapturing = isCapturing,
+                    captureStatus = captureStatus,
+                    exposureWarning = exposureWarning,
+                    captureMode = captureMode,
+                    singleFormat = singleFormat,
+                    seriesFormat = seriesFormat,
+                    seriesFrameCount = seriesFrameCount,
+                    seriesDelaySeconds = seriesDelaySeconds,
+                    startTimerSeconds = startTimerSeconds,
+                    astroModeEnabled = astroModeEnabled,
+                    vibrationAfterSeries = vibrationAfterSeries,
+                    soundAfterSeries = soundAfterSeries,
+                    histogramEnabled = histogramEnabled,
+                    saveTestShots = saveTestShots,
+                    testShotRunning = testShotRunning,
+                    testShotStatus = testShotStatus,
+                    lastTestShot = lastTestShot,
+                    shootingGoal = shootingGoal,
+                    exposureRecommendation = exposureRecommendation,
+                    exposureAssistantExpanded = exposureAssistantExpanded,
+                    currentSessionName = currentSession?.sessionName,
+                    saveLocationStatus = saveLocationStatus,
+                    storageInfo = storageInfo,
+                    seriesRunning = seriesRunning,
+                    seriesCurrentFrame = seriesCurrentFrame,
+                    seriesCompletedFrames = seriesCompletedFrames,
+                    seriesAction = seriesAction,
+                    seriesMessage = seriesMessage,
+                    darkFramesFormat = darkFramesFormat,
+                    darkFramesCount = darkFramesCount,
+                    darkFramesRunning = darkFramesRunning,
+                    darkFramesCurrent = darkFramesCurrent,
+                    darkFramesCompleted = darkFramesCompleted,
+                    darkFramesAction = darkFramesAction,
+                    darkFramesMessage = darkFramesMessage,
+                    onAstroModeChanged = ::setAstroMode,
+                    onFocusModeChanged = {
+                        focusMode = it
+                        if (it == CameraFocusMode.INFINITY) focusDistance = 0f
+                    },
+                    onApplyLongExposureToPreviewChanged = {
+                        applyLongExposureToPreview = it
+                    },
+                    onVibrationAfterSeriesChanged = { vibrationAfterSeries = it },
+                    onSoundAfterSeriesChanged = { soundAfterSeries = it },
+                    onHistogramEnabledChanged = { enabled ->
+                        histogramEnabled = enabled
+                        liveExposureAnalysis = null
+                        histogramError = null
+                        if (!enabled) histogramExpanded = false
+                    },
+                    onSaveTestShotsChanged = { saveTestShots = it },
+                    onTestShot = ::requestTestShot,
+                    onTestShotDarker = { adjustTestExposure(brighter = false) },
+                    onTestShotBrighter = { adjustTestExposure(brighter = true) },
+                    onTestShotInfinityFocus = {
+                        focusMode = CameraFocusMode.INFINITY
+                        focusDistance = 0f
+                        testShotStatus = "Фокус установлен на ∞"
+                    },
+                    onShootingGoalChanged = { shootingGoal = it },
+                    onExposureAssistantExpandedChanged = {
+                        exposureAssistantExpanded = it
+                    },
+                    onApplyExposureRecommendation = {
+                        exposureRecommendation?.let {
+                            applyExposureRecommendation(it, forceSeries = false)
+                        }
+                    },
+                    onAssistantTestShot = ::requestTestShot,
+                    onAssistantStartSeries = {
+                        exposureRecommendation?.let {
+                            applyExposureRecommendation(it, forceSeries = true)
+                            requestSeriesStart()
+                        }
+                    },
+                    onPresetSelected = { selectedPreset = it },
+                    onNewSession = {
+                        sessionNameInput = ""
+                        sessionNoteInput = ""
+                        sessionDialogVisible = true
+                    },
+                    onFinishSession = {
+                        currentSession?.let { session ->
+                            writeSessionInfo(session, singleFormat)
+                        }
+                        sessionStore.clear()
+                        currentSession = null
+                        saveLocationStatus = "Сессия завершена"
+                    },
+                    onCaptureModeChanged = { captureMode = it },
+                    onSingleFormatChanged = { singleFormat = it },
+                    onJpegCapture = { requestCapture(UiCaptureType.JPEG) },
+                    onRawCapture = { requestCapture(UiCaptureType.RAW) },
+                    onSeriesFormatChanged = { seriesFormat = it },
+                    onSeriesFrameCountChanged = { seriesFrameCount = it },
+                    onSeriesDelayChanged = { seriesDelaySeconds = it },
+                    onStartTimerChanged = { startTimerSeconds = it },
+                    onSeriesStart = ::requestSeriesStart,
+                    onSeriesStop = ::requestSeriesStop,
+                    onDarkFramesFormatChanged = { darkFramesFormat = it },
+                    onDarkFramesCountChanged = { darkFramesCount = it },
+                    onDarkFramesStart = ::requestDarkFramesStart,
+                    onDarkFramesStop = ::requestDarkFramesStop,
+                    onExposureChanged = {
+                        exposureWarning = null
+                        exposureTimeNs = it
+                    },
+                    onUnsupportedExposure = { maximumExposure ->
+                        exposureWarning =
+                            "Эта выдержка не поддерживается вашим телефоном. " +
+                            "Максимум: ${formatExposure(maximumExposure)}."
+                    },
+                    onIsoChanged = { iso = it },
+                    onFocusChanged = { focusDistance = it },
+                    onOpenHelp = onOpenHelp,
+                    scrollState = panelScrollState,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        )
 
         selectedPreset?.let { preset ->
             PresetDialog(
@@ -2073,7 +1974,7 @@ private fun CameraScreen(
                             if (reason == SeriesPreflightReason.MISSING) {
                                 requestTestShot()
                             } else {
-                                panelExpanded = true
+                                panelAnchor = CameraPanelAnchor.EXPANDED
                             }
                         }
                     ) {
@@ -2225,6 +2126,21 @@ private fun ContextHelpTitle(
 }
 
 @Composable
+private fun CameraControlSectionTitle(
+    title: String,
+    modifier: Modifier = Modifier
+) {
+    Text(
+        text = title,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(top = 16.dp, bottom = 4.dp),
+        style = MaterialTheme.typography.titleLarge,
+        color = MaterialTheme.colorScheme.primary
+    )
+}
+
+@Composable
 private fun ManualControlsPanel(
     capabilities: ManualCameraCapabilities?,
     exposureTimeNs: Long,
@@ -2267,7 +2183,6 @@ private fun ManualControlsPanel(
     darkFramesCompleted: Int,
     darkFramesAction: String,
     darkFramesMessage: String?,
-    onCollapse: () -> Unit,
     onAstroModeChanged: (Boolean) -> Unit,
     onFocusModeChanged: (CameraFocusMode) -> Unit,
     onApplyLongExposureToPreviewChanged: (Boolean) -> Unit,
@@ -2306,6 +2221,7 @@ private fun ManualControlsPanel(
     onIsoChanged: (Int) -> Unit,
     onFocusChanged: (Float) -> Unit,
     onOpenHelp: (HelpTopic) -> Unit,
+    scrollState: ScrollState,
     modifier: Modifier = Modifier
 ) {
     val exposureRange = capabilities?.exposureRangeNs
@@ -2316,7 +2232,7 @@ private fun ManualControlsPanel(
         isoRange != null
     val manualFocusAvailable = capabilities?.supportsManualFocus == true &&
         maxFocusDistance > 0f
-    val controlsLocked = seriesRunning || darkFramesRunning || testShotRunning
+    val controlsLocked = isCapturing || seriesRunning || darkFramesRunning || testShotRunning
     val availableIsoPresets = ISO_PRESETS.filter { preset ->
         isoRange?.contains(preset) == true
     }
@@ -2341,49 +2257,11 @@ private fun ManualControlsPanel(
         }
     }
 
-    Surface(
-        modifier = modifier,
-        color = Color(0xE610131A),
-        contentColor = Color(0xFFF4F6FF),
-        shape = MaterialTheme.shapes.large
+    Column(
+        modifier = modifier
+            .verticalScroll(scrollState)
+            .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .navigationBarsPadding()
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .pointerInput(onCollapse) {
-                        var dragDistance = 0f
-                        val threshold = 40.dp.toPx()
-                        detectVerticalDragGestures(
-                            onDragStart = { dragDistance = 0f },
-                            onVerticalDrag = { change, dragAmount ->
-                                dragDistance += dragAmount
-                                change.consume()
-                            },
-                            onDragEnd = {
-                                if (dragDistance > threshold) onCollapse()
-                            }
-                        )
-                    },
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Настройки камеры",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-                TextButton(onClick = onCollapse) {
-                    Text("Скрыть ˅")
-                }
-            }
-
             ContextHelpTitle(
                 title = "Сессия",
                 topic = HelpTopic.SESSIONS,
@@ -2463,6 +2341,10 @@ private fun ManualControlsPanel(
                 )
             }
 
+            com.example.astrophoto.ui.AstroExpandableSection(
+                title = "Дополнительно",
+                modifier = Modifier.padding(top = 12.dp)
+            ) {
             FilterChip(
                 selected = astroModeEnabled,
                 onClick = { onAstroModeChanged(!astroModeEnabled) },
@@ -2603,12 +2485,10 @@ private fun ManualControlsPanel(
                     enabled = !controlsLocked
                 )
             }
+            }
 
-            Text(
-                text = "Режим съёмки",
-                modifier = Modifier.padding(top = 12.dp),
-                style = MaterialTheme.typography.titleMedium
-            )
+            CameraControlSectionTitle("Формат и съёмка")
+            Text("Режим съёмки", style = MaterialTheme.typography.titleMedium)
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
@@ -2704,12 +2584,7 @@ private fun ManualControlsPanel(
                 )
             }
 
-            Text(
-                text = "Астро-серия",
-                modifier = Modifier.padding(top = 20.dp),
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
-            )
+            CameraControlSectionTitle("Серия")
             Text(
                 text = "Формат серии",
                 modifier = Modifier.padding(top = 10.dp),
@@ -2977,6 +2852,7 @@ private fun ManualControlsPanel(
                 color = Color(0xFFB8BECC)
             )
 
+            CameraControlSectionTitle("Экспозиция")
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -3089,6 +2965,7 @@ private fun ManualControlsPanel(
                 }
             }
 
+            CameraControlSectionTitle("Фокус")
             ContextHelpTitle(
                 title = "Фокус: ${formatFocusMode(focusMode, focusDistance)}",
                 topic = HelpTopic.INFINITY_FOCUS,
@@ -3131,7 +3008,6 @@ private fun ManualControlsPanel(
                     modifier = Modifier.fillMaxWidth()
                 )
             }
-        }
     }
     helpTopic?.let { topic ->
         HelpTopicDialog(
@@ -3148,10 +3024,6 @@ private fun CompactCapturePanel(
     captureMode: UiCaptureMode,
     singleFormat: UiCaptureType,
     seriesFormat: UiCaptureType,
-    exposureTimeNs: Long,
-    iso: Int,
-    focusDistance: Float,
-    focusMode: CameraFocusMode,
     seriesFrameCount: Int,
     isCapturing: Boolean,
     captureStatus: String?,
@@ -3168,10 +3040,7 @@ private fun CompactCapturePanel(
     darkFramesMessage: String?,
     testShotRunning: Boolean,
     testShotStatus: String?,
-    lastTestShot: TestShotResult?,
-    onExpand: () -> Unit,
     onSingleCapture: () -> Unit,
-    onTestShot: () -> Unit,
     onSeriesStart: () -> Unit,
     onSeriesStop: () -> Unit,
     onDarkFramesStop: () -> Unit,
@@ -3182,99 +3051,28 @@ private fun CompactCapturePanel(
     } else {
         singleFormat
     }
-    val formatLabel = if (selectedFormat == UiCaptureType.RAW) "RAW" else "JPEG"
-    val summary = buildString {
-        append(formatLabel)
-        append(" • ")
-        append(formatExposure(exposureTimeNs))
-        append(" • ISO ")
-        append(iso)
-        append(" • ")
-        append(formatFocusMode(focusMode, focusDistance))
-        if (captureMode == UiCaptureMode.SERIES) {
-            append(" • ")
-            append(seriesFrameCount)
-            append(" кадров")
-        }
-    }
     val formatAvailable = when (selectedFormat) {
         UiCaptureType.JPEG -> capabilities?.supportsJpegCapture == true
         UiCaptureType.RAW -> capabilities?.supportsRawCapture == true
     }
 
-    Surface(
+    Column(
         modifier = modifier
-            .navigationBarsPadding()
-            .padding(12.dp),
-        color = Color(0xE610131A),
-        contentColor = Color(0xFFF4F6FF),
-        shape = MaterialTheme.shapes.large
+            .padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Column(
-            modifier = Modifier.padding(
-                start = 16.dp,
-                top = 16.dp,
-                end = 16.dp,
-                bottom = 18.dp
-            ),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(80.dp)
-                    .clickable(onClick = onExpand)
-                    .pointerInput(onExpand) {
-                        var dragDistance = 0f
-                        val threshold = 40.dp.toPx()
-                        detectVerticalDragGestures(
-                            onDragStart = { dragDistance = 0f },
-                            onVerticalDrag = { change, dragAmount ->
-                                dragDistance += dragAmount
-                                change.consume()
-                            },
-                            onDragEnd = {
-                                if (dragDistance < -threshold) onExpand()
-                            }
-                        )
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Text("Потяните вверх настройки  ˄")
-            }
-            Text(
-                text = summary,
-                modifier = Modifier.fillMaxWidth(),
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.SemiBold
-            )
-            Text(
-                text = lastTestShot?.let {
-                    "Пробный кадр: ${it.status.title.lowercase()}, ${
-                        SimpleDateFormat(
-                            "HH:mm",
-                            Locale.getDefault()
-                        ).format(Date(it.analyzedAtMillis))
-                    }"
-                } ?: "Пробный кадр не сделан",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 4.dp),
-                style = MaterialTheme.typography.bodySmall,
-                color = lastTestShot?.status?.color() ?: Color(0xFFB8BECC)
-            )
-
-            when {
+        when {
                 darkFramesRunning -> {
                     Text(
                         text = "Dark frame $darkFramesCurrent из $darkFramesCount",
-                        modifier = Modifier.padding(top = 8.dp),
-                        style = MaterialTheme.typography.titleMedium
+                        style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
                         text = darkFramesAction,
-                        modifier = Modifier.padding(top = 2.dp),
-                        color = Color(0xFFB7C9FF)
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     LinearProgressIndicator(
                         progress = {
@@ -3283,14 +3081,12 @@ private fun CompactCapturePanel(
                         },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 8.dp)
                     )
                     Button(
                         onClick = onDarkFramesStop,
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 52.dp)
-                            .padding(top = 8.dp)
                     ) {
                         Text("Остановить")
                     }
@@ -3303,14 +3099,14 @@ private fun CompactCapturePanel(
                         } else {
                             seriesAction
                         },
-                        modifier = Modifier.padding(top = 8.dp),
-                        style = MaterialTheme.typography.titleMedium
+                        style = MaterialTheme.typography.bodyMedium
                     )
                     if (seriesCurrentFrame > 0) {
                         Text(
                             text = seriesAction,
-                            modifier = Modifier.padding(top = 2.dp),
-                            color = Color(0xFFB7C9FF)
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     LinearProgressIndicator(
@@ -3320,14 +3116,12 @@ private fun CompactCapturePanel(
                         },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 8.dp)
                     )
                     Button(
                         onClick = onSeriesStop,
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 52.dp)
-                            .padding(top = 8.dp)
                     ) {
                         Text("Остановить")
                     }
@@ -3336,24 +3130,24 @@ private fun CompactCapturePanel(
                 isCapturing -> {
                     Text(
                         text = captureStatus ?: "Съёмка...",
-                        modifier = Modifier.padding(top = 8.dp)
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     LinearProgressIndicator(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 8.dp)
                     )
                 }
 
                 testShotRunning -> {
                     Text(
                         text = testShotStatus ?: "Пробный кадр снимается...",
-                        modifier = Modifier.padding(top = 8.dp)
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     LinearProgressIndicator(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 8.dp)
                     )
                 }
 
@@ -3368,7 +3162,7 @@ private fun CompactCapturePanel(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 56.dp)
-                            .padding(top = 10.dp)
+                            .testTag(com.example.astrophoto.ui.AstroTestTags.CameraCapture)
                     ) {
                         Text(
                             if (captureMode == UiCaptureMode.SERIES) {
@@ -3386,28 +3180,18 @@ private fun CompactCapturePanel(
                     status?.let {
                         Text(
                             text = it,
-                            modifier = Modifier.padding(top = 6.dp),
                             style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                             color = if (it.startsWith("Ошибка")) {
-                                Color(0xFFFFAB91)
+                                MaterialTheme.colorScheme.error
                             } else {
-                                Color(0xFFA5D6A7)
+                                MaterialTheme.colorScheme.secondary
                             }
                         )
                     }
-                    TextButton(
-                        onClick = onTestShot,
-                        enabled = capabilities?.supportsJpegCapture == true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 48.dp)
-                            .padding(top = 4.dp)
-                    ) {
-                        Text("Пробный кадр")
-                    }
                 }
             }
-        }
     }
 }
 
@@ -3618,6 +3402,7 @@ private sealed interface DiagnosticsState {
 
 private enum class AppScreen {
     Diagnostics,
+    DiagnosticsDetails,
     Camera,
     Sessions,
     SessionDetails,
@@ -3641,6 +3426,18 @@ private enum class SeriesPreflightReason {
     MISSING,
     BAD
 }
+
+internal fun canStartSingleCapture(
+    isCapturing: Boolean,
+    seriesRunning: Boolean,
+    darkFramesRunning: Boolean,
+    testShotRunning: Boolean,
+    permissionRequestPending: Boolean
+): Boolean = !isCapturing &&
+    !seriesRunning &&
+    !darkFramesRunning &&
+    !testShotRunning &&
+    !permissionRequestPending
 
 private data class AdaptedCameraPreset(
     val iso: Int,

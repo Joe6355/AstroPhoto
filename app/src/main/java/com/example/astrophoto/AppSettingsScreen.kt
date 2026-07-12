@@ -39,6 +39,7 @@ fun AppSettingsScreen(
     onShowOnboarding: () -> Unit,
     onOpenAbout: () -> Unit,
     onOpenSelfCheck: () -> Unit,
+    onOpenDiagnostics: () -> Unit,
     onBack: () -> Unit
 ) {
     var resetConfirmationVisible by remember { mutableStateOf(false) }
@@ -208,6 +209,14 @@ fun AppSettingsScreen(
                     .padding(top = 8.dp)
             ) {
                 Text("Самопроверка")
+            }
+            TextButton(
+                onClick = onOpenDiagnostics,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+            ) {
+                Text("Дополнительно: диагностика камеры")
             }
             TextButton(
                 onClick = onShowOnboarding,

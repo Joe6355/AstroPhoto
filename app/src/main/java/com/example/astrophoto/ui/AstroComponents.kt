@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
@@ -385,22 +386,34 @@ fun AstroExpandableSection(
     content: @Composable ColumnScope.() -> Unit
 ) {
     var expanded by remember { mutableStateOf(initiallyExpanded) }
-    AstroCard(
+    Column(
         modifier = modifier
             .fillMaxWidth()
             .animateContentSize(tween(200))
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 48.dp)
-                .clickable { expanded = !expanded },
-            verticalAlignment = Alignment.CenterVertically
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = MaterialTheme.shapes.small
         ) {
-            Text(title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
-            Text(if (expanded) "Свернуть" else "Открыть", style = MaterialTheme.typography.labelMedium)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .clickable { expanded = !expanded }
+                    .padding(horizontal = AstroSpacing.Md),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                Text(if (expanded) "Свернуть" else "Открыть", style = MaterialTheme.typography.labelMedium)
+            }
         }
-        if (expanded) content()
+        if (expanded) {
+            Column(
+                modifier = Modifier.padding(top = AstroSpacing.Sm),
+                verticalArrangement = Arrangement.spacedBy(AstroSpacing.Xs),
+                content = content
+            )
+        }
     }
 }
 
@@ -447,7 +460,7 @@ fun AstroPanelHandle(modifier: Modifier = Modifier) {
     Spacer(
         modifier = modifier
             .height(5.dp)
-            .fillMaxWidth(0.16f)
+            .width(44.dp)
             .clip(CircleShape)
             .background(MaterialTheme.colorScheme.outline)
     )
