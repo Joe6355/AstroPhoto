@@ -34,6 +34,7 @@ import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.example.astrophoto.ui.theme.AstroColors
 
 enum class TestShotStatus(val title: String) {
     TOO_DARK("Слишком тёмный"),
@@ -250,7 +251,7 @@ fun TestShotResultCard(
 ) {
     Card(
         modifier = modifier,
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF151A24))
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text(
@@ -262,7 +263,7 @@ fun TestShotResultCard(
                 Text(
                     text = statusMessage ?: "Пробный кадр снимается...",
                     modifier = Modifier.padding(top = 6.dp),
-                    color = Color(0xFFB7C9FF)
+                    color = AstroColors.Secondary
                 )
                 LinearProgressIndicator(
                     modifier = Modifier
@@ -273,7 +274,7 @@ fun TestShotResultCard(
                 Text(
                     text = statusMessage ?: "Пробный кадр не сделан",
                     modifier = Modifier.padding(top = 6.dp),
-                    color = Color(0xFFB8BECC)
+                    color = AstroColors.TextSecondary
                 )
             } else {
                 Text(
@@ -297,7 +298,7 @@ fun TestShotResultCard(
                     ),
                     modifier = Modifier.padding(top = 4.dp),
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFFD5DBE8)
+                    color = AstroColors.TextSecondary
                 )
                 TestShotHistogram(
                     bins = result.exposure.histogram,
@@ -318,7 +319,7 @@ fun TestShotResultCard(
                         text = "Сохранён: $it",
                         modifier = Modifier.padding(top = 5.dp),
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFFA5D6A7)
+                        color = AstroColors.Success
                     )
                 }
                 Row(
@@ -364,7 +365,7 @@ private fun TestShotHistogram(
         bins.forEachIndexed { index, value ->
             val barHeight = size.height * value.coerceIn(0f, 1f)
             drawLine(
-                color = Color(0xFFB39DDB),
+                color = AstroColors.Primary,
                 start = Offset(index * barWidth + barWidth / 2f, size.height),
                 end = Offset(
                     index * barWidth + barWidth / 2f,
@@ -402,10 +403,10 @@ fun TestShotStatus.recommendations(): List<String> = when (this) {
 }
 
 fun TestShotStatus.color(): Color = when (this) {
-    TestShotStatus.NORMAL -> Color(0xFF81C784)
-    TestShotStatus.TOO_DARK -> Color(0xFF90CAF9)
-    TestShotStatus.TOO_BRIGHT -> Color(0xFFFFCC80)
-    TestShotStatus.OVEREXPOSED -> Color(0xFFFF8A80)
-    TestShotStatus.BLURRY -> Color(0xFFFFCC80)
-    TestShotStatus.UNKNOWN -> Color(0xFFB8BECC)
+    TestShotStatus.NORMAL -> AstroColors.Success
+    TestShotStatus.TOO_DARK -> AstroColors.Secondary
+    TestShotStatus.TOO_BRIGHT -> AstroColors.Warning
+    TestShotStatus.OVEREXPOSED -> AstroColors.Error
+    TestShotStatus.BLURRY -> AstroColors.Warning
+    TestShotStatus.UNKNOWN -> AstroColors.TextSecondary
 }

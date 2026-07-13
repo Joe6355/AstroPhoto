@@ -40,9 +40,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -64,6 +64,11 @@ import java.util.Locale
 import kotlin.math.ceil
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
+import com.example.astrophoto.ui.AstroExpandableSection
+import com.example.astrophoto.ui.AstroProgressPanel
+import com.example.astrophoto.ui.AstroSegmentedControl
+import com.example.astrophoto.ui.AstroTestTags
+import com.example.astrophoto.ui.theme.AstroColors
 
 data class JpegStackResult(
     val fileName: String,
@@ -2594,6 +2599,67 @@ private enum class StackProcessingWorkflow(val title: String) {
     MANUAL("Ручная")
 }
 
+enum class ProcessingUiMode(val title: String) {
+    READY("Готовые режимы"),
+    MANUAL("Ручная обработка")
+}
+
+@Composable
+fun ProcessingModeSelector(
+    selected: ProcessingUiMode,
+    onSelected: (ProcessingUiMode) -> Unit,
+    enabled: Boolean,
+    modifier: Modifier = Modifier
+) {
+    AstroSegmentedControl(
+        options = ProcessingUiMode.entries,
+        selected = selected,
+        label = { it.title },
+        onSelected = onSelected,
+        enabled = enabled,
+        modifier = modifier.testTag(AstroTestTags.ProcessingModeTabs)
+    )
+}
+
+@Composable
+fun ProcessingProfileAvailability(
+    unavailableReason: String?,
+    availableFrames: Int,
+    modifier: Modifier = Modifier
+) {
+    Text(
+        text = unavailableReason?.let { "Недоступно: $it" }
+            ?: "Доступно кадров: $availableFrames",
+        modifier = modifier.testTag(AstroTestTags.ProcessingProfileAvailability),
+        color = if (unavailableReason == null) {
+            AstroColors.Success
+        } else {
+            AstroColors.Warning
+        },
+        style = MaterialTheme.typography.bodySmall
+    )
+}
+
+internal fun processingProfileUnavailableReason(
+    profile: AstroProcessingProfile,
+    availableFrames: Int,
+    sourceError: String?,
+    loading: Boolean,
+    running: Boolean,
+    operationsEnabled: Boolean
+): String? = when {
+    loading -> "кадры ещё загружаются"
+    running -> "обработка уже выполняется"
+    !operationsEnabled -> "сначала завершите другую операцию"
+    sourceError != null -> sourceError
+    availableFrames < profile.minimumFrames ->
+        "нужно минимум ${profile.minimumFrames} кадров"
+    else -> null
+}
+
+internal fun canStartProcessing(running: Boolean, jobActive: Boolean): Boolean =
+    !running && !jobActive
+
 private fun StackProcessingWorkflow.displayTitle(): String = when (this) {
     StackProcessingWorkflow.QUICK -> "\u0411\u044B\u0441\u0442\u0440\u043E"
     StackProcessingWorkflow.QUALITY -> "\u041A\u0430\u0447\u0435\u0441\u0442\u0432\u043E"
@@ -2666,6 +2732,9 @@ fun JpegStackingBlock(
     }
     var manualProcessingExpanded by remember(session.folderName) {
         mutableStateOf(true)
+    }
+    var processingUiMode by remember(session.folderName) {
+        mutableStateOf(ProcessingUiMode.READY)
     }
     var preview by remember(session.folderName) { mutableStateOf<Bitmap?>(null) }
     var previewLoading by remember(session.folderName) { mutableStateOf(false) }
@@ -2747,7 +2816,7 @@ fun JpegStackingBlock(
     }
 
     fun startStacking() {
-        if (stacking || processingJob?.isActive == true) return
+        if (!canStartProcessing(stacking, processingJob?.isActive == true)) return
         stacking = true
         progressCurrent = 0
         progressTotal = when {
@@ -2872,7 +2941,7 @@ fun JpegStackingBlock(
     }
 
     fun startProfile(profile: AstroProcessingProfile) {
-        if (stacking || processingJob?.isActive == true) return
+        if (!canStartProcessing(stacking, processingJob?.isActive == true)) return
         val validSource = sourceSelection as? StackingSourceSelection.Valid
         if (validSource == null) {
             status = sourceError ?: "Источник кадров недоступен"
@@ -2925,13 +2994,10 @@ fun JpegStackingBlock(
         }
     }
 
-    Card(
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF151A24))
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -2949,7 +3015,7 @@ fun JpegStackingBlock(
             Text(
                 text = "Складывает JPEG light frames без кадров, " +
                     "помеченных как брак.",
-                color = Color(0xFFD5DBE8)
+                color = AstroColors.TextSecondary
             )
             Text("Найдено Lights/JPEG: ${jpegFrames.size}")
             Text("Light frames используется: ${selectedFrames.size}")
@@ -2977,66 +3043,56 @@ fun JpegStackingBlock(
                     )
                 }
             }
-            sourceError?.let { Text(it, color = Color(0xFFFFAB91)) }
+            sourceError?.let { Text(it, color = AstroColors.Error) }
+
+            ProcessingModeSelector(
+                selected = processingUiMode,
+                onSelected = { processingUiMode = it },
+                enabled = !stacking,
+                modifier = Modifier.fillMaxWidth()
+            )
 
             if (stacking) {
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color(0xFF241F12)
-                    )
-                ) {
-                    Column(
-                        modifier = Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = "Идёт обработка",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFFFFCC80)
-                        )
-                        Text(
-                            text = status ?: "Подготовка кадров...",
-                            color = Color(0xFFD5DBE8)
-                        )
-                        if (progressTotal > 0) {
-                            LinearProgressIndicator(
-                                progress = {
-                                    progressCurrent.toFloat() /
-                                        progressTotal.coerceAtLeast(1)
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            Text(
-                                text = "$progressCurrent из $progressTotal",
-                                color = Color(0xFFB8BECC),
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        } else {
-                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                        }
-                        TextButton(
-                            onClick = {
-                                status = "Остановка обработки..."
-                                processingJob?.cancel()
-                            },
-                            enabled = processingJob?.isActive == true,
-                            modifier = Modifier.align(Alignment.End)
-                        ) {
-                            Text("Остановить")
-                        }
-                    }
-                }
+                AstroProgressPanel(
+                    title = "Идёт обработка",
+                    step = status ?: "Подготовка кадров…",
+                    progress = if (progressTotal > 0) {
+                        progressCurrent.toFloat() / progressTotal.coerceAtLeast(1)
+                    } else {
+                        null
+                    },
+                    onCancel = {
+                        status = "Остановка обработки…"
+                        processingJob?.cancel()
+                    },
+                    modifier = Modifier.testTag(AstroTestTags.ProcessingProgress)
+                )
             }
-            Text(
-                text = "Обработка неба",
-                fontWeight = FontWeight.SemiBold
-            )
-            AstroProcessingProfile.entries.filterNot { it == AstroProcessingProfile.NORMAL }
-                .forEach { profile ->
-                    val enoughFrames = selectedFrames.size >= profile.minimumFrames
+            if (processingUiMode == ProcessingUiMode.READY) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(AstroTestTags.ProcessingReadyModes),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                Text(
+                    text = "Готовые режимы",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                AstroProcessingProfile.entries.filterNot { it == AstroProcessingProfile.NORMAL }
+                    .forEach { profile ->
+                    val unavailableReason = processingProfileUnavailableReason(
+                        profile = profile,
+                        availableFrames = selectedFrames.size,
+                        sourceError = sourceError,
+                        loading = loading,
+                        running = stacking,
+                        operationsEnabled = operationsEnabled
+                    )
                     Card(
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF101722))
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surface
+                        )
                     ) {
                         Column(
                             modifier = Modifier.padding(12.dp),
@@ -3045,19 +3101,26 @@ fun JpegStackingBlock(
                             Text(profile.title, fontWeight = FontWeight.SemiBold)
                             Text(
                                 profile.description,
-                                color = Color(0xFFB8BECC),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 style = MaterialTheme.typography.bodySmall
                             )
-                            Text(
-                                "Минимум: ${profile.minimumFrames} • Доступно: ${selectedFrames.size} • " +
-                                    "Source: ${stackingSource.metadataValue}",
-                                color = if (enoughFrames) Color(0xFFA5D6A7) else Color(0xFFFFCC80),
-                                style = MaterialTheme.typography.bodySmall
+                            ProcessingProfileAvailability(
+                                unavailableReason = unavailableReason,
+                                availableFrames = selectedFrames.size
                             )
+                            AstroExpandableSection(title = "Подробнее") {
+                                Text(
+                                    "Минимум кадров: ${profile.minimumFrames}",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Text(
+                                    "Источник: ${stackingSource.metadataValue}",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
                             Button(
                                 onClick = { startProfile(profile) },
-                                enabled = !loading && !stacking && operationsEnabled &&
-                                    sourceError == null && enoughFrames,
+                                enabled = unavailableReason == null,
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Text("Запустить ${profile.title}")
@@ -3065,10 +3128,12 @@ fun JpegStackingBlock(
                         }
                     }
                 }
+                }
+            }
             if (profileResults.isNotEmpty()) {
                 Card(
                     colors = CardDefaults.cardColors(
-                        containerColor = Color(0xFF0D1B16)
+                        containerColor = AstroColors.SuccessSurface
                     )
                 ) {
                     Column(
@@ -3082,52 +3147,40 @@ fun JpegStackingBlock(
                         profileResults.forEach { created ->
                             Text(
                                 text = "• ${created.fileName}",
-                                color = Color(0xFFD5DBE8),
+                                color = AstroColors.TextSecondary,
                                 style = MaterialTheme.typography.bodySmall
                             )
                             created.additionalFiles.forEach { fileName ->
                                 Text(
                                     text = "  + $fileName",
-                                    color = Color(0xFFD5DBE8),
+                                    color = AstroColors.TextSecondary,
                                     style = MaterialTheme.typography.bodySmall
                                 )
                             }
                         }
                         Text(
                             text = "Откройте раздел «Результаты обработки», чтобы сравнить варианты.",
-                            color = Color(0xFFB8BECC),
+                            color = AstroColors.TextSecondary,
                             style = MaterialTheme.typography.bodySmall
                         )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        Button(
+                            onClick = onOpenResults,
+                            enabled = !stacking,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
                         ) {
-                            Button(
-                                onClick = onOpenResults,
-                                enabled = !stacking,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .heightIn(min = 48.dp)
-                            ) {
-                                Text("Открыть результаты")
-                            }
-                            Button(
-                                onClick = onOpenResults,
-                                enabled = !stacking,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .heightIn(min = 48.dp)
-                            ) {
-                                Text("Сравнить")
-                            }
+                            Text("Открыть результаты")
                         }
                     }
                 }
             }
 
+            if (processingUiMode == ProcessingUiMode.MANUAL) {
             Card(
+                modifier = Modifier.testTag(AstroTestTags.ProcessingManual),
                 colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFF101722)
+                    containerColor = MaterialTheme.colorScheme.surface
                 )
             ) {
                 Column(
@@ -3147,7 +3200,7 @@ fun JpegStackingBlock(
                             )
                             Text(
                                 text = "Average, Average + Dark, Median, Sigma и детальные настройки.",
-                                color = Color(0xFFB8BECC),
+                                color = AstroColors.TextSecondary,
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -3162,8 +3215,8 @@ fun JpegStackingBlock(
                     }
                     if (manualProcessingExpanded) {
             Text(
-                text = "\u0421\u0446\u0435\u043D\u0430\u0440\u0438\u0439 \u043E\u0431\u0440\u0430\u0431\u043E\u0442\u043A\u0438",
-                fontWeight = FontWeight.SemiBold
+                text = "Метод stacking",
+                style = MaterialTheme.typography.titleMedium
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -3180,7 +3233,7 @@ fun JpegStackingBlock(
             }
             Text(
                 text = "\u0411\u044B\u0441\u0442\u0440\u043E: Average + SAFE alignment. \u041A\u0430\u0447\u0435\u0441\u0442\u0432\u043E: \u043C\u044F\u0433\u043A\u0438\u0439 Astro Stretch \u0438 Safe Dark, \u0435\u0441\u043B\u0438 \u0435\u0441\u0442\u044C dark frames.",
-                color = Color(0xFFB8BECC),
+                color = AstroColors.TextSecondary,
                 style = MaterialTheme.typography.bodySmall
             )
 
@@ -3206,8 +3259,8 @@ fun JpegStackingBlock(
             }
 
             Text(
-                text = "Alignment",
-                fontWeight = FontWeight.SemiBold
+                text = "Выравнивание",
+                style = MaterialTheme.typography.titleMedium
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -3227,10 +3280,14 @@ fun JpegStackingBlock(
             }
             Text(
                 text = "SAFE применяет сдвиг только при уверенном совпадении; AGGRESSIVE оставлен для ручных экспериментов.",
-                color = Color(0xFFB8BECC),
+                color = AstroColors.TextSecondary,
                 style = MaterialTheme.typography.bodySmall
             )
 
+            Text(
+                text = "Дополнительная обработка",
+                style = MaterialTheme.typography.titleMedium
+            )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -3271,7 +3328,7 @@ fun JpegStackingBlock(
             }
             Text(
                 text = "Помогает, если телефон немного сдвинулся между кадрами.",
-                color = Color(0xFFB8BECC)
+                color = AstroColors.TextSecondary
             )
 
             Row(
@@ -3291,11 +3348,15 @@ fun JpegStackingBlock(
             }
             Text(
                 text = "\u041C\u044F\u0433\u043A\u043E \u0432\u044B\u0442\u044F\u0433\u0438\u0432\u0430\u0435\u0442 \u0441\u043B\u0430\u0431\u044B\u0435 \u0437\u0432\u0451\u0437\u0434\u044B. \u0415\u0441\u043B\u0438 \u043D\u0443\u0436\u0435\u043D \u00AB\u0447\u0438\u0441\u0442\u044B\u0439\u00BB stack, \u043E\u0441\u0442\u0430\u0432\u044C\u0442\u0435 \u0432\u044B\u043A\u043B.",
-                color = Color(0xFFB8BECC),
+                color = AstroColors.TextSecondary,
                 style = MaterialTheme.typography.bodySmall
             )
 
             if (useDarkFrames) {
+                Text(
+                    text = "Dark Frames",
+                    style = MaterialTheme.typography.titleMedium
+                )
                 Text("Найдено Darks/JPEG: ${darkFrames.size}")
                 Text("Dark frames используется: ${usableDarkFrames.size}")
                 Text("Исключено dark-брака: ${badDarkFrames.size}")
@@ -3321,7 +3382,7 @@ fun JpegStackingBlock(
                     Text(
                         text = "Dark frames не найдены. Можно выполнить обычный " +
                             "stacking без вычитания шума.",
-                        color = Color(0xFFFFCC80)
+                        color = AstroColors.Warning
                     )
                     Button(
                         onClick = {
@@ -3338,21 +3399,21 @@ fun JpegStackingBlock(
                 } else if (usableDarkFrames.isEmpty()) {
                     Text(
                         text = "Все dark frames помечены как брак",
-                        color = Color(0xFFFFAB91)
+                        color = AstroColors.Error
                     )
                 }
             }
             if (medianMode && selectedFrames.size < 3) {
                 Text(
                     text = "Для median желательно хотя бы 3 кадра.",
-                    color = Color(0xFFFFCC80)
+                    color = AstroColors.Warning
                 )
             }
             if (medianMode && selectedFrames.size > MAX_MEDIAN_FRAMES_UI) {
                 Text(
                     text = "Median может быть медленным. Будут использованы " +
                         "первые $MAX_MEDIAN_FRAMES_UI кадров.",
-                    color = Color(0xFFFFCC80)
+                    color = AstroColors.Warning
                 )
             }
             if (sigmaMode) {
@@ -3387,27 +3448,27 @@ fun JpegStackingBlock(
                 Text(
                     text = "Меньше sigma — агрессивнее удаление выбросов, " +
                         "больше — мягче.",
-                    color = Color(0xFFB8BECC)
+                    color = AstroColors.TextSecondary
                 )
                 if (selectedFrames.size < 4) {
                     Text(
                         text = "Для sigma clipping желательно минимум 4 кадра. " +
                             "Лучше используйте Average или Median.",
-                        color = Color(0xFFFFCC80)
+                        color = AstroColors.Warning
                     )
                 }
                 if (selectedFrames.size > MAX_SIGMA_FRAMES_UI) {
                     Text(
                         text = "Sigma clipping может быть медленным. Будут " +
                             "использованы первые $MAX_SIGMA_FRAMES_UI кадров.",
-                        color = Color(0xFFFFCC80)
+                        color = AstroColors.Warning
                     )
                 }
             }
             if (!operationsEnabled) {
                 Text(
                     text = "Сначала завершите текущую операцию",
-                    color = Color(0xFFFFCC80)
+                    color = AstroColors.Warning
                 )
             }
 
@@ -3467,6 +3528,7 @@ fun JpegStackingBlock(
                     }
                 }
             }
+            }
 
             if (loading) {
                 LinearProgressIndicator(
@@ -3485,23 +3547,27 @@ fun JpegStackingBlock(
                         it.startsWith("Сохранение") ||
                         it.startsWith("Выравнивание")
                     ) {
-                        Color(0xFFA5D6A7)
+                        AstroColors.Success
                     } else {
-                        Color(0xFFFFAB91)
+                        AstroColors.Error
                     }
                 )
             }
 
             result?.let { stackResult ->
-                Text(
-                    text = stackResult.displayPath,
-                    color = Color(0xFFD5DBE8)
-                )
-                stackResult.masterDarkDisplayPath?.let { masterPath ->
+                AstroExpandableSection(title = "Технические сведения") {
                     Text(
-                        text = "Master Dark: $masterPath",
-                        color = Color(0xFFD5DBE8)
+                        text = stackResult.displayPath,
+                        color = AstroColors.TextSecondary,
+                        style = MaterialTheme.typography.bodySmall
                     )
+                    stackResult.masterDarkDisplayPath?.let { masterPath ->
+                        Text(
+                            text = "Master Dark: $masterPath",
+                            color = AstroColors.TextSecondary,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                 }
                 Button(
                     onClick = {
@@ -3528,7 +3594,6 @@ fun JpegStackingBlock(
                     )
                 }
             }
-        }
     }
 
     if (showSigmaConfirmation) {

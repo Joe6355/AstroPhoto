@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.astrophoto.ui.theme.AstroColors
 
 enum class ShootingGoal(val title: String) {
     STARS("Звёзды"),
@@ -235,7 +236,9 @@ fun ExposureAssistantCard(
 ) {
     Card(
         modifier = modifier,
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF172033))
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(
@@ -255,7 +258,7 @@ fun ExposureAssistantCard(
                         text = recommendation?.let {
                             "Рекомендация: ${it.summary}"
                         } ?: "Сначала сделайте пробный кадр.",
-                        color = Color(0xFFD5DBE8),
+                            color = AstroColors.TextSecondary,
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -291,7 +294,7 @@ fun ExposureAssistantCard(
                     text = "Сейчас: ISO $currentIso, " +
                         "${formatAssistantExposure(currentExposureTimeNs)}, " +
                         formatAssistantFocus(currentFocusMode),
-                    color = Color(0xFFB8BECC)
+                    color = AstroColors.TextSecondary
                 )
                 recommendation?.let {
                     Text(
@@ -299,7 +302,7 @@ fun ExposureAssistantCard(
                             "${it.format.name}, ${it.frameCount} кадров, " +
                             "таймер ${it.timerSeconds} сек",
                         modifier = Modifier.padding(top = 5.dp),
-                        color = Color(0xFFA5D6A7),
+                        color = AstroColors.Success,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(

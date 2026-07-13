@@ -43,6 +43,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.example.astrophoto.ui.AstroScaffold
+import com.example.astrophoto.ui.AstroSecondaryButton
+import com.example.astrophoto.ui.AstroSpacing
+import com.example.astrophoto.ui.AstroTextButton
+import com.example.astrophoto.ui.theme.AstroColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -56,24 +61,7 @@ fun AboutScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
-    val storageChecker = remember { StorageSpaceChecker(context.applicationContext) }
-    val sessionStore = remember { ShootingSessionStore(context.applicationContext) }
-    var diagnostics by remember { mutableStateOf<CameraDiagnosticInfo?>(null) }
-    var freeStorageBytes by remember { mutableStateOf<Long?>(null) }
-    var status by remember { mutableStateOf<String?>(null) }
     val versionName = remember { applicationVersionName(context) }
-    val activeSession = remember { sessionStore.load()?.sessionName ?: "не выбрана" }
-
-    LaunchedEffect(cameraPermissionGranted) {
-        diagnostics = withContext(Dispatchers.Default) {
-            readCameraDiagnostics(context.applicationContext).getOrNull()
-        }
-        freeStorageBytes = storageChecker.readAvailableSpace().availableBytes
-    }
-
-    val rows = diagnostics?.rows.orEmpty()
-    fun diagnosticValue(name: String): String =
-        rows.firstOrNull { it.name == name }?.value ?: "неизвестно"
 
     val storageAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ||
         ContextCompat.checkSelfPermission(
@@ -82,17 +70,18 @@ fun AboutScreen(
         ) == PackageManager.PERMISSION_GRANTED
     val vibrationAvailable = remember { deviceHasVibrator(context) }
 
+    AstroScaffold(title = "О приложении", onBack = onBack) {
     LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .safeDrawingPadding(),
-        contentPadding = PaddingValues(16.dp, 24.dp, 16.dp, 36.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(
+            AstroSpacing.Lg,
+            AstroSpacing.Md,
+            AstroSpacing.Lg,
+            AstroSpacing.Xxxl
+        ),
+        verticalArrangement = Arrangement.spacedBy(AstroSpacing.Md)
     ) {
         item {
-            TextButton(onClick = onBack) {
-                Text("← Назад")
-            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -107,7 +96,7 @@ fun AboutScreen(
                     )
                     Text(
                         text = "Версия $versionName",
-                        color = Color(0xFFB8BECC)
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
@@ -117,27 +106,6 @@ fun AboutScreen(
                 modifier = Modifier.padding(top = 12.dp),
                 style = MaterialTheme.typography.bodyLarge
             )
-        }
-
-        item {
-            AboutCard("Хранение и сессия") {
-                Text("Активная сессия: $activeSession")
-                Text("Файлы: Pictures/AstroPhoto")
-                Text(
-                    "Свободно: ${
-                        freeStorageBytes?.let(::formatStorageSize) ?: "неизвестно"
-                    }"
-                )
-            }
-        }
-
-        item {
-            AboutCard("Поддержка устройства") {
-                Text("RAW/DNG: ${diagnosticValue("RAW/DNG")}")
-                Text("Manual Sensor: ${diagnosticValue("Manual Sensor")}")
-                Text("Максимальная выдержка: ${diagnosticValue("Макс. выдержка")}")
-                Text("ISO: ${diagnosticValue("ISO")}")
-            }
         }
 
         item {
@@ -166,71 +134,27 @@ fun AboutScreen(
         }
 
         item {
-            Button(
+            AstroSecondaryButton(
+                text = "Открыть справку",
                 onClick = onOpenHelp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 52.dp)
-            ) {
-                Text("Открыть справку")
-            }
-            Button(
+                modifier = Modifier.fillMaxWidth()
+            )
+            AstroSecondaryButton(
+                text = "Открыть настройки",
                 onClick = onOpenSettings,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 52.dp)
                     .padding(top = 8.dp)
-            ) {
-                Text("Открыть настройки")
-            }
-            Button(
+            )
+            AstroTextButton(
+                text = "Самопроверка",
                 onClick = onOpenSelfCheck,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 52.dp)
                     .padding(top = 8.dp)
-            ) {
-                Text("Самопроверка")
-            }
-            Button(
-                onClick = {
-                    val text = buildDiagnosticsText(
-                        versionName = versionName,
-                        diagnostics = diagnostics,
-                        activeSession = activeSession,
-                        freeStorageBytes = freeStorageBytes
-                    )
-                    val clipboard = context.getSystemService(
-                        ClipboardManager::class.java
-                    )
-                    clipboard?.setPrimaryClip(
-                        ClipData.newPlainText("AstroPhoto diagnostics", text)
-                    )
-                    status = if (clipboard != null) {
-                        "Диагностика скопирована"
-                    } else {
-                        "Буфер обмена недоступен"
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 52.dp)
-                    .padding(top = 8.dp)
-            ) {
-                Text("Скопировать диагностику")
-            }
-            status?.let {
-                Text(
-                    text = it,
-                    modifier = Modifier.padding(top = 8.dp),
-                    color = if (it == "Диагностика скопирована") {
-                        Color(0xFFA5D6A7)
-                    } else {
-                        Color(0xFFFFAB91)
-                    }
-                )
-            }
+            )
         }
+    }
     }
 }
 
@@ -239,27 +163,27 @@ fun AstroPhotoLogo(modifier: Modifier = Modifier) {
     Canvas(modifier = modifier) {
         val unit = size.minDimension / 108f
         drawCircle(
-            color = Color(0xFF111936),
+            color = AstroColors.SurfaceElevated,
             radius = size.minDimension / 2f
         )
         drawRoundRect(
-            color = Color(0xFFF4F6FF),
+            color = AstroColors.TextPrimary,
             topLeft = Offset(24f * unit, 42f * unit),
             size = Size(60f * unit, 39f * unit),
             cornerRadius = CornerRadius(6f * unit)
         )
         drawCircle(
-            color = Color(0xFF766CFF),
+            color = AstroColors.Primary,
             radius = 17f * unit,
             center = Offset(54f * unit, 61f * unit)
         )
         drawCircle(
-            color = Color(0xFF35D5FF),
+            color = AstroColors.Secondary,
             radius = 10f * unit,
             center = Offset(54f * unit, 61f * unit)
         )
         drawCircle(
-            color = Color(0xFF10152E),
+            color = AstroColors.Surface,
             radius = 5f * unit,
             center = Offset(54f * unit, 61f * unit)
         )
@@ -283,7 +207,9 @@ private fun AboutCard(
     content: @Composable () -> Unit
 ) {
     Card(
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF151A24))
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
     ) {
         Column(
             modifier = Modifier
@@ -305,7 +231,7 @@ private fun AboutCard(
 private fun PermissionLine(label: String, available: Boolean) {
     Text(
         text = "$label: ${if (available) "доступно" else "не доступно"}",
-        color = if (available) Color(0xFFA5D6A7) else Color(0xFFFFAB91)
+        color = if (available) AstroColors.Success else AstroColors.Error
     )
 }
 

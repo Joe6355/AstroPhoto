@@ -59,12 +59,17 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.example.astrophoto.ui.AstroLoadingState
+import com.example.astrophoto.ui.AstroPrimaryButton
+import com.example.astrophoto.ui.AstroScaffold
+import com.example.astrophoto.ui.AstroSpacing
+import com.example.astrophoto.ui.theme.AstroColors
 
 enum class SelfCheckStatus(val title: String, val color: Color) {
-    OK("ОК", Color(0xFF81C784)),
-    WARNING("Предупреждение", Color(0xFFFFCC80)),
-    ERROR("Ошибка", Color(0xFFFF8A80)),
-    NOT_CHECKED("Не проверено", Color(0xFFB8BECC))
+    OK("ОК", AstroColors.Success),
+    WARNING("Предупреждение", AstroColors.Warning),
+    ERROR("Ошибка", AstroColors.Error),
+    NOT_CHECKED("Не проверено", AstroColors.TextSecondary)
 }
 
 enum class SelfCheckId(val title: String) {
@@ -141,30 +146,26 @@ fun SelfCheckScreen(
 
     val overallStatus = when {
         report.items.any { it.status == SelfCheckStatus.ERROR } ->
-            "Есть ошибки" to Color(0xFFFF8A80)
+            "Есть ошибки" to AstroColors.Error
         report.items.any { it.status == SelfCheckStatus.WARNING } ->
-            "Есть предупреждения" to Color(0xFFFFCC80)
+            "Есть предупреждения" to AstroColors.Warning
         report.checkedAtMillis > 0L ->
-            "Готово к съёмке" to Color(0xFF81C784)
-        else -> "Самопроверка не запускалась" to Color(0xFFB8BECC)
+            "Готово к съёмке" to AstroColors.Success
+        else -> "Самопроверка не запускалась" to AstroColors.TextSecondary
     }
 
+    AstroScaffold(title = "Самопроверка", onBack = onBack) {
     LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .safeDrawingPadding(),
-        contentPadding = PaddingValues(16.dp, 24.dp, 16.dp, 36.dp),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(
+            AstroSpacing.Lg,
+            AstroSpacing.Md,
+            AstroSpacing.Lg,
+            AstroSpacing.Xxxl
+        ),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         item {
-            TextButton(onClick = onBack) {
-                Text("← Назад")
-            }
-            Text(
-                text = "Самопроверка",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold
-            )
             Text(
                 text = overallStatus.first,
                 modifier = Modifier.padding(top = 4.dp),
@@ -172,19 +173,18 @@ fun SelfCheckScreen(
                 fontWeight = FontWeight.Bold,
                 color = overallStatus.second
             )
-            Button(
+            AstroPrimaryButton(
+                text = if (running) "Проверка…" else "Запустить самопроверку",
                 onClick = ::startCheck,
                 enabled = !running,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 52.dp)
                     .padding(top = 12.dp)
-            ) {
-                Text(if (running) "Проверка..." else "Запустить самопроверку")
-            }
+            )
             if (running) {
-                CircularProgressIndicator(
-                    modifier = Modifier.padding(top = 10.dp)
+                AstroLoadingState(
+                    message = "Проверяем камеру и хранилище…",
+                    modifier = Modifier.padding(top = 4.dp)
                 )
             }
         }
@@ -198,7 +198,7 @@ fun SelfCheckScreen(
                         expandedId = if (expanded) null else item.id
                     },
                 colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFF151A24)
+                    containerColor = MaterialTheme.colorScheme.surface
                 )
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
@@ -222,13 +222,13 @@ fun SelfCheckScreen(
                         Text(
                             text = item.details,
                             modifier = Modifier.padding(top = 8.dp),
-                            color = Color(0xFFD5DBE8)
+                            color = AstroColors.TextSecondary
                         )
                         item.recommendation?.let {
                             Text(
                                 text = it,
                                 modifier = Modifier.padding(top = 6.dp),
-                                color = Color(0xFFFFCC80)
+                                color = AstroColors.Warning
                             )
                         }
                         when (item.id) {
@@ -313,13 +313,14 @@ fun SelfCheckScreen(
                         it.contains("выполнен") ||
                         it.contains("проигран")
                     ) {
-                        Color(0xFFA5D6A7)
+                        AstroColors.Success
                     } else {
-                        Color(0xFFFFAB91)
+                        AstroColors.Error
                     }
                 )
             }
         }
+    }
     }
 }
 

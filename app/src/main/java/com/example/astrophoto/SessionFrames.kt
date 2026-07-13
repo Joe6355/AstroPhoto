@@ -12,6 +12,7 @@ import android.provider.MediaStore
 import android.util.Size
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -47,13 +48,25 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.example.astrophoto.ui.AstroEmptyState
+import com.example.astrophoto.ui.AstroLoadingState
+import com.example.astrophoto.ui.AstroScaffold
+import com.example.astrophoto.ui.AstroSecondaryButton
+import com.example.astrophoto.ui.AstroSpacing
+import com.example.astrophoto.ui.AstroTabRow
+import com.example.astrophoto.ui.AstroTestTags
+import com.example.astrophoto.ui.theme.AstroColors
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -462,61 +475,58 @@ fun SessionFramesScreen(
     } else {
         frames.filter { it.category == selectedCategory }
     }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .safeDrawingPadding()
-            .padding(16.dp)
-    ) {
-        TextButton(onClick = onBack) {
-            Text("← Назад")
+    fun categoryCount(category: SessionFrameCategory): Int =
+        if (category == SessionFrameCategory.CROPPED_JPEG) {
+            cropRecords.size
+        } else {
+            frames.count { it.category == category }
         }
-        Text(
-            text = "Кадры сессии",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold
-        )
-        Button(
+    val availableCategories = SessionFrameCategory.entries.filter {
+        categoryCount(it) > 0
+    }
+
+    AstroScaffold(title = "Кадры сессии", onBack = onBack) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = AstroSpacing.Lg)
+        ) {
+        AstroSecondaryButton(
+            text = "Автоотбор JPEG",
             onClick = { showingAutoSelection = true },
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 8.dp)
-        ) {
-            Text("Автоотбор JPEG")
-        }
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            SessionFrameCategory.entries.forEach { category ->
-                val count = frames.count { it.category == category }
-                FilterChip(
-                    selected = selectedCategory == category,
-                    onClick = { selectedCategory = category },
-                    label = { Text("${category.title} ($count)") }
-                )
-            }
+                .padding(bottom = AstroSpacing.Sm)
+        )
+        if (availableCategories.isNotEmpty()) {
+            AstroTabRow(
+                tabs = availableCategories,
+                selected = selectedCategory,
+                label = { "${it.title} (${categoryCount(it)})" },
+                onSelected = { selectedCategory = it }
+            )
         }
         cropMessage?.let {
-            Text(it, color = Color(0xFFFFCC80), style = MaterialTheme.typography.bodySmall)
+            Text(
+                it,
+                modifier = Modifier.padding(top = AstroSpacing.Sm),
+                color = AstroColors.Warning,
+                style = MaterialTheme.typography.bodySmall
+            )
         }
 
         when {
             loading -> {
-                CircularProgressIndicator(
-                    modifier = Modifier
-                        .align(Alignment.CenterHorizontally)
-                        .padding(top = 30.dp)
+                AstroLoadingState(
+                    message = "Загружаем кадры…",
+                    modifier = Modifier.weight(1f)
                 )
             }
             visibleFrames.isEmpty() -> {
-                Text(
-                    text = "В этой категории файлов нет",
-                    modifier = Modifier.padding(top = 24.dp),
-                    color = Color(0xFFB8BECC)
+                AstroEmptyState(
+                    title = "Кадров нет",
+                    message = "В выбранной категории пока нет файлов",
+                    modifier = Modifier.weight(1f)
                 )
             }
             else -> {
@@ -560,6 +570,7 @@ fun SessionFramesScreen(
                     }
                 }
             }
+        }
         }
     }
 
@@ -647,10 +658,16 @@ private fun SessionFrameCard(
     val status = frameStatus(frame, marks)
 
     Card(
-        onClick = onClick,
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF151A24))
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
     ) {
-        Row(modifier = Modifier.padding(12.dp)) {
+        Column(modifier = Modifier.padding(12.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+        ) {
             if (frame.isJpeg) {
                 Box(
                     modifier = Modifier
@@ -674,26 +691,24 @@ private fun SessionFrameCard(
                     .weight(1f)
                     .padding(start = if (frame.isJpeg) 12.dp else 0.dp)
             ) {
-                Text(frame.fileName, fontWeight = FontWeight.SemiBold)
-                cropEntry?.let {
-                    Text(
-                        "Источник: ${it.originalFileName} • ${it.croppedWidth}×${it.croppedHeight}",
-                        color = Color(0xFFB8BECC),
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
+                Text(
+                    text = frame.fileName,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
                 Text(
                     "${formatFrameSize(frame.sizeBytes)} • ${
                         formatFrameDate(frame.createdAtMillis)
                     }",
-                    color = Color(0xFFB8BECC),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall
                 )
                 if (!frame.isJpeg) {
                     Text(
                         "RAW/DNG preview может не поддерживаться Android",
                         modifier = Modifier.padding(top = 4.dp),
-                        color = Color(0xFFFFCC80),
+                        color = AstroColors.Warning,
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -702,59 +717,95 @@ private fun SessionFrameCard(
                     modifier = Modifier.padding(top = 4.dp),
                     color = status.second
                 )
-                val canCrop = frame.category == SessionFrameCategory.LIGHTS_JPEG ||
-                    frame.category == SessionFrameCategory.CROPPED_JPEG
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    TextButton(
-                        onClick = onToggleBad,
-                        contentPadding = PaddingValues(horizontal = 2.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text(
-                            "Брак",
-                            maxLines = 1,
-                            softWrap = false,
-                            style = MaterialTheme.typography.labelSmall
-                        )
-                    }
-                    TextButton(
-                        onClick = onToggleFavorite,
-                        contentPadding = PaddingValues(horizontal = 2.dp),
-                        modifier = Modifier.weight(1.45f)
-                    ) {
-                        Text(
-                            "Избранное",
-                            maxLines = 1,
-                            softWrap = false,
-                            style = MaterialTheme.typography.labelSmall
-                        )
-                    }
-                    if (canCrop) {
-                        TextButton(
-                            onClick = onCrop,
-                            contentPadding = PaddingValues(horizontal = 2.dp),
-                            modifier = Modifier.weight(1.35f)
-                        ) {
-                            Text(
-                                if (cropEntry == null) "Обрезать" else "Заново",
-                                maxLines = 1,
-                                softWrap = false,
-                                style = MaterialTheme.typography.labelSmall
-                            )
-                        }
-                    }
-                }
-                if (cropEntry != null) {
-                    TextButton(
-                        onClick = onDeleteCrop,
-                        contentPadding = PaddingValues(horizontal = 2.dp)
-                    ) {
-                        Text("Удалить обрезку", maxLines = 1, softWrap = false)
-                    }
-                }
+            }
+        }
+        val canCrop = frame.category == SessionFrameCategory.LIGHTS_JPEG ||
+            frame.category == SessionFrameCategory.CROPPED_JPEG
+        FrameActionRow(
+            bad = frame.markKey in marks.bad,
+            favorite = frame.markKey in marks.favorite,
+            canCrop = canCrop,
+            cropExists = cropEntry != null,
+            onToggleBad = onToggleBad,
+            onToggleFavorite = onToggleFavorite,
+            onCrop = onCrop,
+            modifier = Modifier.padding(top = 4.dp)
+        )
+        if (cropEntry != null) {
+            TextButton(
+                onClick = onDeleteCrop,
+                contentPadding = PaddingValues(horizontal = 2.dp)
+            ) {
+                Text("Удалить обрезку", maxLines = 1, softWrap = false)
+            }
+        }
+        }
+    }
+}
+
+@Composable
+fun FrameActionRow(
+    bad: Boolean,
+    favorite: Boolean,
+    canCrop: Boolean,
+    cropExists: Boolean,
+    onToggleBad: () -> Unit,
+    onToggleFavorite: () -> Unit,
+    onCrop: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag(AstroTestTags.FrameActionRow),
+        horizontalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        TextButton(
+            onClick = onToggleBad,
+            contentPadding = PaddingValues(horizontal = 2.dp),
+            modifier = Modifier
+                .weight(1f)
+                .testTag(AstroTestTags.FrameBadAction)
+                .semantics { selected = bad }
+        ) {
+            Text(
+                if (bad) "Брак ✓" else "Брак",
+                maxLines = 1,
+                softWrap = false,
+                color = if (bad) AstroColors.Error else MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.labelSmall
+            )
+        }
+        TextButton(
+            onClick = onToggleFavorite,
+            contentPadding = PaddingValues(horizontal = 2.dp),
+            modifier = Modifier
+                .weight(1.45f)
+                .testTag(AstroTestTags.FrameFavoriteAction)
+                .semantics { selected = favorite }
+        ) {
+            Text(
+                if (favorite) "Избранное ✓" else "Избранное",
+                maxLines = 1,
+                softWrap = false,
+                color = if (favorite) AstroColors.Warning else MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.labelSmall
+            )
+        }
+        if (canCrop) {
+            TextButton(
+                onClick = onCrop,
+                contentPadding = PaddingValues(horizontal = 2.dp),
+                modifier = Modifier
+                    .weight(1.35f)
+                    .testTag(AstroTestTags.FrameCropAction)
+            ) {
+                Text(
+                    if (cropExists) "Заново" else "Обрезать",
+                    maxLines = 1,
+                    softWrap = false,
+                    style = MaterialTheme.typography.labelSmall
+                )
             }
         }
     }
@@ -789,7 +840,7 @@ private fun FrameViewerDialog(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xFF080B12))
+                .background(AstroColors.Background)
                 .safeDrawingPadding()
                 .padding(16.dp)
         ) {
@@ -798,7 +849,7 @@ private fun FrameViewerDialog(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 TextButton(onClick = onDismiss) {
-                    Text("← Назад")
+                    Text("Назад")
                 }
                 Text(
                     text = status.first,
@@ -838,7 +889,7 @@ private fun FrameViewerDialog(
                         Text(
                             frame.displayPath,
                             modifier = Modifier.padding(top = 12.dp),
-                            color = Color(0xFFB8BECC)
+                            color = AstroColors.TextSecondary
                         )
                         Text(
                             formatFrameSize(frame.sizeBytes),
@@ -905,10 +956,10 @@ private fun FrameViewerDialog(
 
 private fun frameStatus(frame: SessionFrame, marks: FrameMarks): Pair<String, Color> =
     when (frame.markKey) {
-        in marks.autoBad -> "Брак (авто)" to Color(0xFFEF9A9A)
-        in marks.bad -> "Брак" to Color(0xFFEF9A9A)
-        in marks.favorite -> "Избранный" to Color(0xFFFFD54F)
-        else -> "Нормальный" to Color(0xFF81C784)
+        in marks.autoBad -> "Брак (авто)" to AstroColors.Error
+        in marks.bad -> "Брак" to AstroColors.Error
+        in marks.favorite -> "Избранный" to AstroColors.Warning
+        else -> "Нормальный" to AstroColors.Success
     }
 
 private fun formatFrameSize(bytes: Long): String = when {

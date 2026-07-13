@@ -1,8 +1,10 @@
 package com.example.astrophoto
 
 import android.Manifest
+import android.content.ClipData
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.ClipboardManager
 import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.media.ToneGenerator
@@ -83,6 +85,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.example.astrophoto.ui.theme.AstroPhotoTheme
+import com.example.astrophoto.ui.theme.AstroColors
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
@@ -194,14 +197,15 @@ private fun AstroPhotoApp() {
         }
     }
 
+    AstroPhotoTheme(
+        darkTheme = true,
+        dynamicColor = false,
+        veryDark = appSettings.themeMode == AppThemeMode.VERY_DARK.name
+    ) {
     Surface(
         modifier = Modifier.fillMaxSize(),
-        color = if (appSettings.themeMode == AppThemeMode.VERY_DARK.name) {
-            Color(0xFF020306)
-        } else {
-            Color(0xFF080B12)
-        },
-        contentColor = Color(0xFFF4F6FF)
+        color = MaterialTheme.colorScheme.background,
+        contentColor = MaterialTheme.colorScheme.onBackground
     ) {
         val screenAvailableWithoutCamera = currentScreen == AppScreen.Diagnostics ||
             currentScreen == AppScreen.DiagnosticsDetails ||
@@ -387,6 +391,7 @@ private fun AstroPhotoApp() {
             }
         )
     }
+    }
 }
 
 @Composable
@@ -443,7 +448,7 @@ private fun StarSplashScreen() {
                 text = "Manual Night Camera",
                 modifier = Modifier.padding(top = 8.dp),
                 style = MaterialTheme.typography.titleMedium,
-                color = Color(0xFFB8BECC)
+                color = AstroColors.TextSecondary
             )
             CircularProgressIndicator(
                 modifier = Modifier
@@ -571,6 +576,8 @@ private fun DiagnosticsList(
     info: CameraDiagnosticInfo,
     onBack: () -> Unit
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var copyStatus by remember { mutableStateOf<String?>(null) }
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -598,6 +605,40 @@ private fun DiagnosticsList(
 
         items(info.rows) { row ->
             DiagnosticCard(row)
+        }
+        item {
+            Button(
+                onClick = {
+                    val text = buildString {
+                        appendLine("AstroPhoto diagnostics")
+                        info.warning?.let { appendLine("Warning: $it") }
+                        info.rows.forEach { appendLine("${it.name}: ${it.value}") }
+                    }
+                    val clipboard = context.getSystemService(ClipboardManager::class.java)
+                    clipboard?.setPrimaryClip(
+                        ClipData.newPlainText("AstroPhoto diagnostics", text)
+                    )
+                    copyStatus = if (clipboard == null) {
+                        "Буфер обмена недоступен"
+                    } else {
+                        "Диагностика скопирована"
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Скопировать диагностику")
+            }
+            copyStatus?.let {
+                Text(
+                    text = it,
+                    modifier = Modifier.padding(top = 6.dp),
+                    color = if (it.endsWith("скопирована")) {
+                        com.example.astrophoto.ui.theme.AstroColors.Success
+                    } else {
+                        MaterialTheme.colorScheme.error
+                    }
+                )
+            }
         }
     }
 }
@@ -1714,7 +1755,7 @@ private fun CameraScreen(
                             else -> "${formatExposure(exposureTimeNs)} · ISO $iso"
                         },
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFFD5DBE8),
+                        color = AstroColors.TextSecondary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -1722,7 +1763,7 @@ private fun CameraScreen(
                 Text(
                     text = cameraStatus,
                     style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFFD5DBE8),
+                    color = AstroColors.TextSecondary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -2298,7 +2339,7 @@ private fun ManualControlsPanel(
                     text = status,
                     modifier = Modifier.padding(top = 4.dp),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFFA5D6A7)
+                    color = AstroColors.Success
                 )
             }
             Text(
@@ -2308,9 +2349,9 @@ private fun ManualControlsPanel(
                 modifier = Modifier.padding(top = 4.dp),
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (storageInfo?.criticallyLow == true) {
-                    Color(0xFFFF6E6E)
+                    AstroColors.Error
                 } else {
-                    Color(0xFFB8BECC)
+                    AstroColors.TextSecondary
                 }
             )
             if (storageInfo?.criticallyLow == true) {
@@ -2318,7 +2359,7 @@ private fun ManualControlsPanel(
                     text = "Мало места",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFFFF6E6E)
+                    color = AstroColors.Error
                 )
             }
             storageInfo?.takeIf { it.estimatedBytes > 0L }?.let { estimate ->
@@ -2334,9 +2375,9 @@ private fun ManualControlsPanel(
                     }",
                     style = MaterialTheme.typography.bodySmall,
                     color = if (estimate.mayBeInsufficient) {
-                        Color(0xFFFFCC80)
+                        AstroColors.Warning
                     } else {
-                        Color(0xFFA5D6A7)
+                        AstroColors.Success
                     }
                 )
             }
@@ -2356,7 +2397,7 @@ private fun ManualControlsPanel(
                 text = "Astro Mode: RAW, ∞, длинная выдержка, серия кадров",
                 modifier = Modifier.padding(top = 4.dp),
                 style = MaterialTheme.typography.bodyMedium,
-                color = Color(0xFFB8BECC)
+                color = AstroColors.TextSecondary
             )
             FilterChip(
                 selected = histogramEnabled,
@@ -2370,7 +2411,7 @@ private fun ManualControlsPanel(
                 text = "Лёгкий анализ яркости live preview.",
                 modifier = Modifier.padding(top = 3.dp),
                 style = MaterialTheme.typography.bodySmall,
-                color = Color(0xFFB8BECC)
+                color = AstroColors.TextSecondary
             )
             FilterChip(
                 selected = saveTestShots,
@@ -2447,12 +2488,12 @@ private fun ManualControlsPanel(
                             Text(
                                 text = preset.name,
                                 fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFFF4F6FF)
+                                color = AstroColors.TextPrimary
                             )
                             Text(
                                 text = preset.description,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = Color(0xFFB8BECC)
+                                color = AstroColors.TextSecondary
                             )
                         }
                     }
@@ -2534,7 +2575,7 @@ private fun ManualControlsPanel(
                     text = warning,
                     modifier = Modifier.padding(top = 8.dp),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFFFFCC80)
+                    color = AstroColors.Warning
                 )
             }
             if (controlsLocked) {
@@ -2543,7 +2584,7 @@ private fun ManualControlsPanel(
                     modifier = Modifier.padding(top = 10.dp),
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFFFFCC80)
+                    color = AstroColors.Warning
                 )
             }
 
@@ -2577,9 +2618,9 @@ private fun ManualControlsPanel(
                     modifier = Modifier.padding(top = 8.dp),
                     style = MaterialTheme.typography.bodyLarge,
                     color = if (status.startsWith("Ошибка")) {
-                        Color(0xFFFFAB91)
+                        AstroColors.Error
                     } else {
-                        Color(0xFFA5D6A7)
+                        AstroColors.Success
                     }
                 )
             }
@@ -2687,7 +2728,7 @@ private fun ManualControlsPanel(
                 Text(
                     text = seriesAction,
                     modifier = Modifier.padding(top = 4.dp),
-                    color = Color(0xFFB7C9FF)
+                    color = AstroColors.Secondary
                 )
                 LinearProgressIndicator(
                     progress = {
@@ -2727,9 +2768,9 @@ private fun ManualControlsPanel(
                     modifier = Modifier.padding(top = 8.dp),
                     style = MaterialTheme.typography.bodyMedium,
                     color = if (message.startsWith("Ошибка")) {
-                        Color(0xFFFFAB91)
+                        AstroColors.Error
                     } else {
-                        Color(0xFFA5D6A7)
+                        AstroColors.Success
                     }
                 )
             }
@@ -2746,7 +2787,7 @@ private fun ManualControlsPanel(
                     "Dark frames снимаются с теми же ISO, выдержкой и фокусом.",
                 modifier = Modifier.padding(top = 6.dp),
                 style = MaterialTheme.typography.bodyMedium,
-                color = Color(0xFFB8BECC)
+                color = AstroColors.TextSecondary
             )
             Text(
                 text = "Формат Dark Frames",
@@ -2799,7 +2840,7 @@ private fun ManualControlsPanel(
                 Text(
                     text = darkFramesAction,
                     modifier = Modifier.padding(top = 4.dp),
-                    color = Color(0xFFB7C9FF)
+                    color = AstroColors.Secondary
                 )
                 LinearProgressIndicator(
                     progress = {
@@ -2839,9 +2880,9 @@ private fun ManualControlsPanel(
                     modifier = Modifier.padding(top = 8.dp),
                     style = MaterialTheme.typography.bodyMedium,
                     color = if (message.startsWith("Ошибка")) {
-                        Color(0xFFFFAB91)
+                        AstroColors.Error
                     } else {
-                        Color(0xFFA5D6A7)
+                        AstroColors.Success
                     }
                 )
             }
@@ -2849,7 +2890,7 @@ private fun ManualControlsPanel(
                 text = "Используйте их позже для вычитания шума.",
                 modifier = Modifier.padding(top = 6.dp),
                 style = MaterialTheme.typography.bodySmall,
-                color = Color(0xFFB8BECC)
+                color = AstroColors.TextSecondary
             )
 
             CameraControlSectionTitle("Экспозиция")
@@ -2871,7 +2912,7 @@ private fun ManualControlsPanel(
                 Text(
                     text = "Листайте →",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFFB8BECC)
+                    color = AstroColors.TextSecondary
                 )
             }
             Row(
@@ -2902,7 +2943,7 @@ private fun ManualControlsPanel(
                     text = warning,
                     modifier = Modifier.padding(top = 6.dp),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFFFFCC80)
+                    color = AstroColors.Warning
                 )
             }
             FilterChip(
@@ -2921,7 +2962,7 @@ private fun ManualControlsPanel(
                     text = "Для плавности preview используется безопасная выдержка 1/30 сек.",
                     modifier = Modifier.padding(top = 4.dp),
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFFB8BECC)
+                    color = AstroColors.TextSecondary
                 )
             }
 
@@ -2943,7 +2984,7 @@ private fun ManualControlsPanel(
                 Text(
                     text = "Листайте →",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFFB8BECC)
+                    color = AstroColors.TextSecondary
                 )
             }
             Row(
@@ -3217,7 +3258,7 @@ private fun PresetDialog(
                     Text(
                         text = warning,
                         modifier = Modifier.padding(top = 10.dp),
-                        color = Color(0xFFFFCC80),
+                        color = AstroColors.Warning,
                         fontWeight = FontWeight.SemiBold
                     )
                 }
@@ -3238,7 +3279,7 @@ private fun PresetDialog(
                         Text(
                             text = "Часть значений адаптирована под ваш телефон.",
                             modifier = Modifier.padding(top = 10.dp),
-                            color = Color(0xFFFFCC80)
+                            color = AstroColors.Warning
                         )
                     }
                 }
@@ -3317,7 +3358,7 @@ private fun SessionDialog(
                     text = "Если имя пустое, оно будет создано автоматически.",
                     modifier = Modifier.padding(top = 8.dp),
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFFB8BECC)
+                    color = AstroColors.TextSecondary
                 )
             }
         },
@@ -3337,18 +3378,18 @@ private fun SessionDialog(
 @Composable
 private fun WarningCard(message: String) {
     Card(
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF4A3210))
+        colors = CardDefaults.cardColors(containerColor = AstroColors.WarningSurface)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
                 text = "Обратите внимание",
                 fontWeight = FontWeight.Bold,
-                color = Color(0xFFFFD180)
+                color = AstroColors.Warning
             )
             Text(
                 text = message,
                 modifier = Modifier.padding(top = 6.dp),
-                color = Color(0xFFFFE0B2)
+                color = AstroColors.Warning
             )
         }
     }
@@ -3358,8 +3399,8 @@ private fun WarningCard(message: String) {
 private fun DiagnosticCard(row: DiagnosticRow) {
     Card(
         colors = CardDefaults.cardColors(
-            containerColor = Color(0xFF151A24),
-            contentColor = Color(0xFFF4F6FF)
+            containerColor = MaterialTheme.colorScheme.surface,
+            contentColor = AstroColors.TextPrimary
         )
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -3368,7 +3409,7 @@ private fun DiagnosticCard(row: DiagnosticRow) {
                 modifier = Modifier.fillMaxWidth(),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
-                color = Color(0xFFF4F6FF)
+                color = AstroColors.TextPrimary
             )
             Text(
                 text = row.value,
@@ -3379,16 +3420,16 @@ private fun DiagnosticCard(row: DiagnosticRow) {
                 fontWeight = FontWeight.Bold,
                 softWrap = true,
                 color = when (row.isSupported) {
-                    true -> Color(0xFF81C784)
-                    false -> Color(0xFFEF9A9A)
-                    null -> Color(0xFFB7C9FF)
+                    true -> AstroColors.Success
+                    false -> AstroColors.Error
+                    null -> AstroColors.Secondary
                 }
             )
             Text(
                 text = row.description,
                 modifier = Modifier.padding(top = 8.dp),
                 style = MaterialTheme.typography.bodyMedium,
-                color = Color(0xFFB8BECC)
+                color = AstroColors.TextSecondary
             )
         }
     }
@@ -3647,8 +3688,8 @@ private fun notifySeriesFeedback(
 private fun PermissionScreenPreview() {
     AstroPhotoTheme(darkTheme = true, dynamicColor = false) {
         Surface(
-            color = Color(0xFF080B12),
-            contentColor = Color(0xFFF4F6FF)
+            color = AstroColors.Background,
+            contentColor = AstroColors.TextPrimary
         ) {
             PermissionScreen(
                 onRequestPermission = {},

@@ -4,23 +4,22 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
 
 private val NightObservatoryColorScheme = darkColorScheme(
     primary = AstroColors.Primary,
     onPrimary = AstroColors.OnPrimary,
-    primaryContainer = Color(0xFF302555),
-    onPrimaryContainer = Color(0xFFE9E2FF),
+    primaryContainer = AstroColors.PrimaryContainer,
+    onPrimaryContainer = AstroColors.OnPrimaryContainer,
     secondary = AstroColors.Secondary,
     onSecondary = AstroColors.OnSecondary,
-    secondaryContainer = Color(0xFF153F49),
-    onSecondaryContainer = Color(0xFFC5F4FC),
+    secondaryContainer = AstroColors.SecondaryContainer,
+    onSecondaryContainer = AstroColors.OnSecondaryContainer,
     tertiary = AstroColors.Success,
-    onTertiary = Color(0xFF0B3921),
+    onTertiary = AstroColors.OnSuccess,
     error = AstroColors.Error,
-    onError = Color(0xFF5F1412),
+    onError = AstroColors.OnError,
     background = AstroColors.Background,
     onBackground = AstroColors.TextPrimary,
     surface = AstroColors.Surface,
@@ -30,6 +29,12 @@ private val NightObservatoryColorScheme = darkColorScheme(
     outline = AstroColors.Outline,
     outlineVariant = AstroColors.OutlineSubtle,
     scrim = AstroColors.Scrim
+)
+
+private val VeryDarkObservatoryColorScheme = NightObservatoryColorScheme.copy(
+    background = AstroColors.BackgroundVeryDark,
+    surface = AstroColors.SurfaceVeryDark,
+    surfaceVariant = AstroColors.Surface
 )
 
 val AstroShapes = Shapes(
@@ -44,10 +49,15 @@ val AstroShapes = Shapes(
 fun AstroPhotoTheme(
     darkTheme: Boolean = true,
     dynamicColor: Boolean = false,
+    veryDark: Boolean = false,
     content: @Composable () -> Unit
 ) {
     MaterialTheme(
-        colorScheme = NightObservatoryColorScheme,
+        colorScheme = if (veryDark) {
+            VeryDarkObservatoryColorScheme
+        } else {
+            NightObservatoryColorScheme
+        },
         typography = AstroTypography,
         shapes = AstroShapes,
         content = content

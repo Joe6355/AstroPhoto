@@ -62,6 +62,10 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.pow
 import kotlin.math.roundToInt
+import com.example.astrophoto.ui.AstroExpandableSection
+import com.example.astrophoto.ui.AstroSegmentedControl
+import com.example.astrophoto.ui.AstroTopBar
+import com.example.astrophoto.ui.theme.AstroColors
 
 data class ImageAdjustments(
     val brightness: Float = 0f,
@@ -1019,17 +1023,10 @@ fun ProcessedImageEditorScreen(
             .padding(horizontal = 16.dp)
             .padding(top = 24.dp, bottom = 36.dp)
     ) {
-        TextButton(onClick = onBack, enabled = !saving) {
-            Text("← Назад")
-        }
-        Text(
-            text = "Редактор",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold
-        )
+        AstroTopBar(title = "Редактор", onBack = onBack)
         Text(
             text = source.fileName,
-            color = Color(0xFFB8BECC),
+            color = AstroColors.TextSecondary,
             style = MaterialTheme.typography.bodySmall
         )
 
@@ -1057,7 +1054,7 @@ fun ProcessedImageEditorScreen(
                 )
                 else -> Text(
                     text = status ?: "Не удалось прочитать JPEG",
-                    color = Color(0xFFFFAB91)
+                    color = AstroColors.Error
                 )
             }
             if (rendering) {
@@ -1069,39 +1066,36 @@ fun ProcessedImageEditorScreen(
             }
         }
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        AstroSegmentedControl(
+            options = listOf(true, false),
+            selected = showOriginal,
+            label = { if (it) "До" else "После" },
+            onSelected = { showOriginal = it },
+            modifier = Modifier.padding(top = 8.dp)
+        )
+        AstroExpandableSection(
+            title = "Гистограмма",
+            modifier = Modifier.padding(top = 8.dp)
         ) {
-            FilterChip(
-                selected = showOriginal,
-                onClick = { showOriginal = true },
-                label = { Text("До") }
-            )
-            FilterChip(
-                selected = !showOriginal,
-                onClick = { showOriginal = false },
-                label = { Text("После") }
+            EditorHistogramBlock(
+                metrics = visibleMetrics,
+                showingOriginal = showOriginal,
+                autoDataAlreadyLost = autoStillActive &&
+                    processedMetrics?.hasClipping == true,
+                modifier = Modifier.fillMaxWidth()
             )
         }
-        EditorHistogramBlock(
-            metrics = visibleMetrics,
-            showingOriginal = showOriginal,
-            autoDataAlreadyLost = autoStillActive &&
-                processedMetrics?.hasClipping == true,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp)
-        )
-        EditorCropBlock(
-            crop = crop,
-            finalWidth = finalDimensions.first,
-            finalHeight = finalDimensions.second,
-            enabled = original != null && !saving,
-            onCropChanged = ::updateCrop,
-            onAutoCrop = {
+        AstroExpandableSection(
+            title = "Обрезка",
+            modifier = Modifier.padding(top = 8.dp)
+        ) {
+            EditorCropBlock(
+                crop = crop,
+                finalWidth = finalDimensions.first,
+                finalHeight = finalDimensions.second,
+                enabled = original != null && !saving,
+                onCropChanged = ::updateCrop,
+                onAutoCrop = {
                 val bitmap = original ?: return@EditorCropBlock
                 coroutineScope.launch {
                     status = "Поиск чёрных краёв..."
@@ -1134,16 +1128,20 @@ fun ProcessedImageEditorScreen(
                         uncropped.recycle()
                     }
                 }
-            },
-            onResetCrop = {
-                crop = CropSettings()
-                status = "Обрезка сброшена"
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp)
-        )
+                },
+                onResetCrop = {
+                    crop = CropSettings()
+                    status = "Обрезка сброшена"
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
 
+        AstroExpandableSection(
+            title = "Тон и цвет",
+            modifier = Modifier.padding(top = 8.dp),
+            initiallyExpanded = true
+        ) {
         Text(
             text = "Пресеты",
             modifier = Modifier.padding(top = 10.dp),
@@ -1262,6 +1260,11 @@ fun ProcessedImageEditorScreen(
                 Text("Авто")
             }
         }
+        }
+        AstroExpandableSection(
+            title = "Астро-режимы",
+            modifier = Modifier.padding(top = 8.dp)
+        ) {
         Button(
             onClick = {
                 val bitmap = original ?: return@Button
@@ -1353,8 +1356,9 @@ fun ProcessedImageEditorScreen(
                 text = "Риск потери слабых деталей: чёрная точка слишком высокая.",
                 modifier = Modifier.padding(top = 6.dp),
                 style = MaterialTheme.typography.bodySmall,
-                color = Color(0xFFFFCC80)
+                color = AstroColors.Warning
             )
+        }
         }
         Button(
             onClick = {
@@ -1416,9 +1420,9 @@ fun ProcessedImageEditorScreen(
                     it.startsWith("Не удалось") ||
                     it.startsWith("Редактор поддерживает")
                 ) {
-                    Color(0xFFFFAB91)
+                    AstroColors.Error
                 } else {
-                    Color(0xFFA5D6A7)
+                    AstroColors.Success
                 }
             )
         }
@@ -1438,7 +1442,7 @@ private fun EditorCropBlock(
 ) {
     Column(
         modifier = modifier
-            .background(Color(0xFF121722), MaterialTheme.shapes.medium)
+            .background(MaterialTheme.colorScheme.surface, MaterialTheme.shapes.medium)
             .padding(10.dp)
     ) {
         Text(
@@ -1449,7 +1453,7 @@ private fun EditorCropBlock(
         Text(
             text = "Итоговый размер: ${finalWidth}×${finalHeight} px",
             modifier = Modifier.padding(top = 3.dp),
-            color = Color(0xFFD5DBE8)
+            color = AstroColors.TextSecondary
         )
         EditorSlider(
             title = "Слева",
@@ -1505,7 +1509,7 @@ private fun EditorCropBlock(
         Text(
             text = "Максимум 30% на сторону, минимум результата 200×200 px.",
             style = MaterialTheme.typography.bodySmall,
-            color = Color(0xFFB8BECC)
+            color = AstroColors.TextSecondary
         )
     }
 }
@@ -1519,7 +1523,7 @@ private fun EditorHistogramBlock(
 ) {
     Column(
         modifier = modifier
-            .background(Color(0xFF0D1119), MaterialTheme.shapes.medium)
+            .background(MaterialTheme.colorScheme.surface, MaterialTheme.shapes.medium)
             .padding(10.dp)
     ) {
         Text(
@@ -1539,7 +1543,7 @@ private fun EditorHistogramBlock(
                 data.histogram.forEachIndexed { index, value ->
                     val barHeight = size.height * value.coerceIn(0f, 1f)
                     drawLine(
-                        color = Color(0xFFB7C9FF),
+                        color = AstroColors.Secondary,
                         start = Offset(
                             index * barWidth + barWidth / 2f,
                             size.height
@@ -1556,7 +1560,7 @@ private fun EditorHistogramBlock(
                     EditorImageMetrics.CLIPPING_WARNING_PERCENT
                 ) {
                     drawRect(
-                        color = Color(0xFFFF8A80),
+                        color = AstroColors.Error,
                         size = androidx.compose.ui.geometry.Size(5.dp.toPx(), size.height)
                     )
                 }
@@ -1565,7 +1569,7 @@ private fun EditorHistogramBlock(
                     EditorImageMetrics.CLIPPING_WARNING_PERCENT
                 ) {
                     drawRect(
-                        color = Color(0xFFFFCC80),
+                        color = AstroColors.Warning,
                         topLeft = Offset(size.width - 5.dp.toPx(), 0f),
                         size = androidx.compose.ui.geometry.Size(5.dp.toPx(), size.height)
                     )
@@ -1586,7 +1590,7 @@ private fun EditorHistogramBlock(
                 ),
                 modifier = Modifier.padding(top = 5.dp),
                 style = MaterialTheme.typography.bodySmall,
-                color = Color(0xFFD5DBE8)
+                color = AstroColors.TextSecondary
             )
             data.warnings().forEach { warning ->
                 Text(
@@ -1596,9 +1600,9 @@ private fun EditorHistogramBlock(
                     color = if (
                         warning == "Тональный диапазон выглядит нормально."
                     ) {
-                        Color(0xFFA5D6A7)
+                        AstroColors.Success
                     } else {
-                        Color(0xFFFFCC80)
+                        AstroColors.Warning
                     }
                 )
             }
@@ -1607,14 +1611,14 @@ private fun EditorHistogramBlock(
                     text = "Авто улучшило изображение, но часть данных уже потеряна.",
                     modifier = Modifier.padding(top = 4.dp),
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFFFFCC80)
+                    color = AstroColors.Warning
                 )
             }
         } ?: Text(
             text = "Расчёт гистограммы…",
             modifier = Modifier.padding(top = 5.dp),
             style = MaterialTheme.typography.bodySmall,
-            color = Color(0xFFB8BECC)
+            color = AstroColors.TextSecondary
         )
     }
 }

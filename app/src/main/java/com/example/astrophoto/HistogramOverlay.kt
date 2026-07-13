@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import java.util.Locale
+import com.example.astrophoto.ui.theme.AstroColors
 
 @Composable
 fun HistogramOverlay(
@@ -41,9 +42,9 @@ fun HistogramOverlay(
                 } ?: "Экспозиция: ожидание…",
                 fontWeight = FontWeight.SemiBold,
                 color = if (error != null) {
-                    Color(0xFFFFAB91)
+                AstroColors.Error
                 } else {
-                    analysis?.status?.displayColor() ?: Color(0xFFB8BECC)
+                analysis?.status?.displayColor() ?: AstroColors.TextSecondary
                 }
             )
             HistogramCanvas(
@@ -74,7 +75,7 @@ fun HistogramOverlay(
                         ?: "Ожидание live-анализа.",
                     modifier = Modifier.padding(top = 5.dp),
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFFD5DBE8)
+                    color = AstroColors.TextSecondary
                 )
             }
         }
@@ -92,7 +93,7 @@ private fun HistogramCanvas(
         bins.forEachIndexed { index, value ->
             val height = size.height * value.coerceIn(0f, 1f)
             drawLine(
-                color = Color(0xFF90CAF9),
+                            color = AstroColors.Secondary,
                 start = Offset(
                     x = index * barWidth + barWidth / 2f,
                     y = size.height
@@ -124,9 +125,9 @@ fun ExposureStatus.hint(): String = when (this) {
 }
 
 private fun ExposureStatus.displayColor(): Color = when (this) {
-    ExposureStatus.OK -> Color(0xFF81C784)
-    ExposureStatus.TOO_DARK -> Color(0xFF90CAF9)
-    ExposureStatus.TOO_BRIGHT -> Color(0xFFFFCC80)
-    ExposureStatus.OVEREXPOSED -> Color(0xFFFF8A80)
-    ExposureStatus.UNKNOWN -> Color(0xFFB8BECC)
+    ExposureStatus.OK -> AstroColors.Success
+    ExposureStatus.TOO_DARK -> AstroColors.Secondary
+    ExposureStatus.TOO_BRIGHT -> AstroColors.Warning
+    ExposureStatus.OVEREXPOSED -> AstroColors.Error
+    ExposureStatus.UNKNOWN -> AstroColors.TextSecondary
 }

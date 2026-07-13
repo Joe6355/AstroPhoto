@@ -15,6 +15,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -34,6 +35,9 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -51,7 +55,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -63,6 +71,15 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.example.astrophoto.ui.AstroEmptyState
+import com.example.astrophoto.ui.AstroErrorState
+import com.example.astrophoto.ui.AstroExpandableSection
+import com.example.astrophoto.ui.AstroLoadingState
+import com.example.astrophoto.ui.AstroScaffold
+import com.example.astrophoto.ui.AstroSecondaryButton
+import com.example.astrophoto.ui.AstroSpacing
+import com.example.astrophoto.ui.AstroTestTags
+import com.example.astrophoto.ui.theme.AstroColors
 
 enum class ProcessedResultType(val title: String) {
     STACK("Обычный stack"),
@@ -703,29 +720,20 @@ fun ProcessedResultsScreen(
         return
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .safeDrawingPadding()
-            .padding(horizontal = 16.dp)
-            .padding(top = 24.dp, bottom = 16.dp)
-    ) {
-        TextButton(onClick = onBack) {
-            Text("← Назад")
-        }
-        Text(
-            text = "Результаты обработки",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold
-        )
+    AstroScaffold(title = "Результаты обработки", onBack = onBack) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = AstroSpacing.Lg)
+        ) {
         operationStatus?.let {
             Text(
                 text = it,
                 modifier = Modifier.padding(top = 6.dp),
                 color = if (it.startsWith("Ошибка")) {
-                    Color(0xFFFFAB91)
+                    AstroColors.Error
                 } else {
-                    Color(0xFFA5D6A7)
+                    AstroColors.Success
                 }
             )
         }
@@ -737,17 +745,14 @@ fun ProcessedResultsScreen(
                     .padding(top = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Button(
+                AstroSecondaryButton(
+                    text = if (compareMode) "Отменить сравнение" else "Сравнить",
                     onClick = {
                         compareMode = !compareMode
                         comparisonSelection = emptyList()
                     },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 52.dp)
-                ) {
-                    Text(if (compareMode) "Отменить сравнение" else "Сравнить")
-                }
+                    modifier = Modifier.fillMaxWidth()
+                )
                 if (compareMode) {
                     Button(
                         onClick = {
@@ -770,62 +775,37 @@ fun ProcessedResultsScreen(
                 Text(
                     text = "Выберите два результата",
                     modifier = Modifier.padding(top = 6.dp),
-                    color = Color(0xFFB8BECC)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
 
         when {
             loading -> {
-                CircularProgressIndicator(
-                    modifier = Modifier
-                        .align(Alignment.CenterHorizontally)
-                        .padding(top = 32.dp)
+                AstroLoadingState(
+                    message = "Загружаем результаты…",
+                    modifier = Modifier.weight(1f)
                 )
             }
             loadError != null -> {
-                Column(
-                    modifier = Modifier.padding(top = 24.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = "Не удалось открыть результаты",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFFFFAB91)
-                    )
-                    Text(
-                        text = loadError.orEmpty(),
-                        color = Color(0xFFB8BECC)
-                    )
-                    Button(
-                        onClick = { refreshKey++ },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 52.dp)
-                    ) {
-                        Text("Повторить")
+                AstroErrorState(
+                    title = "Не удалось открыть результаты",
+                    message = loadError.orEmpty(),
+                    modifier = Modifier.weight(1f),
+                    action = {
+                        AstroSecondaryButton(
+                            text = "Повторить",
+                            onClick = { refreshKey++ }
+                        )
                     }
-                    TextButton(
-                        onClick = onBack,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Назад")
-                    }
-                }
+                )
             }
             displayedResults.isEmpty() -> {
-                Column(modifier = Modifier.padding(top = 24.dp)) {
-                    Text(
-                        text = "Результатов пока нет",
-                        color = Color(0xFFB8BECC)
-                    )
-                    Text(
-                        text = "Запустите обработку серии, результат появится здесь.",
-                        modifier = Modifier.padding(top = 6.dp),
-                        color = Color(0xFFB8BECC)
-                    )
-                }
+                AstroEmptyState(
+                    title = "Результатов пока нет",
+                    message = "Запустите обработку кадров этой сессии",
+                    modifier = Modifier.weight(1f)
+                )
             }
             else -> {
                 LazyColumn(
@@ -856,6 +836,9 @@ fun ProcessedResultsScreen(
                                 operationStatus = null
                                 pendingDelete = result
                             },
+                            onExport = {
+                                operationStatus = shareResult(context, result)
+                            },
                             onClick = {
                                 if (compareMode) {
                                     comparisonSelection = when {
@@ -876,6 +859,7 @@ fun ProcessedResultsScreen(
                     }
                 }
             }
+        }
         }
     }
 
@@ -918,7 +902,7 @@ fun ProcessedResultsScreen(
                     Text(
                         text = "Расширение .jpg будет сохранено.",
                         modifier = Modifier.padding(top = 6.dp),
-                        color = Color(0xFFB8BECC)
+                        color = AstroColors.TextSecondary
                     )
                     operationStatus?.takeIf {
                         it.startsWith("Ошибка переименования")
@@ -926,7 +910,7 @@ fun ProcessedResultsScreen(
                         Text(
                             text = it,
                             modifier = Modifier.padding(top = 8.dp),
-                            color = Color(0xFFFFAB91)
+                            color = AstroColors.Error
                         )
                     }
                 }
@@ -1000,7 +984,7 @@ fun ProcessedResultsScreen(
                         Text(
                             text = it,
                             modifier = Modifier.padding(top = 8.dp),
-                            color = Color(0xFFFFAB91)
+                        color = AstroColors.Error
                         )
                     }
                 }
@@ -1038,7 +1022,7 @@ fun ProcessedResultsScreen(
                     },
                     enabled = !operationRunning,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFFB3261E),
+                            containerColor = MaterialTheme.colorScheme.error,
                         contentColor = Color.White
                     )
                 ) {
@@ -1066,6 +1050,7 @@ private fun ProcessedResultCard(
     onEdit: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
+    onExport: () -> Unit,
     onClick: () -> Unit
 ) {
     var thumbnail by remember(result.key) { mutableStateOf<Bitmap?>(null) }
@@ -1100,107 +1085,181 @@ private fun ProcessedResultCard(
         !source.legacyFilePath.isNullOrBlank()
     val canEdit = result.isReadable && canOpen && !thumbnailLoading
     Card(
-        onClick = {
-            if (canOpen) onClick()
-        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(AstroTestTags.ResultCard),
         colors = CardDefaults.cardColors(
             containerColor = if (selectedForComparison) {
-                Color(0xFF263A5A)
+                MaterialTheme.colorScheme.primaryContainer
             } else if (hasKnownProblem) {
-                Color(0xFF241515)
+                AstroColors.ErrorSurface
             } else {
-                Color(0xFF151A24)
+                MaterialTheme.colorScheme.surface
             }
         )
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
                 modifier = Modifier
-                    .width(96.dp)
-                    .height(82.dp)
-                    .background(Color.Black),
-                contentAlignment = Alignment.Center
+                    .fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                thumbnail?.let {
-                    Image(
-                        bitmap = it.asImageBitmap(),
-                        contentDescription = result.fileName,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
-                    )
-                } ?: if (thumbnailFailed || hasKnownProblem) {
-                    Text("Ошибка", color = Color(0xFFFFAB91))
-                } else if (thumbnailLoading) {
-                    CircularProgressIndicator()
-                } else {
-                    Text("JPEG", color = Color(0xFFB8BECC))
+                Box(
+                    modifier = Modifier
+                        .width(96.dp)
+                        .height(82.dp)
+                        .background(Color.Black),
+                    contentAlignment = Alignment.Center
+                ) {
+                    thumbnail?.let {
+                        Image(
+                            bitmap = it.asImageBitmap(),
+                            contentDescription = result.fileName,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop
+                        )
+                    } ?: if (thumbnailFailed || hasKnownProblem) {
+                        Text("Ошибка", color = AstroColors.Error)
+                    } else if (thumbnailLoading) {
+                        CircularProgressIndicator()
+                    } else {
+                        Text("JPEG", color = AstroColors.TextSecondary)
+                    }
                 }
-            }
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(start = 12.dp)
-            ) {
-                Text(result.fileName, fontWeight = FontWeight.SemiBold)
-                Text(
-                    text = result.type.title,
-                    color = Color(0xFF90CAF9)
-                )
-                if (hasKnownProblem) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = 12.dp)
+                ) {
                     Text(
-                        text = result.errorMessage
-                            ?: "Файл не удалось открыть",
-                        color = Color(0xFFFFAB91),
+                        text = result.fileName,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = result.type.title,
+                        color = MaterialTheme.colorScheme.secondary
+                    )
+                    if (result.type == ProcessedResultType.RECOVERED_STARS) {
+                        Text(
+                            text = "Проверьте возможные артефакты",
+                            color = AstroColors.Warning,
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                    if (hasKnownProblem) {
+                        Text(
+                            text = result.errorMessage ?: "Файл не удалось открыть",
+                            color = AstroColors.Error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    Text(
+                        text = "${formatProcessedDate(result.createdAtMillis)} • " +
+                            formatProcessedSize(result.sizeBytes),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall
                     )
+                    if (selectedForComparison) {
+                        Text(
+                            text = "Выбран для сравнения",
+                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
                 }
-                Text(
-                    text = "${formatProcessedDate(result.createdAtMillis)} • " +
-                        formatProcessedSize(result.sizeBytes),
-                    color = Color(0xFFB8BECC),
-                    style = MaterialTheme.typography.bodySmall
-                )
-                if (!compareMode) {
-                    Button(
-                        onClick = onClick,
-                        enabled = canOpen,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Открыть")
-                    }
-                    Button(
-                        onClick = onEdit,
-                        enabled = canEdit,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Редактировать")
-                    }
-                    TextButton(
-                        onClick = onRename,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Переименовать")
-                    }
-                    TextButton(
-                        onClick = onDelete,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Удалить", color = Color(0xFFFF8A80))
-                    }
+                if (compareMode) {
+                    Checkbox(
+                        checked = selectedForComparison,
+                        onCheckedChange = { if (canOpen) onClick() },
+                        enabled = canOpen
+                    )
                 }
             }
-            if (compareMode) {
-                Checkbox(
-                    checked = selectedForComparison,
-                    onCheckedChange = {
-                        if (canOpen) onClick()
+            if (!compareMode) {
+                ProcessedResultActions(
+                    canOpen = canOpen,
+                    canEdit = canEdit,
+                    onOpen = onClick,
+                    onEdit = onEdit,
+                    onExport = onExport,
+                    onRename = onRename,
+                    onDelete = onDelete,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun ProcessedResultActions(
+    canOpen: Boolean,
+    canEdit: Boolean,
+    onOpen: () -> Unit,
+    onEdit: () -> Unit,
+    onExport: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var menuExpanded by remember { mutableStateOf(false) }
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag(AstroTestTags.ResultActions),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Button(
+            onClick = onOpen,
+            enabled = canOpen,
+            modifier = Modifier.weight(1f)
+        ) {
+            Text("Открыть")
+        }
+        Box {
+            IconButton(
+                onClick = { menuExpanded = true },
+                modifier = Modifier
+                    .testTag(AstroTestTags.ResultActionsMenu)
+                    .semantics { contentDescription = "Действия с результатом" }
+            ) {
+                Text("⋮", style = MaterialTheme.typography.titleLarge)
+            }
+            DropdownMenu(
+                expanded = menuExpanded,
+                onDismissRequest = { menuExpanded = false }
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Редактировать") },
+                    onClick = {
+                        menuExpanded = false
+                        onEdit()
+                    },
+                    enabled = canEdit
+                )
+                DropdownMenuItem(
+                    text = { Text("Экспорт / поделиться") },
+                    onClick = {
+                        menuExpanded = false
+                        onExport()
                     },
                     enabled = canOpen
+                )
+                DropdownMenuItem(
+                    text = { Text("Переименовать") },
+                    onClick = {
+                        menuExpanded = false
+                        onRename()
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Удалить", color = AstroColors.Error) },
+                    onClick = {
+                        menuExpanded = false
+                        onDelete()
+                    }
                 )
             }
         }
@@ -1244,22 +1303,20 @@ private fun ProcessedResultViewer(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xFF080B12))
+                .background(MaterialTheme.colorScheme.background)
                 .safeDrawingPadding()
                 .padding(16.dp)
         ) {
-            TextButton(onClick = onDismiss) {
-                Text("← Назад")
-            }
-            Text(
-                text = result.fileName,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
+            com.example.astrophoto.ui.AstroTopBar(
+                title = "Просмотр результата",
+                onBack = onDismiss
             )
             Text(
-                text = result.displayPath,
-                color = Color(0xFFB8BECC),
-                style = MaterialTheme.typography.bodySmall
+                text = result.fileName,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
 
             Box(
@@ -1285,12 +1342,12 @@ private fun ProcessedResultViewer(
                     ) {
                         Text(
                             text = state.error.userTitle,
-                            color = Color(0xFFFFAB91),
+                            color = AstroColors.Error,
                             fontWeight = FontWeight.SemiBold
                         )
                         Text(
                             text = state.error.userMessage,
-                            color = Color(0xFFB8BECC),
+                            color = AstroColors.TextSecondary,
                             modifier = Modifier.padding(top = 6.dp)
                         )
                         Button(
@@ -1312,23 +1369,23 @@ private fun ProcessedResultViewer(
                             loaded.warningTitle,
                             loaded.warningMessage
                         ).joinToString("\n"),
-                        color = Color(0xFFFFCC80)
+                        color = AstroColors.Warning
                     )
                 }
             }
             actionError?.let {
-                Text(it, color = Color(0xFFFFAB91))
+                Text(it, color = AstroColors.Error)
             }
             if (imageState is ViewerImageState.Loaded) {
-                Row(
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Button(
                         onClick = {
                             actionError = openResultInGallery(context, result)
                         },
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("Открыть в галерее")
                     }
@@ -1336,7 +1393,7 @@ private fun ProcessedResultViewer(
                         onClick = {
                             actionError = shareResult(context, result)
                         },
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("Поделиться")
                     }
@@ -1358,6 +1415,13 @@ private fun ProcessedResultViewer(
                         }
                     )
                 }
+            }
+            AstroExpandableSection(title = "Технические сведения") {
+                Text(
+                    text = result.displayPath,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
         }
     }
@@ -1412,39 +1476,58 @@ private fun ProcessedComparisonViewer(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xFF080B12))
+                .background(MaterialTheme.colorScheme.background)
                 .safeDrawingPadding()
                 .padding(12.dp)
         ) {
-            TextButton(onClick = onDismiss) {
-                Text("← Назад")
-            }
-            Text(
-                text = "Сравнение",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
+            com.example.astrophoto.ui.AstroTopBar(
+                title = "Сравнение",
+                onBack = onDismiss
             )
             if (loading) {
                 CircularProgressIndicator(
                     modifier = Modifier.align(Alignment.CenterHorizontally)
                 )
             }
-            ComparisonPane(
-                state = firstState,
-                label = first.label,
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .padding(top = 8.dp)
-            )
-            ComparisonPane(
-                state = secondState,
-                label = second.label,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .padding(top = 8.dp)
-            )
+            ) {
+                if (maxWidth > maxHeight) {
+                    Row(
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        ComparisonPane(
+                            state = firstState,
+                            label = first.label,
+                            modifier = Modifier.weight(1f)
+                        )
+                        ComparisonPane(
+                            state = secondState,
+                            label = second.label,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                } else {
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        ComparisonPane(
+                            state = firstState,
+                            label = first.label,
+                            modifier = Modifier.weight(1f)
+                        )
+                        ComparisonPane(
+                            state = secondState,
+                            label = second.label,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
             if (!loading && (
                     firstState is ViewerImageState.Error ||
                         secondState is ViewerImageState.Error
@@ -1452,7 +1535,7 @@ private fun ProcessedComparisonViewer(
             ) {
                 Text(
                     text = "Один из файлов не удалось прочитать",
-                    color = Color(0xFFFFAB91),
+                    color = AstroColors.Error,
                     modifier = Modifier.padding(top = 6.dp)
                 )
             }
@@ -1493,12 +1576,12 @@ private fun ComparisonPane(
                 ) {
                     Text(
                         text = state.error.userTitle,
-                        color = Color(0xFFFFAB91),
+                        color = AstroColors.Error,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
                         text = state.error.userMessage,
-                        color = Color(0xFFB8BECC),
+                        color = AstroColors.TextSecondary,
                         modifier = Modifier.padding(top = 4.dp)
                     )
                 }

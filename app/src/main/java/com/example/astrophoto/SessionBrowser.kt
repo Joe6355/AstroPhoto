@@ -46,6 +46,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import com.example.astrophoto.ui.AstroEmptyState
+import com.example.astrophoto.ui.AstroExpandableSection
+import com.example.astrophoto.ui.AstroLoadingState
+import com.example.astrophoto.ui.AstroPrimaryButton
+import com.example.astrophoto.ui.AstroScaffold
+import com.example.astrophoto.ui.AstroSecondaryButton
+import com.example.astrophoto.ui.AstroSpacing
+import com.example.astrophoto.ui.AstroTopBar
+import com.example.astrophoto.ui.theme.AstroColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -255,9 +264,9 @@ private enum class SessionQualityStatus(
     val title: String,
     val color: Color
 ) {
-    READY("Готово к обработке", Color(0xFF81C784)),
-    IMPROVE("Можно снимать лучше", Color(0xFFFFCC80)),
-    PROBLEM("Проблема", Color(0xFFEF9A9A))
+    READY("Готово к обработке", AstroColors.Success),
+    IMPROVE("Можно снимать лучше", AstroColors.Warning),
+    PROBLEM("Проблема", AstroColors.Error)
 }
 
 private data class SessionQualityReport(
@@ -372,65 +381,46 @@ fun SessionsScreen(
         loading = false
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .safeDrawingPadding()
-            .padding(horizontal = 16.dp)
-            .padding(top = 24.dp, bottom = 16.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+    AstroScaffold(title = "Сессии", onBack = onBack) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = AstroSpacing.Lg)
         ) {
-            TextButton(onClick = onBack) {
-                Text("← Назад")
-            }
-            Text(
-                text = "Сессии",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold
-            )
-        }
-        Button(
+        AstroPrimaryButton(
+            text = "Новая сессия",
             onClick = {
                 sessionName = ""
                 sessionNote = ""
                 showCreateDialog = true
             },
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 52.dp)
-        ) {
-            Text("Новая сессия")
-        }
+            modifier = Modifier.fillMaxWidth()
+        )
         statusMessage?.let {
             Text(
                 text = it,
-                modifier = Modifier.padding(top = 8.dp),
+                modifier = Modifier.padding(top = AstroSpacing.Sm),
                 color = if (it.contains("не удалось", ignoreCase = true)) {
-                    Color(0xFFFFAB91)
+                    MaterialTheme.colorScheme.error
                 } else {
-                    Color(0xFFA5D6A7)
+                    AstroColors.Success
                 }
             )
         }
 
         when {
             loading -> {
-                CircularProgressIndicator(
-                    modifier = Modifier
-                        .align(Alignment.CenterHorizontally)
-                        .padding(top = 32.dp)
+                AstroLoadingState(
+                    message = "Загружаем сессии…",
+                    modifier = Modifier.weight(1f)
                 )
             }
 
             sessions.isEmpty() -> {
-                Text(
-                    text = "Сессии пока не найдены",
-                    modifier = Modifier.padding(top = 28.dp),
-                    color = Color(0xFFB8BECC)
+                AstroEmptyState(
+                    title = "Сессий пока нет",
+                    message = "Создайте сессию перед съёмкой серии кадров",
+                    modifier = Modifier.weight(1f)
                 )
             }
 
@@ -438,7 +428,7 @@ fun SessionsScreen(
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(AstroSpacing.Md)
                 ) {
                     items(sessions, key = { it.folderName }) { session ->
                         SessionSummaryCard(
@@ -449,6 +439,7 @@ fun SessionsScreen(
                     }
                 }
             }
+        }
         }
     }
 
@@ -491,7 +482,9 @@ private fun SessionSummaryCard(
 ) {
     Card(
         onClick = onClick,
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF151A24))
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
@@ -504,23 +497,28 @@ private fun SessionSummaryCard(
                     fontWeight = FontWeight.Bold
                 )
                 if (active) {
-                    Text("Активная", color = Color(0xFF81C784))
+                    Text("Активная", color = AstroColors.Success)
                 }
             }
             Text(
                 text = formatSessionDate(session.createdAtMillis),
                 modifier = Modifier.padding(top = 4.dp),
-                color = Color(0xFFB8BECC)
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
-                text = "Lights: JPEG ${session.lightsJpeg}, RAW ${session.lightsRaw}",
+                text = "Lights: ${session.lightFrames}  ·  Darks: ${session.darkFrames}",
                 modifier = Modifier.padding(top = 8.dp)
             )
-            Text("Darks: JPEG ${session.darksJpeg}, RAW ${session.darksRaw}")
             Text(
                 text = "Размер: ${formatFileSize(session.totalSizeBytes)}",
                 modifier = Modifier.padding(top = 4.dp),
-                color = Color(0xFFB8BECC)
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = "Открыть",
+                modifier = Modifier.padding(top = 8.dp),
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.labelLarge
             )
         }
     }
@@ -780,29 +778,22 @@ fun SessionDetailsScreen(
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         item {
-            TextButton(onClick = onBack) {
-                Text("← Назад")
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = currentSummary.sessionName,
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                TextButton(onClick = { onOpenHelp(HelpTopic.SESSIONS) }) {
-                    Text("?")
+            AstroTopBar(
+                title = currentSummary.sessionName,
+                onBack = onBack,
+                actions = {
+                    TextButton(onClick = { onOpenHelp(HelpTopic.SESSIONS) }) {
+                        Text("?")
+                    }
                 }
-            }
+            )
             if (active) {
-                Text("Активная сессия", color = Color(0xFF81C784))
+                Text(
+                    "Активная сессия",
+                    modifier = Modifier.padding(horizontal = AstroSpacing.Lg),
+                    color = AstroColors.Success
+                )
             }
-        }
-        item {
-            DetailCard("Путь", currentSummary.relativePath)
         }
         item {
             DetailCard(
@@ -815,13 +806,13 @@ fun SessionDetailsScreen(
             )
         }
         item {
-            DetailCard("session_info.txt", currentSummary.infoContent)
+            AstroExpandableSection(title = "Технические сведения") {
+                DetailCard("Путь", currentSummary.relativePath)
+                DetailCard("session_info.txt", currentSummary.infoContent)
+            }
         }
         item {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+            AstroExpandableSection(title = "Управление сессией") {
                 Button(
                     onClick = {
                         if (exportInProgress || stackingInProgress) {
@@ -852,7 +843,7 @@ fun SessionDetailsScreen(
                     },
                     enabled = !managementInProgress,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFFB3261E),
+                        containerColor = MaterialTheme.colorScheme.error,
                         contentColor = Color.White
                     ),
                     modifier = Modifier
@@ -867,32 +858,26 @@ fun SessionDetailsScreen(
                     text = it,
                     modifier = Modifier.padding(top = 8.dp),
                     color = if (it.startsWith("Ошибка")) {
-                        Color(0xFFFFAB91)
+                        AstroColors.Error
                     } else {
-                        Color(0xFFA5D6A7)
+                        AstroColors.Success
                     }
                 )
             }
         }
         item {
-            Button(
+            AstroPrimaryButton(
+                text = "Кадры сессии",
                 onClick = { showingFrames = true },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 52.dp)
-            ) {
-                Text("Кадры сессии")
-            }
+                modifier = Modifier.fillMaxWidth()
+            )
         }
         item {
-            Button(
+            AstroSecondaryButton(
+                text = "Результаты обработки",
                 onClick = { showingProcessedResults = true },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 52.dp)
-            ) {
-                Text("Результаты обработки")
-            }
+                modifier = Modifier.fillMaxWidth()
+            )
         }
         item {
             SessionQualityBlock(
@@ -938,7 +923,7 @@ fun SessionDetailsScreen(
                     Text(
                         text = progress.message,
                         modifier = Modifier.padding(top = 8.dp),
-                        color = Color(0xFFD5DBE8)
+                        color = AstroColors.TextSecondary
                     )
                 }
                 LinearProgressIndicator(
@@ -960,9 +945,9 @@ fun SessionDetailsScreen(
                     text = status,
                     modifier = Modifier.padding(top = 8.dp),
                     color = if (status.startsWith("Ошибка")) {
-                        Color(0xFFFFAB91)
+                        AstroColors.Error
                     } else {
-                        Color(0xFFA5D6A7)
+                        AstroColors.Success
                     }
                 )
             }
@@ -1048,7 +1033,7 @@ fun SessionDetailsScreen(
                             sanitizeManagedName(renameInput).ifBlank { "—" }
                         }",
                         modifier = Modifier.padding(top = 6.dp),
-                        color = Color(0xFFB8BECC)
+                        color = AstroColors.TextSecondary
                     )
                     managementStatus?.takeIf {
                         it.startsWith("Ошибка переименования")
@@ -1056,7 +1041,7 @@ fun SessionDetailsScreen(
                         Text(
                             text = it,
                             modifier = Modifier.padding(top = 8.dp),
-                            color = Color(0xFFFFAB91)
+                            color = AstroColors.Error
                         )
                     }
                 }
@@ -1137,7 +1122,7 @@ fun SessionDetailsScreen(
                         Text(
                             text = it,
                             modifier = Modifier.padding(top = 8.dp),
-                            color = Color(0xFFFFAB91)
+                            color = AstroColors.Error
                         )
                     }
                 }
@@ -1159,7 +1144,7 @@ fun SessionDetailsScreen(
                                     deleteConfirmation.trim() == "УДАЛИТЬ"
                                 ),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFFB3261E),
+                            containerColor = MaterialTheme.colorScheme.error,
                             contentColor = Color.White
                         )
                     ) {
@@ -1194,9 +1179,9 @@ private fun SessionQualityBlock(
         analyzeSession(session, rawSupported, badFrameCount)
     }
     val statusContainer = when (report.status) {
-        SessionQualityStatus.READY -> Color(0xFF173B27)
-        SessionQualityStatus.IMPROVE -> Color(0xFF4A3210)
-        SessionQualityStatus.PROBLEM -> Color(0xFF4A1E22)
+        SessionQualityStatus.READY -> AstroColors.SuccessSurface
+        SessionQualityStatus.IMPROVE -> AstroColors.WarningSurface
+        SessionQualityStatus.PROBLEM -> AstroColors.ErrorSurface
     }
     val hasInfo = session.infoContent.isNotBlank() &&
         session.infoContent != "Нет информации"
@@ -1247,7 +1232,7 @@ private fun SessionQualityBlock(
                 Text(
                     text = "Параметры: $it",
                     modifier = Modifier.padding(top = 10.dp),
-                    color = Color(0xFFD5DBE8)
+                    color = AstroColors.TextSecondary
                 )
             }
 
@@ -1286,14 +1271,14 @@ private fun SessionQualityBlock(
 @Composable
 private fun DetailCard(title: String, content: String) {
     Card(
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF151A24))
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(title, fontWeight = FontWeight.Bold)
             Text(
                 text = content,
                 modifier = Modifier.padding(top = 6.dp),
-                color = Color(0xFFD5DBE8)
+                color = AstroColors.TextSecondary
             )
         }
     }

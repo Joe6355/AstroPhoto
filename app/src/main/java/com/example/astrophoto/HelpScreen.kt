@@ -31,6 +31,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.astrophoto.ui.AstroScaffold
+import com.example.astrophoto.ui.AstroSpacing
+import com.example.astrophoto.ui.theme.AstroColors
 
 enum class HelpTopic {
     QUICK_START,
@@ -172,25 +175,21 @@ fun HelpScreen(
         }
     }
 
+    AstroScaffold(title = "Помощь", onBack = onBack) {
     LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .safeDrawingPadding(),
-        contentPadding = PaddingValues(16.dp, 24.dp, 16.dp, 36.dp),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(
+            AstroSpacing.Lg,
+            AstroSpacing.Md,
+            AstroSpacing.Lg,
+            AstroSpacing.Xxxl
+        ),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         item {
-            TextButton(onClick = onBack) {
-                Text("← Назад")
-            }
-            Text(
-                text = "Помощь",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold
-            )
             Text(
                 text = "Короткая справка по астрофотографии и AstroPhoto",
-                color = Color(0xFFB8BECC)
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             OutlinedTextField(
                 value = query,
@@ -211,7 +210,7 @@ fun HelpScreen(
                         expandedTopic = if (expanded) null else section.topic
                     },
                 colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFF151A24)
+                    containerColor = MaterialTheme.colorScheme.surface
                 )
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
@@ -232,7 +231,7 @@ fun HelpScreen(
                             text = section.text,
                             modifier = Modifier.padding(top = 10.dp),
                             style = MaterialTheme.typography.bodyLarge,
-                            color = Color(0xFFD5DBE8)
+                            color = AstroColors.TextSecondary
                         )
                     }
                 }
@@ -242,10 +241,11 @@ fun HelpScreen(
             item {
                 Text(
                     text = "По вашему запросу ничего не найдено.",
-                    color = Color(0xFFB8BECC)
+                    color = AstroColors.TextSecondary
                 )
             }
         }
+    }
     }
 }
 
@@ -304,7 +304,7 @@ fun OnboardingDialog(
                 Text(current.second)
                 Text(
                     text = "${page + 1} из ${ONBOARDING_PAGES.size}",
-                    color = Color(0xFFB8BECC)
+                color = AstroColors.TextSecondary
                 )
             }
         },

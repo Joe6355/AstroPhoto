@@ -42,6 +42,11 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.InputStream
 import java.util.Locale
+import com.example.astrophoto.ui.AstroPrimaryButton
+import com.example.astrophoto.ui.AstroScaffold
+import com.example.astrophoto.ui.AstroSegmentedControl
+import com.example.astrophoto.ui.AstroSpacing
+import com.example.astrophoto.ui.theme.AstroColors
 import kotlin.math.max
 
 enum class AutoSelectionSensitivity(val title: String) {
@@ -64,14 +69,14 @@ private enum class AutoFrameStatus(
     val shouldMarkBad: Boolean,
     val mayOverrideFavorite: Boolean
 ) {
-    OK("OK", Color(0xFF81C784), false, false),
-    TOO_DARK("Слишком тёмный", Color(0xFFFFCC80), true, false),
-    OVEREXPOSED("Пересвет", Color(0xFFFFAB91), true, false),
-    BLURRY("Смазан", Color(0xFFFFCC80), true, false),
-    BLACK("Чёрный кадр", Color(0xFFEF9A9A), true, true),
+    OK("OK", AstroColors.Success, false, false),
+    TOO_DARK("Слишком тёмный", AstroColors.Warning, true, false),
+    OVEREXPOSED("Пересвет", AstroColors.Error, true, false),
+    BLURRY("Смазан", AstroColors.Warning, true, false),
+    BLACK("Чёрный кадр", AstroColors.Error, true, true),
     READ_ERROR(
         "Не удалось прочитать файл",
-        Color(0xFFEF9A9A),
+        AstroColors.Error,
         true,
         true
     )
@@ -339,47 +344,33 @@ fun JpegAutoSelectionScreen(
     }
     val markableFrames = detectedBad.filterNot { it in protectedFavorites }
 
+    AstroScaffold(title = "Автоотбор JPEG", onBack = onBack) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .safeDrawingPadding()
-            .padding(16.dp)
+            .padding(horizontal = AstroSpacing.Lg)
     ) {
-        TextButton(onClick = onBack, enabled = !analyzing) {
-            Text("← Отмена")
-        }
-        Text(
-            text = "Автоотбор JPEG",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold
-        )
         Text(
             text = "Анализируются только Lights/JPEG. Файлы не изменяются.",
-            color = Color(0xFFB8BECC),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp)
         )
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            AutoSelectionSensitivity.entries.forEach { level ->
-                FilterChip(
-                    selected = sensitivity == level,
-                    onClick = {
-                        sensitivity = level
-                        report = null
-                        status = null
-                    },
-                    enabled = !loading && !analyzing,
-                    label = { Text(level.title) }
-                )
-            }
-        }
+        AstroSegmentedControl(
+            options = AutoSelectionSensitivity.entries,
+            selected = sensitivity,
+            label = { it.title },
+            onSelected = {
+                sensitivity = it
+                report = null
+                status = null
+            },
+            enabled = !loading && !analyzing,
+            modifier = Modifier.padding(top = 10.dp)
+        )
 
-        Button(
+        AstroPrimaryButton(
+            text = if (analyzing) "Анализ…" else "Анализировать JPEG",
             onClick = {
                 if (frames.isEmpty()) {
                     status = "JPEG кадры не найдены"
@@ -418,9 +409,7 @@ fun JpegAutoSelectionScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 10.dp)
-        ) {
-            Text(if (analyzing) "Анализ..." else "Анализировать JPEG")
-        }
+        )
 
         if (loading || analyzing) {
             if (analyzing && progressTotal > 0) {
@@ -448,9 +437,9 @@ fun JpegAutoSelectionScreen(
                     it == "Анализ завершён" ||
                     it.startsWith("Анализ кадра")
                 ) {
-                    Color(0xFFA5D6A7)
+                    AstroColors.Success
                 } else {
-                    Color(0xFFFFCC80)
+                    AstroColors.Warning
                 }
             )
         }
@@ -460,7 +449,7 @@ fun JpegAutoSelectionScreen(
                     "кадров выглядят сомнительно и не будут автоматически " +
                     "помечены как брак.",
                 modifier = Modifier.padding(top = 8.dp),
-                color = Color(0xFFFFCC80)
+                color = AstroColors.Warning
             )
         }
 
@@ -519,6 +508,7 @@ fun JpegAutoSelectionScreen(
             }
         }
     }
+    }
 }
 
 @Composable
@@ -527,7 +517,7 @@ private fun AutoAnalysisCard(
     favorite: Boolean
 ) {
     Card(
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF151A24))
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text(result.frame.fileName, fontWeight = FontWeight.SemiBold)
@@ -539,7 +529,7 @@ private fun AutoAnalysisCard(
                     result.clippedPercent,
                     result.sharpness
                 ),
-                color = Color(0xFFB8BECC),
+                color = AstroColors.TextSecondary,
                 style = MaterialTheme.typography.bodySmall
             )
             Text(
@@ -555,7 +545,7 @@ private fun AutoAnalysisCard(
             ) {
                 Text(
                     text = "Избранный кадр: требуется ручная проверка",
-                    color = Color(0xFFFFCC80),
+                color = AstroColors.Warning,
                     style = MaterialTheme.typography.bodySmall
                 )
             }
