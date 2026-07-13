@@ -236,8 +236,9 @@ class SafeImageLoader(private val context: Context) {
 
     private fun decodeBounds(pathOrUri: String): BitmapFactory.Options {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        openSource(pathOrUri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-            ?: throw FileNotFoundException(pathOrUri)
+        useRequiredImageStream(openSource(pathOrUri), pathOrUri) {
+            BitmapFactory.decodeStream(it, null, bounds)
+        }
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
             throw IllegalArgumentException("Unsupported or corrupted image")
         }
@@ -264,7 +265,21 @@ class SafeImageLoader(private val context: Context) {
         if (pathOrUri.isBlank()) throw FileNotFoundException("Empty image path")
         val uri = Uri.parse(pathOrUri)
         return when (uri.scheme?.lowercase()) {
-            "content", "android.resource" -> context.contentResolver.openInputStream(uri)
+            "content", "android.resource" -> runCatching {
+                context.contentResolver.openInputStream(uri)
+            }.onSuccess { stream ->
+                Log.d(
+                    "ProcessedResult",
+                    "resolvedUri=$pathOrUri openInputStream=" +
+                        if (stream != null) "success" else "failure"
+                )
+            }.onFailure { error ->
+                Log.w(
+                    "ProcessedResult",
+                    "resolvedUri=$pathOrUri openInputStream=failure " +
+                        "failureReason=${error.message.orEmpty()}"
+                )
+            }.getOrThrow()
             "file" -> uri.path?.let { File(it) }?.openExistingInputStream()
             else -> File(pathOrUri).openExistingInputStream()
         }
@@ -309,4 +324,13 @@ class SafeImageLoader(private val context: Context) {
             throwable = throwable
         )
     }
+}
+
+internal inline fun <T> useRequiredImageStream(
+    source: InputStream?,
+    sourceName: String,
+    block: (InputStream) -> T
+): T {
+    val input = source ?: throw FileNotFoundException(sourceName)
+    return input.use(block)
 }

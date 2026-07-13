@@ -104,8 +104,13 @@ class AverageStackingTest {
     @Test
     fun maximumFrameNumberDoesNotOverflowChannelAccumulator() {
         val average = intArrayOf(rgb(255, 255, 255))
+        val accumulator = ArgbAverageAccumulator(
+            pixelCount = 1,
+            maximumFrameCount = Int.MAX_VALUE
+        )
 
         updateRunningAverageArgb(
+            accumulator = accumulator,
             averagePixels = average,
             nextPixels = intArrayOf(rgb(255, 255, 255)),
             frameNumber = Int.MAX_VALUE,
@@ -186,7 +191,7 @@ class AverageStackingTest {
     }
 
     @Test
-    fun roundingMatchesExistingRunningAverageRule() {
+    fun roundingUsesExactSumInsteadOfRoundedIntermediate() {
         val frames = listOf(
             frame(1, 1, rgb(0, 0, 0)),
             frame(1, 1, rgb(1, 1, 1)),
@@ -195,7 +200,89 @@ class AverageStackingTest {
 
         val output = averageArgbFrames(frames)
 
-        assertEquals(rgb(1, 1, 1), output.pixels.single())
+        assertEquals(rgb(0, 0, 0), output.pixels.single())
+    }
+
+    @Test
+    fun frameOrderDoesNotChangeRoundedAverage() {
+        val firstOrder = listOf(
+            frame(1, 1, rgb(0, 2, 1)),
+            frame(1, 1, rgb(0, 0, 1)),
+            frame(1, 1, rgb(1, 0, 0))
+        )
+        val secondOrder = listOf(firstOrder[2], firstOrder[0], firstOrder[1])
+
+        assertArrayEquals(
+            averageArgbFrames(firstOrder).pixels,
+            averageArgbFrames(secondOrder).pixels
+        )
+        assertEquals(rgb(0, 1, 1), averageArgbFrames(firstOrder).pixels.single())
+    }
+
+    @Test
+    fun accumulatorOffsetsKeepIndependentExactRemainders() {
+        val accumulator = ArgbAverageAccumulator(pixelCount = 2, maximumFrameCount = 3)
+        val firstPixel = intArrayOf(rgb(0, 0, 0))
+        val secondPixel = intArrayOf(rgb(1, 1, 1))
+
+        updateRunningAverageArgb(
+            accumulator,
+            firstPixel,
+            intArrayOf(rgb(1, 1, 1)),
+            frameNumber = 2,
+            pixelCount = 1,
+            accumulatorOffset = 0
+        )
+        updateRunningAverageArgb(
+            accumulator,
+            secondPixel,
+            intArrayOf(rgb(0, 0, 0)),
+            frameNumber = 2,
+            pixelCount = 1,
+            accumulatorOffset = 1
+        )
+        updateRunningAverageArgb(
+            accumulator,
+            firstPixel,
+            intArrayOf(rgb(0, 0, 0)),
+            frameNumber = 3,
+            pixelCount = 1,
+            accumulatorOffset = 0
+        )
+        updateRunningAverageArgb(
+            accumulator,
+            secondPixel,
+            intArrayOf(rgb(1, 1, 1)),
+            frameNumber = 3,
+            pixelCount = 1,
+            accumulatorOffset = 1
+        )
+
+        assertEquals(rgb(0, 0, 0), firstPixel.single())
+        assertEquals(rgb(1, 1, 1), secondPixel.single())
+    }
+
+    @Test
+    fun largeSeriesFallbackRemainsExactAndOrderIndependent() {
+        val frames = (0 until 1_025).map { index ->
+            frame(
+                1,
+                1,
+                rgb(index % 256, (index * 3) % 256, (index * 7) % 256)
+            )
+        }
+        val forward = averageArgbFrames(frames)
+        val reversed = averageArgbFrames(frames.reversed())
+
+        assertArrayEquals(forward.pixels, reversed.pixels)
+        assertEquals(
+            rgb(
+                roundedMean(frames) { red(it) },
+                roundedMean(frames) { green(it) },
+                roundedMean(frames) { blue(it) }
+            ),
+            forward.pixels.single()
+        )
     }
 
     @Test
@@ -219,4 +306,12 @@ class AverageStackingTest {
     private fun red(color: Int): Int = color ushr 16 and 0xFF
     private fun green(color: Int): Int = color ushr 8 and 0xFF
     private fun blue(color: Int): Int = color and 0xFF
+
+    private fun roundedMean(
+        frames: List<AveragePixelFrame>,
+        channel: (Int) -> Int
+    ): Int {
+        val sum = frames.sumOf { channel(it.pixels.single()).toLong() }
+        return ((sum + frames.size / 2L) / frames.size).toInt()
+    }
 }

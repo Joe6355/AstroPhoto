@@ -52,6 +52,10 @@ class SessionFileManager(private val context: Context) {
             } else {
                 renameLegacyFolder(session.folderName, newFolderName)
             }
+            AstroRawSidecarStore(context).renameSession(
+                session.folderName,
+                newFolderName
+            )
 
             val metadataUpdated = runCatching {
                 updateRenameMetadata(
@@ -82,11 +86,15 @@ class SessionFileManager(private val context: Context) {
         onProgress: suspend (current: Int, total: Int) -> Unit = { _, _ -> }
     ): Result<SessionDeleteResult> = withContext(Dispatchers.IO) {
         runCatching {
-            val counts = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val publicCounts = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 deleteMediaStoreSession(session.folderName, onProgress)
             } else {
                 deleteLegacySession(session.folderName, onProgress)
             }
+            val privateCounts = AstroRawSidecarStore(context)
+                .deleteSession(session.folderName)
+            val counts = publicCounts.first + privateCounts.first to
+                publicCounts.second + privateCounts.second
             val active = sessionStore.load()
             val activeCleared = active?.folderName == session.folderName
             if (activeCleared) sessionStore.clear()

@@ -232,6 +232,27 @@ internal fun shiftedCopyRegion(
     )
 }
 
+internal fun commonAlignedRegion(
+    width: Int,
+    height: Int,
+    shifts: List<AlignmentShift>
+): PixelRect {
+    require(width > 0 && height > 0) { "Aligned image dimensions must be positive" }
+    require(shifts.isNotEmpty()) { "At least one alignment shift is required" }
+    var left = 0
+    var top = 0
+    var right = width
+    var bottom = height
+    shifts.forEach { shift ->
+        left = maxOf(left, maxOf(0, -shift.dx))
+        top = maxOf(top, maxOf(0, -shift.dy))
+        right = minOf(right, minOf(width, width - shift.dx))
+        bottom = minOf(bottom, minOf(height, height - shift.dy))
+    }
+    require(right > left && bottom > top) { "Alignment shifts have no common image area" }
+    return PixelRect(left, top, right, bottom)
+}
+
 internal fun applyImageShift(
     image: ArgbPixelImage,
     dx: Int,

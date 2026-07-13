@@ -101,8 +101,13 @@ class MasterDarkStackingTest {
     @Test
     fun maximumFrameNumberDoesNotOverflowAccumulator() {
         val average = intArrayOf(rgb(255, 255, 255))
+        val accumulator = ArgbAverageAccumulator(
+            pixelCount = 1,
+            maximumFrameCount = Int.MAX_VALUE
+        )
 
         updateMasterDarkRunningAverageArgb(
+            accumulator = accumulator,
             averagePixels = average,
             nextPixels = intArrayOf(rgb(255, 255, 255)),
             frameNumber = Int.MAX_VALUE,
@@ -192,7 +197,7 @@ class MasterDarkStackingTest {
     }
 
     @Test
-    fun roundingMatchesCurrentRunningAverageRule() {
+    fun roundingUsesExactDarkSum() {
         val output = buildMasterDark(
             listOf(
                 frame(1, 1, rgb(0, 0, 0)),
@@ -201,11 +206,11 @@ class MasterDarkStackingTest {
             )
         )
 
-        assertEquals(rgb(1, 1, 1), output.pixels.single())
+        assertEquals(rgb(0, 0, 0), output.pixels.single())
     }
 
     @Test
-    fun frameOrderBehaviorRemainsExplicit() {
+    fun frameOrderDoesNotChangeMasterDark() {
         val firstOrder = buildMasterDark(
             listOf(
                 frame(1, 1, rgb(0, 0, 0)),
@@ -221,8 +226,8 @@ class MasterDarkStackingTest {
             )
         )
 
+        assertArrayEquals(firstOrder.pixels, secondOrder.pixels)
         assertEquals(rgb(0, 0, 0), firstOrder.pixels.single())
-        assertEquals(rgb(1, 1, 1), secondOrder.pixels.single())
     }
 
     @Test
@@ -237,8 +242,10 @@ class MasterDarkStackingTest {
     @Test
     fun manualMasterDarkIntegrationKernelUsesComponentMath() {
         val average = intArrayOf(rgb(10, 20, 30))
+        val accumulator = ArgbAverageAccumulator(pixelCount = 1, maximumFrameCount = 2)
 
         updateMasterDarkRunningAverageArgb(
+            accumulator = accumulator,
             averagePixels = average,
             nextPixels = intArrayOf(rgb(20, 40, 60)),
             frameNumber = 2,

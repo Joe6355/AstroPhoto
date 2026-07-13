@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -43,91 +42,86 @@ fun AstroHomeScreen(
             end = AstroSpacing.Lg,
             bottom = AstroSpacing.Xxl
         ),
-        verticalArrangement = Arrangement.spacedBy(AstroSpacing.Lg)
+        verticalArrangement = Arrangement.SpaceBetween
     ) {
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(AstroSpacing.Xs)) {
-                Text(
-                    text = "AstroPhoto",
-                    style = MaterialTheme.typography.displaySmall,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-                Text(
-                    text = "Ночная съёмка и обработка звёздного неба",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
-        item {
-            AstroPrimaryButton(
-                text = "Новая съёмка",
-                onClick = onOpenCamera,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag(AstroTestTags.HomePrimaryAction)
-            )
-        }
-
-        item {
-            AstroCard(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag(AstroTestTags.HomeSessions)
-            ) {
-                Text("Сессии", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    text = "Кадры, обработка и готовые результаты",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                AstroSecondaryButton(
-                    text = "Открыть сессии",
-                    onClick = onOpenSessions,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        }
-
         item {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .testTag(AstroTestTags.HomeSecondaryNavigation),
-                verticalArrangement = Arrangement.spacedBy(AstroSpacing.Sm)
+                    .testTag(AstroTestTags.HomeMainContent),
+                verticalArrangement = Arrangement.spacedBy(AstroSpacing.Lg)
             ) {
-                Text(
-                    text = "Дополнительно",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(AstroSpacing.Sm)
-                ) {
-                    AstroSecondaryButton(
-                        text = "Настройки",
-                        onClick = onOpenSettings,
-                        modifier = Modifier.weight(1f)
+                Column(verticalArrangement = Arrangement.spacedBy(AstroSpacing.Xs)) {
+                    Text(
+                        text = "AstroPhoto",
+                        style = MaterialTheme.typography.displaySmall,
+                        color = MaterialTheme.colorScheme.onBackground
                     )
-                    AstroSecondaryButton(
-                        text = "Помощь",
-                        onClick = onOpenHelp,
-                        modifier = Modifier.weight(1f)
+                    Text(
+                        text = "Ночная съёмка и обработка звёздного неба",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                AstroPrimaryButton(
+                    text = "Новая съёмка",
+                    onClick = onOpenCamera,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(AstroTestTags.HomePrimaryAction)
+                )
+                AstroCard(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(AstroTestTags.HomeSessions)
+                ) {
+                    Text("Сессии", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        text = "Кадры, обработка и готовые результаты",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    AstroSecondaryButton(
+                        text = "Открыть сессии",
+                        onClick = onOpenSessions,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(AstroTestTags.HomeSecondaryNavigation),
+                    verticalArrangement = Arrangement.spacedBy(AstroSpacing.Sm)
+                ) {
+                    Text(
+                        text = "Дополнительно",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(AstroSpacing.Sm)
+                    ) {
+                        AstroSecondaryButton(
+                            text = "Настройки",
+                            onClick = onOpenSettings,
+                            modifier = Modifier.weight(1f)
+                        )
+                        AstroSecondaryButton(
+                            text = "Помощь",
+                            onClick = onOpenHelp,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
             }
-        }
-
-        item {
-            Spacer(modifier = Modifier.fillParentMaxHeight(0.2f))
         }
 
         item {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .padding(top = AstroSpacing.Lg)
                     .testTag(AstroTestTags.HomeFooter),
                 horizontalArrangement = Arrangement.spacedBy(AstroSpacing.Sm)
             ) {

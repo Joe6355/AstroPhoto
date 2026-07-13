@@ -37,6 +37,21 @@ class SignalPreservingSigmaTest {
     }
 
     @Test
+    fun reusableScratchIgnoresValuesOutsideValidCount() {
+        val values = intArrayOf(10, 10, 10, 255, 255)
+        val scratch = IntArray(values.size) { 255 }
+
+        assertEquals(
+            10,
+            signalPreservingSigmaChannel(values, sigma = 2.0, count = 3, sortedScratch = scratch)
+        )
+        assertEquals(
+            10,
+            signalPreservingSigmaChannel(values, sigma = 2.0, count = 3, sortedScratch = scratch)
+        )
+    }
+
+    @Test
     fun oneFrameIsPredictable() {
         val input = frame(rgb(5, 100, 240))
         assertArrayEquals(input.pixels, signalPreservingSigmaStack(listOf(input), 2.0).pixels)

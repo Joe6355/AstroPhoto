@@ -11,10 +11,10 @@ class ProcessedResultLocationTest {
     @Test
     fun mediaStoreResultResolvesByDisplayNameAndRelativePath() {
         val lookup = FakeLookup().apply {
-            byName["Stacked.jpg" to relativePath] = provider("content://files/7", "Stacked.jpg")
+            byName["Stacked.jpg" to relativePath] = provider("content://images/7", "Stacked.jpg")
         }
         val resolved = resolveImageSource(reference("Stacked.jpg"), lookup)
-        assertEquals("content://files/7", resolved?.pathOrUri)
+        assertEquals("content://images/7", resolved?.pathOrUri)
         assertEquals(listOf("Stacked.jpg" to relativePath), lookup.nameQueries)
     }
 
@@ -52,7 +52,22 @@ class ProcessedResultLocationTest {
             lookup
         ) as ResolvedImageSource.Provider
         assertEquals("content://images/3", resolved.record.uri)
+        assertEquals(ProviderOrigin.STORED, resolved.origin)
         assertTrue(lookup.nameQueries.isEmpty())
+    }
+
+    @Test
+    fun legacyMediaStoreFilesRowIsReadOnlyFallback() {
+        val lookup = FakeLookup().apply {
+            filesByName["Old.jpg" to relativePath] =
+                provider("content://media/external/file/9", "Old.jpg")
+        }
+        val resolved = resolveImageSource(reference("Old.jpg"), lookup)
+            as ResolvedImageSource.Provider
+        assertEquals("content://media/external/file/9", resolved.record.uri)
+        assertEquals(ProviderOrigin.FILES, resolved.origin)
+        assertEquals(listOf("Old.jpg" to relativePath), lookup.nameQueries)
+        assertEquals(listOf("Old.jpg" to relativePath), lookup.filesQueries)
     }
 
     @Test
@@ -96,6 +111,25 @@ class ProcessedResultLocationTest {
         assertEquals(relativePath, logicalRelativePath(logical, "Stacked.jpg"))
     }
 
+    @Test
+    fun resultConsumersKeepTheSameStoredIdentity() {
+        val result = ProcessedResult(
+            key = "result",
+            fileName = "Stacked.jpg",
+            type = ProcessedResultType.STACK,
+            createdAtMillis = 1L,
+            sizeBytes = 10L,
+            displayPath = "${relativePath}Stacked.jpg",
+            contentUri = "content://media/external_primary/images/media/42",
+            filePath = null,
+            relativePath = relativePath
+        )
+        val source = result.imageSource()
+        assertEquals(result.contentUri, source.providerUri)
+        assertEquals(result.relativePath, source.relativePath)
+        assertEquals(result.fileName, source.displayName)
+    }
+
     private fun reference(name: String) = ImageSourceReference(name, relativePath, null, null)
 
     private fun provider(uri: String, name: String) =
@@ -105,18 +139,28 @@ class ProcessedResultLocationTest {
 internal class FakeLookup : ImageSourceLookup {
     val byUri = mutableMapOf<String, ProviderImageRecord>()
     val byName = mutableMapOf<Pair<String, String>, ProviderImageRecord>()
+    val filesByName = mutableMapOf<Pair<String, String>, ProviderImageRecord>()
     val legacy = mutableSetOf<String>()
     val nameQueries = mutableListOf<Pair<String, String>>()
+    val filesQueries = mutableListOf<Pair<String, String>>()
     val legacyQueries = mutableListOf<String>()
 
     override fun providerByUri(uri: String): ProviderImageRecord? = byUri[uri]
 
-    override fun providerByNameAndPath(
+    override fun imagesProviderByNameAndPath(
         displayName: String,
         relativePath: String
     ): ProviderImageRecord? {
         nameQueries += displayName to relativePath
         return byName[displayName to relativePath]
+    }
+
+    override fun filesProviderByNameAndPath(
+        displayName: String,
+        relativePath: String
+    ): ProviderImageRecord? {
+        filesQueries += displayName to relativePath
+        return filesByName[displayName to relativePath]
     }
 
     override fun readableLegacyFile(absolutePath: String): Boolean {

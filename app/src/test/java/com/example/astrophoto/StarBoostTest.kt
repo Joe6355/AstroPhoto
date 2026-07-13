@@ -20,6 +20,24 @@ class StarBoostTest {
     }
 
     @Test
+    fun noDetectedStarsNeverTurnsNoiseIntoDetail() {
+        val image = ArgbPixelImage(
+            32,
+            32,
+            IntArray(32 * 32) { index ->
+                val noise = (index * 37 + index / 11) % 19
+                rgb(35 + noise, 32 + noise, 40 + noise)
+            }
+        )
+        val snapshot = image.pixels.copyOf()
+
+        val result = boost.applyInPlace(image, emptyList(), StarBoostMode.STRONG)
+
+        assertArrayEquals(snapshot, image.pixels)
+        assertEquals(0, result.starsBoosted)
+    }
+
+    @Test
     fun oneIsolatedStarIsEnhanced() {
         val image = SyntheticImageTestData.stars(
             32, 32, 20, listOf(Triple(16, 16, 100))

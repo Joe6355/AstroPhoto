@@ -463,15 +463,7 @@ class ProcessedImageEditor(private val context: Context) {
         }
 
     private fun openSource(source: ProcessedResult): InputStream? =
-        sourceResolver.openInputStream(
-            imageSourceReference(
-                displayName = source.fileName,
-                displayPath = source.displayPath,
-                relativePath = source.relativePath,
-                providerUri = source.contentUri,
-                legacyFilePath = source.filePath
-            )
-        )
+        sourceResolver.openInputStream(source.imageSource())
 
     private fun applyInPlace(bitmap: Bitmap, settings: ImageAdjustments) {
         require(bitmap.isMutable) { "Bitmap недоступен для редактирования" }
@@ -733,14 +725,13 @@ class ProcessedImageEditor(private val context: Context) {
         val jpegQuality = CameraSettingsStore(context).load().jpegQuality
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val resolver = context.contentResolver
-            val relativePath =
-                "${Environment.DIRECTORY_PICTURES}/AstroPhoto/" +
-                    "${session.folderName}/Processed/"
+            val destination = processedImageDestination(session.folderName)
+            val relativePath = destination.relativePath
             val uri = resolver.insert(
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                processedImagesCollection(destination.collection),
                 ContentValues().apply {
                     put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
-                    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                    put(MediaStore.Images.Media.MIME_TYPE, destination.mimeType)
                     put(MediaStore.Images.Media.RELATIVE_PATH, relativePath)
                     put(MediaStore.Images.Media.IS_PENDING, 1)
                 }

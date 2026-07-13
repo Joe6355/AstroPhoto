@@ -50,6 +50,33 @@ class ProcessingProfileTest {
     }
 
     @Test
+    fun smallStacksDoNotBoostUnverifiedDetail() {
+        profiles.filter { it.minimumFrames < 6 }.forEach { profile ->
+            for (frameCount in profile.minimumFrames until 6) {
+                val smallStack = profileRecipe(profile, frameCount)
+                assertFalse(
+                    "$profile must not use sigma at $frameCount frames",
+                    smallStack.useSignalPreservingSigma
+                )
+                assertEquals(
+                    "$profile must not boost noisy detail at $frameCount frames",
+                    StarBoostMode.OFF,
+                    smallStack.starBoostMode
+                )
+            }
+        }
+
+        profiles.forEach { profile ->
+            val stableStack = profileRecipe(profile, 6)
+            assertTrue("$profile must use signal-preserving sigma from 6 frames", stableStack.useSignalPreservingSigma)
+            assertTrue(
+                "$profile may boost only after signal-preserving stacking",
+                stableStack.starBoostMode != StarBoostMode.OFF
+            )
+        }
+    }
+
+    @Test
     fun profileOutputsRemainValidNonCollapsedAndMeaningfullyChanged() {
         profiles.forEach { profile ->
             val input = syntheticUrbanSky()

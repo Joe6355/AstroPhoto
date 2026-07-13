@@ -38,12 +38,10 @@ class StarBoost {
             return StarBoostResult(mode, 0)
         }
         if (stars.isEmpty()) {
-            conservativeHighPass(image, mode)
-            makeOpaque(image)
             return StarBoostResult(
                 mode = mode,
                 starsBoosted = 0,
-                warning = "Звёзд найдено мало, применён консервативный detail boost"
+                warning = "Star Boost пропущен: надёжные звёзды не найдены"
             )
         }
         val amount = if (mode == StarBoostMode.STRONG) 0.34f else 0.18f
@@ -84,30 +82,4 @@ class StarBoost {
         }
     }
 
-    private fun conservativeHighPass(image: ArgbPixelImage, mode: StarBoostMode) {
-        val row = IntArray(image.width)
-        val amount = if (mode == StarBoostMode.STRONG) 0.10f else 0.06f
-        for (y in 1 until image.height - 1) {
-            image.pixels.copyInto(row, 0, y * image.width, (y + 1) * image.width)
-            for (x in 1 until image.width - 1) {
-                val color = row[x]
-                val lum = pixelLuminance(color)
-                if (lum !in 35..220) continue
-                val left = pixelLuminance(image.pixelAt(x - 1, y))
-                val right = pixelLuminance(image.pixelAt(x + 1, y))
-                val top = pixelLuminance(image.pixelAt(x, y - 1))
-                val bottom = pixelLuminance(image.pixelAt(x, y + 1))
-                val local = (left + right + top + bottom) / 4
-                val detail = (lum - local).coerceAtLeast(0)
-                if (detail in 8..60) {
-                    val factor = 1f + amount * (detail / 60f)
-                    val red = ((color ushr 16 and 0xFF) * factor).roundToInt().coerceIn(0, 255)
-                    val green = ((color ushr 8 and 0xFF) * factor).roundToInt().coerceIn(0, 255)
-                    val blue = ((color and 0xFF) * factor).roundToInt().coerceIn(0, 255)
-                    row[x] = 0xFF000000.toInt() or (red shl 16) or (green shl 8) or blue
-                }
-            }
-            row.copyInto(image.pixels, y * image.width)
-        }
-    }
 }

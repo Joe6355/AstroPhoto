@@ -322,6 +322,7 @@ class SessionZipExporter(private val context: Context) {
                 )
             }
         }
+        appendRawSidecars(sources, session)
         if (sources.none {
                 it.relativePath.equals("session_info.txt", ignoreCase = true)
             }
@@ -358,6 +359,7 @@ class SessionZipExporter(private val context: Context) {
         } else {
             mutableListOf()
         }
+        appendRawSidecars(sources, session)
         if (sources.none {
                 it.relativePath.equals("session_info.txt", ignoreCase = true)
             }
@@ -370,6 +372,25 @@ class SessionZipExporter(private val context: Context) {
             )
         }
         return sources
+    }
+
+    private fun appendRawSidecars(
+        sources: MutableList<ZipSource>,
+        session: SessionSummary
+    ) {
+        val existing = sources.mapTo(mutableSetOf()) {
+            it.relativePath.replace('\\', '/').lowercase(Locale.US)
+        }
+        AstroRawSidecarStore(context).listForSession(session.folderName).forEach { sidecar ->
+            val relativePath = sanitizeEntryPath(sidecar.relativePath)
+            if (existing.add(relativePath.lowercase(Locale.US))) {
+                sources += ZipSource(
+                    relativePath = relativePath,
+                    sizeBytes = sidecar.file.length(),
+                    open = { sidecar.file.inputStream() }
+                )
+            }
+        }
     }
 
     private fun buildReadme(

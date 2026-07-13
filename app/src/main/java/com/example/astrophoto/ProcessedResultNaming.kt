@@ -14,7 +14,8 @@ enum class ProcessedOutputType(val prefix: String) {
     MEDIAN("Median"),
     MEDIAN_ALIGNED("MedianAligned"),
     SIGMA("Sigma"),
-    SIGMA_ALIGNED("SigmaAligned")
+    SIGMA_ALIGNED("SigmaAligned"),
+    RAW_LINEAR("RawLinear")
 }
 
 const val DEFAULT_PROCESSED_NAME_ATTEMPTS = 100

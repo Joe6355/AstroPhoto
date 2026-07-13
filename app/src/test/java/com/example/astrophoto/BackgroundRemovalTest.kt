@@ -53,6 +53,48 @@ class BackgroundRemovalTest {
     }
 
     @Test
+    fun moderatelyBrightObjectIsExcludedFromBackgroundModel() {
+        val baseline = SyntheticImageTestData.uniform(64, 64, 30)
+        val objectFrame = baseline.copy(pixels = baseline.pixels.copyOf())
+        for (y in 24..39) for (x in 24..39) objectFrame.pixels[y * 64 + x] = gray(120)
+
+        removal.applyInPlace(baseline, BackgroundRemovalMode.STRONG)
+        removal.applyInPlace(objectFrame, BackgroundRemovalMode.STRONG)
+
+        assertEquals(baseline.pixelAt(20, 32), objectFrame.pixelAt(20, 32))
+        assertTrue(luminance(objectFrame.pixelAt(32, 32)) > luminance(objectFrame.pixelAt(20, 32)))
+    }
+
+    @Test
+    fun top70ModelIgnoresForegroundBelowSkyRoi() {
+        val skyOnly = colorImage(80, 80) { x, y ->
+            val value = 24 + x / 8 + y / 16
+            rgb(value + 4, value + 2, value)
+        }
+        val withForeground = skyOnly.copy(pixels = skyOnly.pixels.copyOf())
+        for (y in 56 until withForeground.height) {
+            for (x in 0 until withForeground.width) {
+                val value = 70 + (x * 11 + y * 7) % 90
+                withForeground.pixels[y * withForeground.width + x] =
+                    rgb(value, value * 3 / 4, value / 2)
+            }
+        }
+
+        removal.applyInPlace(skyOnly, BackgroundRemovalMode.URBAN, AstroRoi.Top70)
+        removal.applyInPlace(withForeground, BackgroundRemovalMode.URBAN, AstroRoi.Top70)
+
+        for (y in 0 until 56) {
+            for (x in 0 until skyOnly.width) {
+                assertEquals(
+                    "Sky pixel changed because of excluded foreground at $x,$y",
+                    skyOnly.pixelAt(x, y),
+                    withForeground.pixelAt(x, y)
+                )
+            }
+        }
+    }
+
+    @Test
     fun blackAndWhiteImagesDoNotCrash() {
         val black = SyntheticImageTestData.uniform(8, 8, 0)
         val white = SyntheticImageTestData.uniform(8, 8, 255)

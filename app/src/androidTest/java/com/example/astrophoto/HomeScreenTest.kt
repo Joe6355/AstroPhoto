@@ -1,14 +1,20 @@
 package com.example.astrophoto
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.unit.dp
 import com.example.astrophoto.ui.AstroTestTags
 import com.example.astrophoto.ui.theme.AstroPhotoTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
@@ -68,5 +74,44 @@ class HomeScreenTest {
         composeRule.runOnIdle { assertEquals("about", destination) }
         composeRule.onNodeWithText("Самопроверка").performClick()
         composeRule.runOnIdle { assertEquals("self-check", destination) }
+    }
+
+    @Test
+    fun footerIsBelowContentAndNearBottomOfTallViewport() {
+        composeRule.setContent {
+            AstroPhotoTheme {
+                AstroHomeScreen({}, {}, {}, {}, {}, {})
+            }
+        }
+
+        val home = composeRule.onNodeWithTag(AstroTestTags.HomeScreen)
+            .fetchSemanticsNode().boundsInRoot
+        val content = composeRule.onNodeWithTag(AstroTestTags.HomeMainContent)
+            .fetchSemanticsNode().boundsInRoot
+        val footer = composeRule.onNodeWithTag(AstroTestTags.HomeFooter)
+            .fetchSemanticsNode().boundsInRoot
+        val maximumBottomGap = with(composeRule.density) { 96.dp.toPx() }
+
+        assertTrue(footer.top >= content.bottom)
+        assertTrue(home.bottom - footer.bottom <= maximumBottomGap)
+    }
+
+    @Test
+    fun shortViewportCanScrollToFooter() {
+        composeRule.setContent {
+            AstroPhotoTheme {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(360.dp)
+                ) {
+                    AstroHomeScreen({}, {}, {}, {}, {}, {})
+                }
+            }
+        }
+
+        composeRule.onNodeWithTag(AstroTestTags.HomeFooter)
+            .performScrollTo()
+            .assertIsDisplayed()
     }
 }

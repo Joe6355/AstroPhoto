@@ -136,7 +136,7 @@ private sealed interface ViewerImageState {
     data class Error(val error: ImageLoadResult.Error) : ViewerImageState
 }
 
-private const val LOAD_PROCESSED_THUMBNAILS = false
+private const val LOAD_PROCESSED_THUMBNAILS = true
 
 private class ProcessedResultsRepository(private val context: Context) {
     private val imageLoader = SafeImageLoader(context)
@@ -291,9 +291,7 @@ private class ProcessedResultsRepository(private val context: Context) {
     ): List<ProcessedResult> {
         val resolver = context.contentResolver
         val collection = processedImagesCollection()
-        val relativePath =
-            "${Environment.DIRECTORY_PICTURES}/AstroPhoto/" +
-                "${session.folderName}/Processed/"
+        val relativePath = processedImageDestination(session.folderName).relativePath
         val results = mutableListOf<ProcessedResult>()
 
         resolver.query(
@@ -1069,9 +1067,11 @@ private fun ProcessedResultCard(
         }
     }
     DisposableEffect(thumbnail) {
-        onDispose {
-            thumbnail?.takeUnless(Bitmap::isRecycled)?.recycle()
-        }
+        onDispose(
+            disposeCapturedResource(thumbnail) { bitmap ->
+                bitmap.takeUnless(Bitmap::isRecycled)?.recycle()
+            }
+        )
     }
 
     val thumbnailLoading = LOAD_PROCESSED_THUMBNAILS &&
@@ -1191,6 +1191,13 @@ private fun ProcessedResultCard(
             }
         }
     }
+}
+
+internal fun <T> disposeCapturedResource(
+    resource: T?,
+    dispose: (T) -> Unit
+): () -> Unit = {
+    resource?.let(dispose)
 }
 
 @Composable
@@ -1464,15 +1471,19 @@ private fun ProcessedComparisonViewer(
     }
     val firstBitmap = (firstState as? ViewerImageState.Loaded)?.image?.bitmap
     val secondBitmap = (secondState as? ViewerImageState.Loaded)?.image?.bitmap
-    DisposableEffect(firstBitmap, secondBitmap) {
-        onDispose {
-            firstBitmap
-                ?.takeUnless(Bitmap::isRecycled)
-                ?.recycle()
-            secondBitmap
-                ?.takeUnless(Bitmap::isRecycled)
-                ?.recycle()
-        }
+    DisposableEffect(firstBitmap) {
+        onDispose(
+            disposeCapturedResource(firstBitmap) { bitmap ->
+                bitmap.takeUnless(Bitmap::isRecycled)?.recycle()
+            }
+        )
+    }
+    DisposableEffect(secondBitmap) {
+        onDispose(
+            disposeCapturedResource(secondBitmap) { bitmap ->
+                bitmap.takeUnless(Bitmap::isRecycled)?.recycle()
+            }
+        )
     }
 
     Dialog(
@@ -1605,7 +1616,7 @@ private fun ProcessedResult.toComparisonImage(): ComparisonImage =
         relativePath = relativePath
     )
 
-private fun ProcessedResult.imageSource(): ImageSourceReference = imageSourceReference(
+internal fun ProcessedResult.imageSource(): ImageSourceReference = imageSourceReference(
     displayName = fileName,
     displayPath = displayPath,
     relativePath = relativePath,

@@ -14,6 +14,7 @@ object AstroSpacing {
 
 object AstroTestTags {
     const val HomeScreen = "astro_home"
+    const val HomeMainContent = "home_main_content"
     const val HomePrimaryAction = "home_primary_camera"
     const val HomeSessions = "home_sessions"
     const val HomeSecondaryNavigation = "home_secondary_navigation"

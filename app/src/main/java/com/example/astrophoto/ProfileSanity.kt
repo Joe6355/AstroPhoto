@@ -29,6 +29,20 @@ sealed interface ProfileSanityResult {
     ) : ProfileSanityResult
 }
 
+internal fun <T> rejectedProfileSanityResult(reason: String): Result<T> =
+    Result.failure(
+        IllegalStateException(
+            when (reason) {
+                "output collapsed to black" ->
+                    "Профильная обработка остановлена: результат стал почти полностью чёрным."
+                "output collapsed to white" ->
+                    "Профильная обработка остановлена: результат стал почти полностью белым."
+                else ->
+                    "Профильная обработка остановлена: результат не прошёл проверку качества."
+            }
+        )
+    )
+
 internal fun analyzeProfileImage(
     image: ArgbPixelImage,
     roi: AstroRoi,

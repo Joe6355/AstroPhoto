@@ -139,13 +139,13 @@ class BackgroundRemoval {
         }
         val skyMedian = StarDetector.percentile(histogram, samples.coerceAtLeast(1L), 0.55)
         val brightLimit = (skyMedian + 70).coerceIn(40, 235)
-        y = 0
-        while (y < image.height) {
-            var x = 0
-            while (x < image.width) {
+        y = roi.top
+        while (y < roi.bottom) {
+            var x = roi.left
+            while (x < roi.right) {
                 val color = image.pixelAt(x, y)
                 val lum = pixelLuminance(color)
-                if (lum <= brightLimit || lum < 180) {
+                if (lum <= brightLimit && lum < MAX_BACKGROUND_SAMPLE_LUMINANCE) {
                     val gx = ((x.toFloat() / image.width) * gridWidth).toInt().coerceIn(0, gridWidth - 1)
                     val gy = ((y.toFloat() / image.height) * gridHeight).toInt().coerceIn(0, gridHeight - 1)
                     val cell = cells[gy][gx]
@@ -274,5 +274,9 @@ class BackgroundRemoval {
                 image.pixels[index] = 0xFF000000.toInt() or (red shl 16) or (green shl 8) or blue
             }
         }
+    }
+
+    private companion object {
+        const val MAX_BACKGROUND_SAMPLE_LUMINANCE = 180
     }
 }

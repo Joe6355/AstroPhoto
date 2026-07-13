@@ -141,6 +141,29 @@ class ManualImageAlignmentTest {
     }
 
     @Test
+    fun commonAlignedRegionKeepsOnlyPixelsPresentInEveryFrame() {
+        val region = commonAlignedRegion(
+            width = 100,
+            height = 80,
+            shifts = listOf(
+                AlignmentShift.Zero,
+                AlignmentShift(dx = 7, dy = -3),
+                AlignmentShift(dx = -5, dy = 4)
+            )
+        )
+
+        assertEquals(PixelRect(left = 5, top = 3, right = 93, bottom = 76), region)
+    }
+
+    @Test
+    fun commonAlignedRegionPreservesFullFrameWithoutShift() {
+        assertEquals(
+            PixelRect(0, 0, 16, 12),
+            commonAlignedRegion(16, 12, listOf(AlignmentShift.Zero, AlignmentShift.Zero))
+        )
+    }
+
+    @Test
     fun shiftApplicationFillsOnlyNonOverlappingEdges() {
         val image = SyntheticImageTestData.texture(8, 6)
         val output = applyImageShift(image, dx = 2, dy = 1, fillColor = 123)

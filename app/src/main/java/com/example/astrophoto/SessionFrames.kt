@@ -199,6 +199,7 @@ class SessionFramesRepository(private val context: Context) {
                 val name = cursor.getString(nameIndex).orEmpty()
                 if (name.isBlank()) continue
                 if (category == SessionFrameCategory.CROPPED_JPEG && !name.isJpegFileName()) continue
+                if (category.isRaw && !name.isDngFileName()) continue
                 val relative = "${path.removePrefix(basePath)}$name"
                 val uri = ContentUris.withAppendedId(collection, cursor.getLong(idIndex))
                 frames += SessionFrame(
@@ -232,6 +233,7 @@ class SessionFramesRepository(private val context: Context) {
                 if (category == SessionFrameCategory.CROPPED_JPEG && !file.name.isJpegFileName()) {
                     return@mapNotNull null
                 }
+                if (category.isRaw && !file.name.isDngFileName()) return@mapNotNull null
                 SessionFrame(
                     key = relative,
                     fileName = file.name,
@@ -262,6 +264,12 @@ class SessionFramesRepository(private val context: Context) {
         val extension = substringAfterLast('.', "").lowercase(Locale.US)
         return extension == "jpg" || extension == "jpeg"
     }
+
+    private fun String.isDngFileName(): Boolean =
+        substringAfterLast('.', "").equals("dng", ignoreCase = true)
+
+    private val SessionFrameCategory.isRaw: Boolean
+        get() = this == SessionFrameCategory.LIGHTS_RAW || this == SessionFrameCategory.DARKS_RAW
 
     private fun decodeSampledBitmap(path: String, maxSize: Int): Bitmap? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -475,6 +483,7 @@ fun SessionFramesScreen(
     } else {
         frames.filter { it.category == selectedCategory }
     }
+
     fun categoryCount(category: SessionFrameCategory): Int =
         if (category == SessionFrameCategory.CROPPED_JPEG) {
             cropRecords.size

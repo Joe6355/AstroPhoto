@@ -131,14 +131,20 @@ private class JpegAutoSelector(private val context: Context) {
 
         val thresholds = sensitivity.thresholds()
         val sharpnessCandidates = rawMetrics.filter {
-            !it.readError && it.brightness > thresholds.blackBrightness
+            !it.readError &&
+                it.brightness > thresholds.blackBrightness &&
+                it.brightness < thresholds.brightBrightness &&
+                it.clippedPercent < thresholds.clippedPercent
         }
         val sharpnessComparisonAvailable = sharpnessCandidates.size >= 2
-        val averageSharpness = sharpnessCandidates
-            .map { it.sharpness }
-            .average()
-            .takeIf { !it.isNaN() }
-            ?: 0.0
+        val sharpnessBaseline = robustSharpnessBaseline(
+            sharpnessCandidates.map { it.sharpness }
+        )
+        val adaptiveDarkBrightness = adaptiveDarkBrightnessThreshold(
+            absoluteThreshold = thresholds.darkBrightness,
+            blackThreshold = thresholds.blackBrightness,
+            brightnessValues = sharpnessCandidates.map { it.brightness }
+        )
 
         AutoSelectionReport(
             frames = rawMetrics.map { metrics ->
@@ -150,7 +156,8 @@ private class JpegAutoSelector(private val context: Context) {
                     status = classify(
                         metrics = metrics,
                         thresholds = thresholds,
-                        averageSharpness = averageSharpness,
+                        darkBrightness = adaptiveDarkBrightness,
+                        sharpnessBaseline = sharpnessBaseline,
                         compareSharpness = sharpnessComparisonAvailable
                     )
                 )
@@ -261,7 +268,8 @@ private class JpegAutoSelector(private val context: Context) {
     private fun classify(
         metrics: RawFrameMetrics,
         thresholds: AutoSelectionThresholds,
-        averageSharpness: Double,
+        darkBrightness: Double,
+        sharpnessBaseline: Double,
         compareSharpness: Boolean
     ): AutoFrameStatus = when {
         metrics.readError -> AutoFrameStatus.READ_ERROR
@@ -269,9 +277,9 @@ private class JpegAutoSelector(private val context: Context) {
         metrics.brightness >= thresholds.brightBrightness ||
             metrics.clippedPercent >= thresholds.clippedPercent ->
             AutoFrameStatus.OVEREXPOSED
-        metrics.brightness < thresholds.darkBrightness -> AutoFrameStatus.TOO_DARK
+        metrics.brightness < darkBrightness -> AutoFrameStatus.TOO_DARK
         compareSharpness &&
-            metrics.sharpness < averageSharpness * thresholds.blurFactor ->
+            metrics.sharpness < sharpnessBaseline * thresholds.blurFactor ->
             AutoFrameStatus.BLURRY
         else -> AutoFrameStatus.OK
     }
@@ -301,6 +309,33 @@ private class JpegAutoSelector(private val context: Context) {
             )
         }
 }
+
+internal fun robustSharpnessBaseline(values: List<Double>): Double {
+    val sorted = values.filter { it.isFinite() && it >= 0.0 }.sorted()
+    if (sorted.isEmpty()) return 0.0
+    val middle = sorted.size / 2
+    return if (sorted.size % 2 == 1) {
+        sorted[middle]
+    } else {
+        (sorted[middle - 1] + sorted[middle]) / 2.0
+    }
+}
+
+internal fun adaptiveDarkBrightnessThreshold(
+    absoluteThreshold: Double,
+    blackThreshold: Double,
+    brightnessValues: List<Double>
+): Double {
+    require(absoluteThreshold > blackThreshold)
+    val baseline = robustSharpnessBaseline(brightnessValues)
+    if (baseline <= 0.0) return absoluteThreshold
+    return minOf(
+        absoluteThreshold,
+        maxOf(blackThreshold + 1.0, baseline * RELATIVE_DARK_FRAME_FACTOR)
+    )
+}
+
+private const val RELATIVE_DARK_FRAME_FACTOR = 0.45
 
 @Composable
 fun JpegAutoSelectionScreen(

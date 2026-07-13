@@ -913,7 +913,23 @@ class CameraPreviewView @JvmOverloads constructor(
                 requestedCaptureFileName,
                 requestedCaptureRelativeDirectory
             )
-            reportStatus("capture saved: $fileName")
+            val sidecarResult = runCatching {
+                AstroRawSidecarStore(context.applicationContext).saveCapture(
+                    image = image,
+                    characteristics = characteristics,
+                    captureResult = captureResult,
+                    dngFileName = fileName,
+                    relativeDirectory = requestedCaptureRelativeDirectory,
+                    outputOrientationDegrees = calculateJpegOrientation()
+                )
+            }
+            sidecarResult.fold(
+                onSuccess = { reportStatus("capture saved: $fileName + $it") },
+                onFailure = {
+                    Log.w("AstroPhotoCamera", "RAW processing sidecar was not saved", it)
+                    reportStatus("capture saved: $fileName; RAW processing unavailable")
+                }
+            )
             finishCapture(Result.success(fileName))
         } catch (exception: Exception) {
             finishCapture(

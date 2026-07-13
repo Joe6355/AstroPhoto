@@ -20,6 +20,7 @@ fun signalPreservingSigmaStack(
     val red = IntArray(frames.size)
     val green = IntArray(frames.size)
     val blue = IntArray(frames.size)
+    val sortedScratch = IntArray(frames.size)
     output.indices.forEach { pixel ->
         frames.indices.forEach { index ->
             val color = frames[index].pixels[pixel]
@@ -28,33 +29,45 @@ fun signalPreservingSigmaStack(
             blue[index] = color and 0xFF
         }
         output[pixel] = 0xFF000000.toInt() or
-            (signalPreservingSigmaChannel(red, sigma) shl 16) or
-            (signalPreservingSigmaChannel(green, sigma) shl 8) or
-            signalPreservingSigmaChannel(blue, sigma)
+            (signalPreservingSigmaChannel(red, sigma, sortedScratch = sortedScratch) shl 16) or
+            (signalPreservingSigmaChannel(green, sigma, sortedScratch = sortedScratch) shl 8) or
+            signalPreservingSigmaChannel(blue, sigma, sortedScratch = sortedScratch)
     }
     return ArgbPixelImage(first.width, first.height, output)
 }
 
-internal fun signalPreservingSigmaChannel(values: IntArray, sigma: Double): Int {
-    require(values.isNotEmpty())
+internal fun signalPreservingSigmaChannel(
+    values: IntArray,
+    sigma: Double,
+    count: Int = values.size,
+    sortedScratch: IntArray? = null
+): Int {
+    require(count in 1..values.size)
     require(sigma.isFinite() && sigma > 0.0)
+    require(sortedScratch == null || sortedScratch.size >= count)
     val effectiveSigma = maxOf(2.0, sigma)
-    val mean = values.average()
+    var sum = 0L
+    for (index in 0 until count) sum += values[index]
+    val mean = sum.toDouble() / count
     var squaredDifferenceSum = 0.0
-    values.forEach { value ->
+    for (index in 0 until count) {
+        val value = values[index]
         val difference = value - mean
         squaredDifferenceSum += difference * difference
     }
-    val standardDeviation = sqrt(squaredDifferenceSum / values.size)
+    val standardDeviation = sqrt(squaredDifferenceSum / count)
     val threshold = effectiveSigma * standardDeviation
-    val sorted = if (values.size >= 3) {
-        values.copyOf().also { java.util.Arrays.sort(it) }
+    val sorted = if (count >= 3) {
+        (sortedScratch ?: IntArray(count)).also {
+            values.copyInto(it, endIndex = count)
+            java.util.Arrays.sort(it, 0, count)
+        }
     } else {
         null
     }
     val preserveBrightFloor = sorted?.let {
-        val maximum = it.last()
-        val second = it[it.lastIndex - 1]
+        val maximum = it[count - 1]
+        val second = it[count - 2]
         if (
             maximum >= mean + threshold &&
             second >= mean + threshold * 0.65 &&
@@ -62,13 +75,14 @@ internal fun signalPreservingSigmaChannel(values: IntArray, sigma: Double): Int 
         ) second else null
     }
     val isolatedHigh = sorted?.let {
-        val maximum = it.last()
-        val second = it[it.lastIndex - 1]
+        val maximum = it[count - 1]
+        val second = it[count - 2]
         if (maximum - second > ISOLATED_HIGH_GAP) maximum else null
     }
     var acceptedSum = 0L
     var acceptedCount = 0
-    values.forEach { value ->
+    for (index in 0 until count) {
+        val value = values[index]
         if (value != isolatedHigh && (
             standardDeviation == 0.0 || abs(value - mean) <= threshold ||
             (preserveBrightFloor != null && value >= preserveBrightFloor)

@@ -6,7 +6,6 @@
         <item name="android:statusBarColor">#080B1C</item>
         <item name="android:navigationBarColor">#080B1C</item>
         <item name="android:windowLightStatusBar">false</item>
-        <item name="android:windowLightNavigationBar">false</item>
     </style>
     <style name="Theme.AstroPhoto" parent="@style/AstroPhotoBaseTheme" />
 </resources>
