@@ -19,6 +19,29 @@ class ProcessedResultLocationTest {
     }
 
     @Test
+    fun relativePathIsNormalizedWithTrailingSlash() {
+        val lookup = FakeLookup().apply {
+            byName["Stacked.jpg" to relativePath] = provider("content://images/7", "Stacked.jpg")
+        }
+        val resolved = resolveImageSource(
+            reference("Stacked.jpg").copy(relativePath = relativePath.removeSuffix("/")),
+            lookup
+        )
+        assertEquals("content://images/7", resolved?.pathOrUri)
+    }
+
+    @Test
+    fun sameFileNameInAnotherSessionIsNotSelected() {
+        val otherPath = "Pictures/AstroPhoto/Other/Processed/"
+        val lookup = FakeLookup().apply {
+            byName["Stacked.jpg" to otherPath] =
+                ProviderImageRecord("content://images/8", "Stacked.jpg", otherPath)
+        }
+        assertNull(resolveImageSource(reference("Stacked.jpg"), lookup))
+        assertEquals(listOf("Stacked.jpg" to relativePath), lookup.nameQueries)
+    }
+
+    @Test
     fun readableProviderUriIsPreferredOverNameLookup() {
         val lookup = FakeLookup().apply {
             byUri["content://images/3"] = provider("content://images/3", "Actual.jpg")

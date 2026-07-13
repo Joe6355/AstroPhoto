@@ -112,17 +112,17 @@ internal class ProcessedImageSourceResolver(context: Context) {
             displayName: String,
             relativePath: String
         ): ProviderImageRecord? {
-            val collection = MediaStore.Files.getContentUri("external")
+            val collection = processedImagesCollection()
             return runCatching {
                 resolver.query(
                     collection,
                     arrayOf(
-                        MediaStore.Files.FileColumns._ID,
-                        MediaStore.Files.FileColumns.DISPLAY_NAME,
-                        MediaStore.Files.FileColumns.RELATIVE_PATH
+                        MediaStore.Images.Media._ID,
+                        MediaStore.Images.Media.DISPLAY_NAME,
+                        MediaStore.Images.Media.RELATIVE_PATH
                     ),
-                    "${MediaStore.Files.FileColumns.DISPLAY_NAME}=? AND " +
-                        "${MediaStore.Files.FileColumns.RELATIVE_PATH}=?",
+                    "${MediaStore.Images.Media.DISPLAY_NAME}=? AND " +
+                        "${MediaStore.Images.Media.RELATIVE_PATH}=?",
                     arrayOf(displayName, relativePath),
                     null
                 )?.use { cursor ->
@@ -156,8 +156,8 @@ internal class ProcessedImageSourceResolver(context: Context) {
         resolver.query(
             uri,
             arrayOf(
-                MediaStore.Files.FileColumns.DISPLAY_NAME,
-                MediaStore.Files.FileColumns.RELATIVE_PATH
+                MediaStore.Images.Media.DISPLAY_NAME,
+                MediaStore.Images.Media.RELATIVE_PATH
             ),
             null,
             null,
@@ -178,6 +178,13 @@ internal class ProcessedImageSourceResolver(context: Context) {
         } == true
     }.getOrDefault(false)
 }
+
+internal fun processedImagesCollection(): Uri =
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+        MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+    } else {
+        MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+    }
 
 private fun normalizeMediaStoreRelativePath(path: String?): String? = path
     ?.replace('\\', '/')

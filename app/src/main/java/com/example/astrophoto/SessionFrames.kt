@@ -163,7 +163,7 @@ class SessionFramesRepository(private val context: Context) {
 
     private fun loadMediaStoreFrames(session: SessionSummary): List<SessionFrame> {
         val resolver = context.contentResolver
-        val collection = MediaStore.Files.getContentUri("external")
+        val collection = processedImagesCollection()
         val basePath =
             "${Environment.DIRECTORY_PICTURES}/AstroPhoto/${session.folderName}/"
         val frames = mutableListOf<SessionFrame>()
@@ -171,26 +171,26 @@ class SessionFramesRepository(private val context: Context) {
         resolver.query(
             collection,
             arrayOf(
-                MediaStore.Files.FileColumns._ID,
-                MediaStore.Files.FileColumns.DISPLAY_NAME,
-                MediaStore.Files.FileColumns.RELATIVE_PATH,
-                MediaStore.Files.FileColumns.SIZE,
-                MediaStore.Files.FileColumns.DATE_ADDED
+                MediaStore.Images.Media._ID,
+                MediaStore.Images.Media.DISPLAY_NAME,
+                MediaStore.Images.Media.RELATIVE_PATH,
+                MediaStore.Images.Media.SIZE,
+                MediaStore.Images.Media.DATE_ADDED
             ),
-            "${MediaStore.Files.FileColumns.RELATIVE_PATH} LIKE ?",
+            "${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?",
             arrayOf("$basePath%"),
-            "${MediaStore.Files.FileColumns.DATE_ADDED} ASC"
+            "${MediaStore.Images.Media.DATE_ADDED} ASC"
         )?.use { cursor ->
-            val idIndex = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
+            val idIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
             val nameIndex = cursor.getColumnIndexOrThrow(
-                MediaStore.Files.FileColumns.DISPLAY_NAME
+                MediaStore.Images.Media.DISPLAY_NAME
             )
             val pathIndex = cursor.getColumnIndexOrThrow(
-                MediaStore.Files.FileColumns.RELATIVE_PATH
+                MediaStore.Images.Media.RELATIVE_PATH
             )
-            val sizeIndex = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.SIZE)
+            val sizeIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE)
             val dateIndex = cursor.getColumnIndexOrThrow(
-                MediaStore.Files.FileColumns.DATE_ADDED
+                MediaStore.Images.Media.DATE_ADDED
             )
 
             while (cursor.moveToNext()) {

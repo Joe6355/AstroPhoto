@@ -290,7 +290,7 @@ private class ProcessedResultsRepository(private val context: Context) {
         session: SessionSummary
     ): List<ProcessedResult> {
         val resolver = context.contentResolver
-        val collection = MediaStore.Files.getContentUri("external")
+        val collection = processedImagesCollection()
         val relativePath =
             "${Environment.DIRECTORY_PICTURES}/AstroPhoto/" +
                 "${session.folderName}/Processed/"
@@ -299,31 +299,31 @@ private class ProcessedResultsRepository(private val context: Context) {
         resolver.query(
             collection,
             arrayOf(
-                MediaStore.Files.FileColumns._ID,
-                MediaStore.Files.FileColumns.DISPLAY_NAME,
-                MediaStore.Files.FileColumns.SIZE,
-                MediaStore.Files.FileColumns.DATE_ADDED,
-                MediaStore.Files.FileColumns.MIME_TYPE
+                MediaStore.Images.Media._ID,
+                MediaStore.Images.Media.DISPLAY_NAME,
+                MediaStore.Images.Media.SIZE,
+                MediaStore.Images.Media.DATE_ADDED,
+                MediaStore.Images.Media.MIME_TYPE
             ),
-            "${MediaStore.Files.FileColumns.RELATIVE_PATH}=?",
+            "${MediaStore.Images.Media.RELATIVE_PATH}=?",
             arrayOf(relativePath),
-            "${MediaStore.Files.FileColumns.DATE_ADDED} DESC, " +
-                "${MediaStore.Files.FileColumns.DISPLAY_NAME} ASC"
+            "${MediaStore.Images.Media.DATE_ADDED} DESC, " +
+                "${MediaStore.Images.Media.DISPLAY_NAME} ASC"
         )?.use { cursor ->
             val idIndex = cursor.getColumnIndexOrThrow(
-                MediaStore.Files.FileColumns._ID
+                MediaStore.Images.Media._ID
             )
             val nameIndex = cursor.getColumnIndexOrThrow(
-                MediaStore.Files.FileColumns.DISPLAY_NAME
+                MediaStore.Images.Media.DISPLAY_NAME
             )
             val sizeIndex = cursor.getColumnIndexOrThrow(
-                MediaStore.Files.FileColumns.SIZE
+                MediaStore.Images.Media.SIZE
             )
             val dateIndex = cursor.getColumnIndexOrThrow(
-                MediaStore.Files.FileColumns.DATE_ADDED
+                MediaStore.Images.Media.DATE_ADDED
             )
             val mimeIndex = cursor.getColumnIndexOrThrow(
-                MediaStore.Files.FileColumns.MIME_TYPE
+                MediaStore.Images.Media.MIME_TYPE
             )
 
             while (cursor.moveToNext()) {
@@ -488,9 +488,9 @@ private class ProcessedResultsRepository(private val context: Context) {
 
     private fun mediaStoreResultExists(path: String, name: String): Boolean =
         context.contentResolver.query(
-            MediaStore.Files.getContentUri("external"),
-            arrayOf(MediaStore.Files.FileColumns.DISPLAY_NAME),
-            "${MediaStore.Files.FileColumns.RELATIVE_PATH}=?",
+            processedImagesCollection(),
+            arrayOf(MediaStore.Images.Media.DISPLAY_NAME),
+            "${MediaStore.Images.Media.RELATIVE_PATH}=?",
             arrayOf(path),
             null
         )?.use { cursor ->
@@ -510,7 +510,7 @@ private class ProcessedResultsRepository(private val context: Context) {
                 "${session.folderName}/Processed/"
         return context.contentResolver.query(
             uri,
-            arrayOf(MediaStore.Files.FileColumns.RELATIVE_PATH),
+            arrayOf(MediaStore.Images.Media.RELATIVE_PATH),
             null,
             null,
             null
@@ -1418,7 +1418,13 @@ private fun ProcessedResultViewer(
             }
             AstroExpandableSection(title = "Технические сведения") {
                 Text(
-                    text = result.displayPath,
+                    text = buildString {
+                        appendLine("Файл: ${result.fileName}")
+                        appendLine("Путь MediaStore: ${result.relativePath ?: "не сохранён"}")
+                        appendLine("Сохранённый URI: ${if (result.contentUri.isNullOrBlank()) "нет" else "есть"}")
+                        val failure = (imageState as? ViewerImageState.Error)?.error
+                        if (failure != null) append("Причина: ${failure.technicalMessage}")
+                    }.trim(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -1625,16 +1631,18 @@ private fun SessionFrame.toComparisonImage(): ComparisonImage =
     )
 
 private fun resultContentUri(context: Context, result: ProcessedResult): Uri? =
-    result.contentUri?.let(Uri::parse)
-        ?: result.filePath?.let { path ->
+    when (val resolved = ProcessedImageSourceResolver(context).resolve(result.imageSource())) {
+        is ResolvedImageSource.Provider -> Uri.parse(resolved.record.uri)
+        is ResolvedImageSource.LegacyFile ->
             runCatching {
                 FileProvider.getUriForFile(
                     context,
                     "${context.packageName}.fileprovider",
-                    File(path)
+                    File(resolved.absolutePath)
                 )
             }.getOrNull()
-        }
+        null -> null
+    }
 
 private fun openResultInGallery(
     context: Context,

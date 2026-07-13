@@ -5,6 +5,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import com.example.astrophoto.ui.AstroTestTags
 import com.example.astrophoto.ui.theme.AstroPhotoTheme
 import org.junit.Assert.assertEquals
@@ -60,5 +61,12 @@ class HomeScreenTest {
         composeRule.runOnIdle { assertEquals("settings", destination) }
         composeRule.onNodeWithText("Помощь").performClick()
         composeRule.runOnIdle { assertEquals("help", destination) }
+        composeRule.onNodeWithTag(AstroTestTags.HomeFooter)
+            .performScrollTo()
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("О приложении").performClick()
+        composeRule.runOnIdle { assertEquals("about", destination) }
+        composeRule.onNodeWithText("Самопроверка").performClick()
+        composeRule.runOnIdle { assertEquals("self-check", destination) }
     }
 }

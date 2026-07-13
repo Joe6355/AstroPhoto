@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -116,21 +117,30 @@ fun AstroHomeScreen(
                         modifier = Modifier.weight(1f)
                     )
                 }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(AstroSpacing.Sm)
-                ) {
-                    AstroTextButton(
-                        text = "О приложении",
-                        onClick = onOpenAbout,
-                        modifier = Modifier.weight(1f)
-                    )
-                    AstroTextButton(
-                        text = "Самопроверка",
-                        onClick = onOpenSelfCheck,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
+            }
+        }
+
+        item {
+            Spacer(modifier = Modifier.fillParentMaxHeight(0.2f))
+        }
+
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag(AstroTestTags.HomeFooter),
+                horizontalArrangement = Arrangement.spacedBy(AstroSpacing.Sm)
+            ) {
+                AstroTextButton(
+                    text = "О приложении",
+                    onClick = onOpenAbout,
+                    modifier = Modifier.weight(1f)
+                )
+                AstroTextButton(
+                    text = "Самопроверка",
+                    onClick = onOpenSelfCheck,
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
     }

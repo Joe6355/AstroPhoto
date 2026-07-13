@@ -49,8 +49,8 @@ class CameraSettingsStore(context: Context) {
             focusDistance = preferences.getFloat("focus_distance", 0f),
             focusMode = preferences.getString("focus_mode", "INFINITY") ?: "INFINITY",
             applyLongExposureToPreview = legacyApplyLongExposure,
-            singleFormat = preferences.getString("single_format", "JPEG") ?: "JPEG",
-            seriesFormat = preferences.getString("series_format", "JPEG") ?: "JPEG",
+            singleFormat = canonicalCaptureFormat(preferences.getString("single_format", null)),
+            seriesFormat = canonicalCaptureFormat(preferences.getString("series_format", null)),
             captureMode = preferences.getString("capture_mode", "SINGLE") ?: "SINGLE",
             seriesFrameCount = preferences.getInt("series_frame_count", 3),
             seriesDelaySeconds = preferences.getInt("series_delay_seconds", 0),
@@ -139,3 +139,6 @@ class CameraSettingsStore(context: Context) {
         val JPEG_QUALITY_VALUES = setOf(85, 92, 100)
     }
 }
+
+internal fun canonicalCaptureFormat(storedValue: String?): String =
+    storedValue?.takeIf { it == "JPEG" || it == "RAW" } ?: "JPEG"

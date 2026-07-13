@@ -44,6 +44,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.example.astrophoto.ui.AstroScaffold
+import com.example.astrophoto.ui.AstroInfoRow
 import com.example.astrophoto.ui.AstroSecondaryButton
 import com.example.astrophoto.ui.AstroSpacing
 import com.example.astrophoto.ui.AstroTextButton
@@ -106,6 +107,12 @@ fun AboutScreen(
                 modifier = Modifier.padding(top = 12.dp),
                 style = MaterialTheme.typography.bodyLarge
             )
+        }
+
+        item {
+            AboutCard("Информация") {
+                AstroInfoRow(label = "Разработчик", value = "Дудин С.В.")
+            }
         }
 
         item {

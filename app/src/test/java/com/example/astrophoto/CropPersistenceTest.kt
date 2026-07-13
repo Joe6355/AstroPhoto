@@ -96,6 +96,14 @@ class CropPersistenceTest {
         assertEquals(original.key, record.frame.markKey)
     }
 
+    @Test
+    fun cropDestinationStaysInsideSessionPicturesFolder() {
+        assertEquals(
+            "Pictures/AstroPhoto/Session_1/Lights/Cropped/",
+            cropRelativePath("Session_1")
+        )
+    }
+
     private fun frame(name: String, category: SessionFrameCategory) = SessionFrame(
         key = "${category.name}/$name",
         fileName = name,

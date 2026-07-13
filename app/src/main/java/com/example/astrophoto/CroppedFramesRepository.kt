@@ -139,8 +139,12 @@ class CroppedFramesRepository(private val context: Context) {
 
     private fun readManifest(session: SessionSummary): String? {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val uri = findMediaStoreFile(session, MANIFEST_NAME) ?: return null
-            return context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+            val privateManifest = privateManifestFile(session)
+            if (privateManifest.exists()) return privateManifest.readText()
+            val legacyUri = findLegacyMediaStoreManifest(session) ?: return null
+            return context.contentResolver.openInputStream(legacyUri)
+                ?.bufferedReader()
+                ?.use { it.readText() }
         }
         return legacyFile(session, MANIFEST_NAME).takeIf(File::exists)?.readText()
     }
@@ -153,7 +157,7 @@ class CroppedFramesRepository(private val context: Context) {
     ): StagedStoredFile {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val temporaryName = "tmp_${System.nanoTime()}_$fileName"
-            val uri = insertPending(session, temporaryName, "image/jpeg")
+            val uri = insertPending(session, temporaryName)
             try {
                 context.contentResolver.openOutputStream(uri, "w")?.use { output ->
                     check(bitmap.compress(Bitmap.CompressFormat.JPEG, 95, output))
@@ -187,23 +191,16 @@ class CroppedFramesRepository(private val context: Context) {
 
     private fun writeManifestAtomically(session: SessionSummary, content: String) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val temporaryName = "tmp_${System.nanoTime()}_$MANIFEST_NAME"
-            val uri = insertPending(session, temporaryName, "text/tab-separated-values")
+            val target = privateManifestFile(session)
+            target.parentFile?.mkdirs()
+            val temporary = File(target.parentFile, ".${target.name}.${System.nanoTime()}.tmp")
             try {
-                context.contentResolver.openOutputStream(uri, "w")?.bufferedWriter()?.use {
-                    it.write(content)
-                } ?: error("Не удалось записать crop manifest")
-                val staged = stageMediaStoreReplacement(
-                    session = session,
-                    pending = uri,
-                    finalName = MANIFEST_NAME,
-                    requireExactName = true,
-                    existingName = MANIFEST_NAME
-                )
-                staged.commit()
-            } catch (error: Throwable) {
-                context.contentResolver.delete(uri, null, null)
-                throw error
+                FileOutputStream(temporary).bufferedWriter().use { writer ->
+                    writer.write(content)
+                }
+                moveReplacing(temporary, target)
+            } finally {
+                temporary.delete()
             }
             return
         }
@@ -218,14 +215,14 @@ class CroppedFramesRepository(private val context: Context) {
         }
     }
 
-    private fun insertPending(session: SessionSummary, name: String, mime: String): Uri =
+    private fun insertPending(session: SessionSummary, name: String): Uri =
         context.contentResolver.insert(
-            MediaStore.Files.getContentUri("external"),
+            cropImagesCollection(),
             ContentValues().apply {
-                put(MediaStore.Files.FileColumns.DISPLAY_NAME, name)
-                put(MediaStore.Files.FileColumns.MIME_TYPE, mime)
-                put(MediaStore.Files.FileColumns.RELATIVE_PATH, mediaStorePath(session))
-                put(MediaStore.Files.FileColumns.IS_PENDING, 1)
+                put(MediaStore.Images.Media.DISPLAY_NAME, name)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                put(MediaStore.Images.Media.RELATIVE_PATH, mediaStorePath(session))
+                put(MediaStore.Images.Media.IS_PENDING, 1)
             }
         ) ?: error("Не удалось создать derived crop file")
 
@@ -233,8 +230,8 @@ class CroppedFramesRepository(private val context: Context) {
         val updated = context.contentResolver.update(
             uri,
             ContentValues().apply {
-                put(MediaStore.Files.FileColumns.DISPLAY_NAME, finalName)
-                put(MediaStore.Files.FileColumns.IS_PENDING, 0)
+                put(MediaStore.Images.Media.DISPLAY_NAME, finalName)
+                put(MediaStore.Images.Media.IS_PENDING, 0)
             },
             null,
             null
@@ -260,6 +257,7 @@ class CroppedFramesRepository(private val context: Context) {
                 "Derived crop сохранён вне папки Cropped"
             }
             check(saved.sizeBytes > 0L) { "Derived crop file пуст" }
+            check(canReopenImage(pending)) { "Derived crop JPEG не открывается после сохранения" }
             if (requireExactName) {
                 check(saved.displayName == finalName) {
                     "MediaStore изменил имя служебного файла"
@@ -295,7 +293,7 @@ class CroppedFramesRepository(private val context: Context) {
     private fun renameMediaStoreFile(uri: Uri, name: String) {
         val updated = context.contentResolver.update(
             uri,
-            ContentValues().apply { put(MediaStore.Files.FileColumns.DISPLAY_NAME, name) },
+            ContentValues().apply { put(MediaStore.Images.Media.DISPLAY_NAME, name) },
             null,
             null
         )
@@ -303,12 +301,12 @@ class CroppedFramesRepository(private val context: Context) {
     }
 
     private fun findMediaStoreFile(session: SessionSummary, name: String): Uri? {
-        val collection = MediaStore.Files.getContentUri("external")
+        val collection = cropImagesCollection()
         return context.contentResolver.query(
             collection,
-            arrayOf(MediaStore.Files.FileColumns._ID),
-            "${MediaStore.Files.FileColumns.DISPLAY_NAME}=? AND " +
-                "${MediaStore.Files.FileColumns.RELATIVE_PATH}=?",
+            arrayOf(MediaStore.Images.Media._ID),
+            "${MediaStore.Images.Media.DISPLAY_NAME}=? AND " +
+                "${MediaStore.Images.Media.RELATIVE_PATH}=?",
             arrayOf(name, mediaStorePath(session)),
             null
         )?.use { cursor ->
@@ -320,9 +318,9 @@ class CroppedFramesRepository(private val context: Context) {
         context.contentResolver.query(
             uri,
             arrayOf(
-                MediaStore.Files.FileColumns.DISPLAY_NAME,
-                MediaStore.Files.FileColumns.RELATIVE_PATH,
-                MediaStore.Files.FileColumns.SIZE
+                MediaStore.Images.Media.DISPLAY_NAME,
+                MediaStore.Images.Media.RELATIVE_PATH,
+                MediaStore.Images.Media.SIZE
             ),
             null,
             null,
@@ -412,8 +410,36 @@ class CroppedFramesRepository(private val context: Context) {
         return File(pictures, "AstroPhoto/${session.folderName}/Lights/Cropped/$name")
     }
 
-    private fun mediaStorePath(session: SessionSummary) =
-        "${Environment.DIRECTORY_PICTURES}/AstroPhoto/${session.folderName}/Lights/Cropped/"
+    private fun mediaStorePath(session: SessionSummary) = cropRelativePath(session.folderName)
+
+    private fun privateManifestFile(session: SessionSummary): File = File(
+        context.filesDir,
+        "crop_manifests/${session.folderName.replace(Regex("[^A-Za-z0-9._-]"), "_")}.tsv"
+    )
+
+    private fun canReopenImage(uri: Uri): Boolean = runCatching {
+        context.contentResolver.openInputStream(uri)?.use { it.read() >= 0 } == true
+    }.getOrDefault(false)
+
+    private fun findLegacyMediaStoreManifest(session: SessionSummary): Uri? {
+        val collection = MediaStore.Files.getContentUri("external")
+        return runCatching {
+            context.contentResolver.query(
+                collection,
+                arrayOf(MediaStore.Files.FileColumns._ID),
+                "${MediaStore.Files.FileColumns.DISPLAY_NAME}=? AND " +
+                    "${MediaStore.Files.FileColumns.RELATIVE_PATH}=?",
+                arrayOf(MANIFEST_NAME, mediaStorePath(session)),
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    ContentUris.withAppendedId(collection, cursor.getLong(0))
+                } else {
+                    null
+                }
+            }
+        }.getOrNull()
+    }
 
     private fun moveReplacing(source: File, target: File) {
         try {
@@ -454,3 +480,13 @@ class CroppedFramesRepository(private val context: Context) {
         const val MANIFEST_NAME = "crop_manifest.tsv"
     }
 }
+
+internal fun cropImagesCollection(): Uri =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+    } else {
+        MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+    }
+
+internal fun cropRelativePath(sessionFolderName: String): String =
+    "Pictures/AstroPhoto/$sessionFolderName/Lights/Cropped/"

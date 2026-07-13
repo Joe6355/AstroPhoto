@@ -103,7 +103,12 @@ class SafeImageLoader(private val context: Context) {
             ?: return imageError(
                 userTitle = "Файл не найден",
                 userMessage = "Возможно, он был удалён.",
-                technicalMessage = "Image source could not be resolved: ${source.displayName}"
+                technicalMessage = buildString {
+                    append("Requested file: ${source.displayName}; ")
+                    append("relative path: ${source.relativePath ?: "not stored"}; ")
+                    append("stored URI: ${if (source.providerUri.isNullOrBlank()) "no" else "yes"}; ")
+                    append("resolver: no readable provider image or legacy file")
+                }
             )
         return loadBitmap(resolved.pathOrUri, maxSizePx, allowEmergencyDownsample)
     }

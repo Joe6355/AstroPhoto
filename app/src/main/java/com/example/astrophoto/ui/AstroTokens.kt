@@ -17,6 +17,7 @@ object AstroTestTags {
     const val HomePrimaryAction = "home_primary_camera"
     const val HomeSessions = "home_sessions"
     const val HomeSecondaryNavigation = "home_secondary_navigation"
+    const val HomeFooter = "home_footer"
     const val CameraSettingsPanel = "camera_settings_panel"
     const val CameraSettingsHandle = "camera_settings_handle"
     const val CameraCapture = "camera_capture"
