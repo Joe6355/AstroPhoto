@@ -60,7 +60,8 @@ internal fun profileRecipe(
     }
 }
 
-internal fun applyProfilePostProcessingInPlace(
+/** Legacy pixel-wide recipe retained for deterministic compatibility tests and manual behavior only. */
+internal fun applyLegacyProfilePostProcessingInPlace(
     image: ArgbPixelImage,
     profile: AstroProcessingProfile,
     frameCount: Int

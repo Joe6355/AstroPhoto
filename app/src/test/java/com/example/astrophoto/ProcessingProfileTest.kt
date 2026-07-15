@@ -82,7 +82,7 @@ class ProcessingProfileTest {
             val input = syntheticUrbanSky()
             val snapshot = input.pixels.copyOf()
             val output = input.copy(pixels = input.pixels.copyOf())
-            applyProfilePostProcessingInPlace(output, profile, 8)
+            applyLegacyProfilePostProcessingInPlace(output, profile, 8)
             assertEquals(input.width, output.width)
             assertEquals(input.height, output.height)
             assertTrue("$profile alpha", output.pixels.all { it ushr 24 and 0xFF == 255 })
@@ -104,8 +104,8 @@ class ProcessingProfileTest {
         profiles.forEach { profile ->
             val first = syntheticUrbanSky()
             val second = first.copy(pixels = first.pixels.copyOf())
-            applyProfilePostProcessingInPlace(first, profile, 8)
-            applyProfilePostProcessingInPlace(second, profile, 8)
+            applyLegacyProfilePostProcessingInPlace(first, profile, 8)
+            applyLegacyProfilePostProcessingInPlace(second, profile, 8)
             assertArrayEquals("$profile", first.pixels, second.pixels)
         }
     }
@@ -116,7 +116,7 @@ class ProcessingProfileTest {
             .forEach { profile ->
                 val image = syntheticUrbanSky()
                 val before = averageChannels(image)
-                applyProfilePostProcessingInPlace(image, profile, 8)
+                applyLegacyProfilePostProcessingInPlace(image, profile, 8)
                 val after = averageChannels(image)
                 assertTrue(after.first - after.third < before.first - before.third)
                 assertTrue(after.first >= after.third - 20)
@@ -127,7 +127,7 @@ class ProcessingProfileTest {
     fun brightWindowDoesNotCreateStarsAcrossImage() {
         profiles.forEach { profile ->
             val image = syntheticUrbanSky()
-            applyProfilePostProcessingInPlace(image, profile, 8)
+            applyLegacyProfilePostProcessingInPlace(image, profile, 8)
             val recipe = profileRecipe(profile, 8)
             val stars = StarDetector().detect(image, recipe.roi, recipe.sensitivity).stars
             assertTrue("$profile false stars=${stars.size}", stars.size < 30)
@@ -178,7 +178,7 @@ class ProcessingProfileTest {
             val recipe = profileRecipe(profile, 8)
             val before = analyzeProfileImage(input, recipe.roi, recipe.sensitivity)
             val output = input.copy(pixels = input.pixels.copyOf())
-            applyProfilePostProcessingInPlace(output, profile, 8)
+            applyLegacyProfilePostProcessingInPlace(output, profile, 8)
             val after = analyzeProfileImage(output, recipe.roi, recipe.sensitivity)
             val sanity = evaluateProfileSanity(before, after)
             assertTrue("$profile: $sanity", sanity is ProfileSanityResult.Passed)

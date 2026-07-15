@@ -70,6 +70,7 @@ import com.example.astrophoto.ui.AstroSegmentedControl
 import com.example.astrophoto.ui.AstroTestTags
 import com.example.astrophoto.ui.theme.AstroColors
 import com.example.astrophoto.processing.jpeg.v2.analysis.JpegFrameAnalyzer
+import com.example.astrophoto.processing.jpeg.v2.analysis.JpegStarDetector
 import com.example.astrophoto.processing.jpeg.v2.analysis.ReferenceFrameSelector
 import com.example.astrophoto.processing.jpeg.v2.composition.MaskFeathering
 import com.example.astrophoto.processing.jpeg.v2.composition.SkyForegroundComposer
@@ -89,6 +90,7 @@ import com.example.astrophoto.processing.jpeg.v2.model.RefinedSkyMask
 import com.example.astrophoto.processing.jpeg.v2.model.SkyMask
 import com.example.astrophoto.processing.jpeg.v2.model.SkyMaskResult
 import com.example.astrophoto.processing.jpeg.v2.output.LosslessProcessedImageWriter
+import com.example.astrophoto.processing.jpeg.v2.postprocessing.AdaptivePresetProcessor
 import com.example.astrophoto.processing.jpeg.v2.registration.StarSimilarityRegistrar
 import com.example.astrophoto.processing.jpeg.v2.sampling.ArgbFrameDiskCache
 import com.example.astrophoto.processing.jpeg.v2.sampling.FileBackedArgbPixelSource
@@ -1000,13 +1002,9 @@ class JpegStacker(private val context: Context) {
                     "dx=0.0000 dy=0.0000 rotation=0.0000 scale=1.0000 residual=0.0000 " +
                     "confidence=1.0000 accepted=true rejectionReason=reference"
             )
-            val detector = StarDetector()
-            val backgroundRemoval = BackgroundRemoval()
-            val stretch = AstroStretch()
-            val starBoost = StarBoost()
             val warnings = mutableListOf<String>()
             var output: Bitmap? = null
-            var safeIntermediate: Bitmap? = null
+            var safeIntermediate: ArgbPixelImage? = null
             var integrationCacheDirectory: File? = null
             var refinedSkyMask: RefinedSkyMask? = null
             var compositionDiagnostics: CompositeDiagnostics? = null
@@ -1307,18 +1305,27 @@ class JpegStacker(private val context: Context) {
                     validCoverageValues
                 )
                 val composer = SkyForegroundComposer()
-                var effectiveSkyAlpha: AlphaMask? = null
+                val stackedSkyImage = bitmapToArgbImage(checkNotNull(output))
+                val baseComposite = composer.compose(
+                    stackedSky = stackedSkyImage,
+                    reference = referenceImage,
+                    featheredSkyMask = checkNotNull(refinedSkyMask).featheredMask,
+                    validCoverage = validCoverageMask
+                )
+                val effectiveSkyAlpha = baseComposite.effectiveSkyAlpha
+                compositionDiagnostics = baseComposite.diagnostics
+                output?.takeUnless(Bitmap::isRecycled)?.recycle()
+                output = null
                 fun restoreReferenceForeground(): CompositeDiagnostics {
                     val composite = composer.compose(
                         stackedSky = bitmapToArgbImage(checkNotNull(output)),
                         reference = referenceImage,
-                        featheredSkyMask = checkNotNull(refinedSkyMask).featheredMask,
-                        validCoverage = validCoverageMask,
+                        featheredSkyMask = effectiveSkyAlpha,
+                        validCoverage = effectiveSkyAlpha,
                         precomputedEffectiveSkyAlpha = effectiveSkyAlpha
                     )
                     output?.takeUnless(Bitmap::isRecycled)?.recycle()
                     output = bitmapFromArgbImage(composite.image)
-                    effectiveSkyAlpha = composite.effectiveSkyAlpha
                     compositionDiagnostics = composite.diagnostics
                     return composite.diagnostics
                 }
@@ -1326,103 +1333,88 @@ class JpegStacker(private val context: Context) {
                 withContext(Dispatchers.Main.immediate) {
                     onProgress("Combining sky and foreground", 2, 3)
                 }
-                restoreReferenceForeground()
-                safeIntermediate = checkNotNull(output).copy(Bitmap.Config.ARGB_8888, true)
-                    ?: error("Не удалось сохранить безопасный промежуточный stack")
-                val beforeMetrics = analyzeProfileBitmap(checkNotNull(safeIntermediate), recipe)
+                safeIntermediate = baseComposite.image
+                val beforeMetrics = analyzeProfileImage(
+                    checkNotNull(safeIntermediate),
+                    recipe.roi,
+                    recipe.sensitivity
+                )
                 logProfileStage(profile, source, "skyForegroundComposite", beforeMetrics)
 
-                currentStage = "Applying preset processing"
-                withContext(Dispatchers.Main.immediate) {
-                    onProgress("Applying preset processing", 0, 3)
-                }
-                try {
-                    val backgroundResult = backgroundRemoval.applyInPlace(
-                        bitmap = checkNotNull(output),
-                        mode = recipe.backgroundMode,
-                        roi = recipe.roi
-                    )
-                    backgroundResult.warning?.let { warnings += it }
-                } catch (error: Exception) {
-                    Log.e(
-                        "AstroPhotoProcessing",
-                        "Background removal failed: ${error.message}",
-                        error
-                    )
-                    warnings += "Удаление фона не удалось, сохранён stack без этого шага."
-                }
-                restoreReferenceForeground()
-                val backgroundMetrics = analyzeProfileBitmap(checkNotNull(output), recipe)
-                logProfileStage(profile, source, "backgroundRemoval", backgroundMetrics)
-                if (recipe.backgroundMode == BackgroundRemovalMode.URBAN) {
-                    logProfileStage(profile, source, "cityNeutralization", backgroundMetrics)
-                }
-                currentStage = "Astro Stretch"
-                withContext(Dispatchers.Main.immediate) {
-                    onProgress("Astro Stretch...", 1, 3)
-                }
-                try {
-                    val stretchResult = stretch.applyInPlace(checkNotNull(output), recipe.stretchMode)
-                    stretchResult.warning?.let { warnings += it }
-                } catch (error: Exception) {
-                    Log.e(
-                        "AstroPhotoProcessing",
-                        "Astro Stretch failed: ${error.message}",
-                        error
-                    )
-                    warnings += "Astro Stretch не удался, сохранён результат без stretch."
-                }
-                restoreReferenceForeground()
-                logProfileStage(
-                    profile,
-                    source,
-                    "stretch",
-                    analyzeProfileBitmap(checkNotNull(output), recipe)
-                )
-                val starsForBoost = try {
-                    detector.detect(
-                        bitmap = checkNotNull(output),
-                        roi = recipe.roi,
-                        sensitivity = recipe.sensitivity
-                    ).stars.filter { star ->
-                        checkNotNull(effectiveSkyAlpha).alphaAt(star.x, star.y) >=
-                            MIN_SKY_ALPHA_FOR_STAR_BOOST
+                val effectiveBinarySky = SkyMask(
+                    targetWidth,
+                    targetHeight,
+                    BooleanArray(targetWidth * targetHeight) { index ->
+                        effectiveSkyAlpha.alphaAt(index % targetWidth, index / targetWidth) >=
+                            MIN_SKY_ALPHA_FOR_ADAPTIVE_STATISTICS
                     }
-                } catch (error: Exception) {
-                    Log.e(
-                        "AstroPhotoProcessing",
-                        "Star detection before boost failed: ${error.message}",
-                        error
-                    )
-                    warnings += "Повторный поиск звёзд не удался, Star Boost пропущен."
-                    emptyList()
-                }
-                currentStage = "Star Boost"
-                withContext(Dispatchers.Main.immediate) {
-                    onProgress("Star Boost...", 2, 3)
-                }
-                try {
-                    val boostResult = starBoost.applyInPlace(
-                        bitmap = checkNotNull(output),
-                        stars = starsForBoost,
-                        mode = recipe.starBoostMode
-                    )
-                    boostResult.warning?.let { warnings += it }
-                } catch (error: Exception) {
-                    Log.e(
-                        "AstroPhotoProcessing",
-                        "Star Boost failed: ${error.message}",
-                        error
-                    )
-                    warnings += "Star Boost не удался, сохранён результат без усиления звёзд."
-                }
-                restoreReferenceForeground()
+                )
+                val alignedStackStars = JpegStarDetector().detect(
+                    stackedSkyImage,
+                    effectiveBinarySky
+                ).stars
+                val adaptiveResult = AdaptivePresetProcessor().process(
+                    stackedSky = stackedSkyImage,
+                    referenceForeground = referenceImage,
+                    effectiveSkyAlpha = effectiveSkyAlpha,
+                    profile = profile,
+                    frameCount = acceptedFrames,
+                    alignedStackStars = alignedStackStars,
+                    onProgress = { message, current, total ->
+                        currentStage = message
+                        withContext(Dispatchers.Main.immediate) {
+                            onProgress(message, current, total)
+                        }
+                    }
+                )
+                output?.takeUnless(Bitmap::isRecycled)?.recycle()
+                output = bitmapFromArgbImage(adaptiveResult.image)
+                val adaptive = adaptiveResult.diagnostics
+                Log.i(
+                    ADAPTIVE_PROCESSING_TAG,
+                    "preset=${adaptive.preset} " +
+                        "effectiveSkyPixelCount=${adaptive.before.skyPixelCount} " +
+                        "effectiveSkyRatio=${formatMetric(adaptive.before.skyCoverageRatio)} " +
+                        "skyStatisticsConfidence=${formatMetric(adaptive.before.confidence)} " +
+                        "skyMedianBefore=${formatMetric(adaptive.before.luminanceMedian)} " +
+                        "skyMadBefore=${formatMetric(adaptive.before.luminanceMad)} " +
+                        "channelMediansBefore=${formatMetric(adaptive.before.channelMedian.red)}," +
+                        "${formatMetric(adaptive.before.channelMedian.green)}," +
+                        "${formatMetric(adaptive.before.channelMedian.blue)} " +
+                        "channelClippingBefore=${formatMetric(adaptive.before.channelClippingPercent.red)}," +
+                        "${formatMetric(adaptive.before.channelClippingPercent.green)}," +
+                        "${formatMetric(adaptive.before.channelClippingPercent.blue)} " +
+                        "gradientModelConfidence=${formatMetric(adaptive.gradient.modelConfidence)} " +
+                        "gradientStrength=${formatMetric(adaptive.before.largeScaleGradientStrength)} " +
+                        "maximumGradientCorrection=${formatMetric(adaptive.gradient.maximumCorrection)} " +
+                        "neutralizationCorrection=${formatMetric(adaptive.neutralization.correction.red)}," +
+                        "${formatMetric(adaptive.neutralization.correction.green)}," +
+                        "${formatMetric(adaptive.neutralization.correction.blue)} " +
+                        "blackPoint=${formatMetric(adaptive.stretch.blackPoint)} " +
+                        "whitePoint=${formatMetric(adaptive.stretch.whitePoint)} " +
+                        "asinhStrength=${formatMetric(adaptive.stretch.asinhStrength)} " +
+                        "highlightProtection=${formatMetric(adaptive.stretch.highlightProtectionStrength)} " +
+                        "chromaNoiseStrength=${formatMetric(adaptive.chromaNoise.strength)} " +
+                        "chromaRadius=${adaptive.chromaNoise.radius} " +
+                        "starEnhancementStrength=${formatMetric(adaptive.starEnhancement.strength)} " +
+                        "reliableStarsConsidered=${adaptive.starEnhancement.considered} " +
+                        "starsEnhanced=${adaptive.starEnhancement.enhanced} " +
+                        "starsRejected=${adaptive.starEnhancement.rejected} " +
+                        "skyMedianAfter=${formatMetric(adaptive.after.luminanceMedian)} " +
+                        "skyMadAfter=${formatMetric(adaptive.after.luminanceMad)} " +
+                        "channelClippingAfter=${formatMetric(adaptive.after.channelClippingPercent.red)}," +
+                        "${formatMetric(adaptive.after.channelClippingPercent.green)}," +
+                        "${formatMetric(adaptive.after.channelClippingPercent.blue)} " +
+                        "foregroundDifferenceOutsideMask=${adaptive.foregroundDifferenceOutsideMask} " +
+                        "processingDurationMs=${adaptive.processingDurationMillis}"
+                )
                 logProfileStage(
                     profile,
                     source,
-                    "starBoost",
+                    "adaptiveStage4",
                     analyzeProfileBitmap(checkNotNull(output), recipe)
                 )
+
                 currentStage = "Sanity check"
                 var afterMetrics = analyzeProfileBitmap(checkNotNull(output), recipe)
                 when (val sanity = evaluateProfileSanity(beforeMetrics, afterMetrics)) {
@@ -1439,7 +1431,7 @@ class JpegStacker(private val context: Context) {
                             return@withContext rejectedProfileSanityResult(sanity.reason)
                         }
                         when (val recovered = recoverStarsFromIntermediate(
-                            bitmapToArgbImage(checkNotNull(safeIntermediate)),
+                            checkNotNull(safeIntermediate),
                             recipe.roi,
                             recipe.sensitivity,
                             sanity.reason
@@ -1540,7 +1532,7 @@ class JpegStacker(private val context: Context) {
                         session = session,
                         fileName = fileName,
                         profile = profile,
-                        method = "Full-resolution linear weighted sky + protected reference foreground",
+                        method = "Full-resolution linear weighted sky + adaptive sky-only Stage 4 + protected reference foreground",
                         framesUsed = acceptedFrames,
                         framesRejected = framesRejected + (frames.size - selectedFrames.size) +
                             alignmentRejected,
@@ -1548,9 +1540,9 @@ class JpegStacker(private val context: Context) {
                         alignmentApplied = alignmentApplied,
                         alignmentRejected = alignmentRejected,
                         roiMode = recipe.roiName,
-                        backgroundRemoval = recipe.backgroundMode.name,
-                        stretchMode = recipe.stretchMode.name,
-                        starBoost = recipe.starBoostMode.name,
+                        backgroundRemoval = "ADAPTIVE_SKY_GRADIENT",
+                        stretchMode = "ADAPTIVE_ASINH",
+                        starBoost = "LOCAL_STAR_CONTRAST",
                         starsBefore = referenceStars,
                         starsAfter = finalStars,
                         source = source,
@@ -1569,7 +1561,7 @@ class JpegStacker(private val context: Context) {
                     frameCount = acceptedFrames,
                     sessionInfoUpdated = infoUpdated,
                     alignmentEnabled = alignmentApplied > 0,
-                    astroStretchApplied = recipe.stretchMode != AstroStretchMode.OFF,
+                    astroStretchApplied = true,
                     downscaled = false,
                     profile = profile,
                     starCount = finalStars,
@@ -1584,7 +1576,6 @@ class JpegStacker(private val context: Context) {
                 )
             } finally {
                 output?.takeUnless(Bitmap::isRecycled)?.recycle()
-                safeIntermediate?.takeUnless(Bitmap::isRecycled)?.recycle()
                 integrationCacheDirectory?.listFiles()?.forEach { it.delete() }
                 integrationCacheDirectory?.delete()
             }
@@ -2996,10 +2987,11 @@ class JpegStacker(private val context: Context) {
         private const val MAX_PROFILE_FRAMES = 30
         private const val PROFILE_ANALYSIS_MAX_DIMENSION = 960
         private const val PROFILE_REGISTRATION_TAG = "AstroPhotoJpegV2"
+        private const val ADAPTIVE_PROCESSING_TAG = "AstroPhotoJpegStage4"
+        private const val MIN_SKY_ALPHA_FOR_ADAPTIVE_STATISTICS = 0.98f
         private const val MIN_PROFILE_WORKING_MEMORY_BYTES = 64L * 1024L * 1024L
         private const val MAX_PROFILE_WORKING_MEMORY_BYTES = 256L * 1024L * 1024L
         private const val MIN_CACHE_FREE_SPACE_BYTES = 32L * 1024L * 1024L
-        private const val MIN_SKY_ALPHA_FOR_STAR_BOOST = 0.60f
         private const val FOREGROUND_SHARPNESS_TOLERANCE = 0.05f
         private const val MAX_COMPLEX_STACK_PIXELS_MANY_FRAMES = 2_500_000L
         private const val MAX_COMPLEX_STACK_PIXELS_MEDIUM_SERIES = 4_000_000L
