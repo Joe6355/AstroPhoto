@@ -136,6 +136,29 @@ private sealed interface ViewerImageState {
     data class Error(val error: ImageLoadResult.Error) : ViewerImageState
 }
 
+internal fun processedImageExtension(fileName: String): String? =
+    fileName.substringAfterLast('.', missingDelimiterValue = "")
+        .lowercase(Locale.US)
+        .takeIf { it == "jpg" || it == "jpeg" || it == "png" }
+
+internal fun hasSupportedProcessedImageExtension(fileName: String): Boolean =
+    processedImageExtension(fileName) != null
+
+internal fun processedImageMimeType(fileName: String): String =
+    if (processedImageExtension(fileName) == "png") "image/png" else "image/jpeg"
+
+internal fun isSupportedProcessedImageFile(
+    fileName: String,
+    mimeType: String?
+): Boolean {
+    val extension = processedImageExtension(fileName) ?: return false
+    if (mimeType.isNullOrBlank()) return true
+    return when (extension) {
+        "png" -> mimeType.equals("image/png", ignoreCase = true)
+        else -> mimeType.equals("image/jpeg", ignoreCase = true)
+    }
+}
+
 private const val LOAD_PROCESSED_THUMBNAILS = true
 
 private class ProcessedResultsRepository(private val context: Context) {
@@ -198,11 +221,16 @@ private class ProcessedResultsRepository(private val context: Context) {
         requestedName: String
     ): Result<ProcessedRenameResult> = withContext(Dispatchers.IO) {
         runCatching {
-            val safeBase = sanitizeManagedName(
-                requestedName.removeSuffix(".jpg").removeSuffix(".JPG")
-            )
+            val extension = processedImageExtension(result.fileName)
+                ?: error("Unsupported processed image format")
+            val requestedBase = if (processedImageExtension(requestedName) != null) {
+                requestedName.substringBeforeLast('.')
+            } else {
+                requestedName
+            }
+            val safeBase = sanitizeManagedName(requestedBase)
             require(safeBase.isNotBlank()) { "Имя файла не может быть пустым" }
-            val newName = "$safeBase.jpg"
+            val newName = "$safeBase.$extension"
             require(!newName.equals(result.fileName, ignoreCase = true)) {
                 "Новое имя совпадает с текущим"
             }
@@ -404,7 +432,12 @@ private class ProcessedResultsRepository(private val context: Context) {
     }
 
     private fun processedResultType(fileName: String): ProcessedResultType =
-        when {
+        if (
+            fileName.endsWith(".png", ignoreCase = true) ||
+            fileName.endsWith(".jpeg", ignoreCase = true)
+        ) {
+            processedResultType("${fileName.substringBeforeLast('.')}.jpg")
+        } else when {
             fileName.startsWith("StackedDarkAligned_") &&
                 fileName.endsWith(".jpg", ignoreCase = true) ->
                 ProcessedResultType.DARK_ALIGNED_STACK
@@ -465,13 +498,7 @@ private class ProcessedResultsRepository(private val context: Context) {
     private fun isSupportedProcessedImage(
         fileName: String,
         mimeType: String?
-    ): Boolean {
-        val jpgName = fileName.endsWith(".jpg", ignoreCase = true) ||
-            fileName.endsWith(".jpeg", ignoreCase = true)
-        val jpgMime = mimeType.isNullOrBlank() ||
-            mimeType.equals("image/jpeg", ignoreCase = true)
-        return jpgName && jpgMime
-    }
+    ): Boolean = isSupportedProcessedImageFile(fileName, mimeType)
 
     private fun processedFileProblem(
         fileName: String,
@@ -480,7 +507,7 @@ private class ProcessedResultsRepository(private val context: Context) {
     ): String? = when {
         sizeBytes <= 0L -> "Файл не удалось открыть"
         !isSupportedProcessedImage(fileName, mimeType) ->
-            "Файл не является JPEG"
+            "Файл не является поддерживаемым изображением"
         else -> null
     }
 
@@ -898,7 +925,7 @@ fun ProcessedResultsScreen(
                         singleLine = true
                     )
                     Text(
-                        text = "Расширение .jpg будет сохранено.",
+                        text = "Расширение .${processedImageExtension(result.fileName) ?: "jpg"} будет сохранено.",
                         modifier = Modifier.padding(top = 6.dp),
                         color = AstroColors.TextSecondary
                     )
@@ -1123,7 +1150,10 @@ private fun ProcessedResultCard(
                     } else if (thumbnailLoading) {
                         CircularProgressIndicator()
                     } else {
-                        Text("JPEG", color = AstroColors.TextSecondary)
+                        Text(
+                            processedImageExtension(result.fileName)?.uppercase(Locale.US) ?: "IMG",
+                            color = AstroColors.TextSecondary
+                        )
                     }
                 }
                 Column(
@@ -1663,7 +1693,7 @@ private fun openResultInGallery(
         ?: error("Не удалось получить доступ к файлу")
     context.startActivity(
         Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "image/jpeg")
+            setDataAndType(uri, processedImageMimeType(result.fileName))
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
     )
@@ -1678,7 +1708,7 @@ private fun shareResult(
     val uri = resultContentUri(context, result)
         ?: error("Не удалось получить доступ к файлу")
     val intent = Intent(Intent.ACTION_SEND).apply {
-        type = "image/jpeg"
+        type = processedImageMimeType(result.fileName)
         putExtra(Intent.EXTRA_STREAM, uri)
         clipData = ClipData.newRawUri(result.fileName, uri)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)

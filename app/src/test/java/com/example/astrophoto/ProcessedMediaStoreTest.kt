@@ -17,6 +17,17 @@ class ProcessedMediaStoreTest {
     }
 
     @Test
+    fun newProcessedPngUsesSameSessionDestinationWithPngMime() {
+        val destination = processedImageDestination("Session_1", "image/png")
+        assertEquals(ProcessedMediaCollection.IMAGES, destination.collection)
+        assertEquals("image/png", destination.mimeType)
+        assertEquals(
+            "Pictures/AstroPhoto/Session_1/Processed/",
+            destination.relativePath
+        )
+    }
+
+    @Test
     fun insertedUriIsReturnedWithoutReconstruction() {
         val insertedUri = "content://media/external_primary/images/media/42"
         val saved = retainedMediaStoreImage(

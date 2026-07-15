@@ -17,11 +17,14 @@ internal data class SavedProcessedImage(
     val filePath: String?
 )
 
-internal fun processedImageDestination(sessionFolderName: String) =
+internal fun processedImageDestination(
+    sessionFolderName: String,
+    mimeType: String = "image/jpeg"
+) =
     ProcessedImageDestination(
         collection = ProcessedMediaCollection.IMAGES,
         relativePath = "Pictures/AstroPhoto/$sessionFolderName/Processed/",
-        mimeType = "image/jpeg"
+        mimeType = mimeType
     )
 
 internal fun retainedMediaStoreImage(

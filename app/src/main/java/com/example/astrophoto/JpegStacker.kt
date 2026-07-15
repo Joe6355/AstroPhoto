@@ -5,10 +5,6 @@ import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Canvas
-import android.graphics.Color as AndroidColor
-import android.graphics.Matrix
-import android.graphics.Paint
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -65,10 +61,8 @@ import java.nio.file.Files
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.roundToInt
-import kotlin.math.sin
 import kotlin.math.sqrt
 import com.example.astrophoto.ui.AstroExpandableSection
 import com.example.astrophoto.ui.AstroProgressPanel
@@ -77,10 +71,17 @@ import com.example.astrophoto.ui.AstroTestTags
 import com.example.astrophoto.ui.theme.AstroColors
 import com.example.astrophoto.processing.jpeg.v2.analysis.JpegFrameAnalyzer
 import com.example.astrophoto.processing.jpeg.v2.analysis.ReferenceFrameSelector
+import com.example.astrophoto.processing.jpeg.v2.integration.FrameWeightCalculator
+import com.example.astrophoto.processing.jpeg.v2.integration.FrameWeightInput
+import com.example.astrophoto.processing.jpeg.v2.integration.LinearWeightedIntegrator
+import com.example.astrophoto.processing.jpeg.v2.integration.WeightedIntegrationFrame
 import com.example.astrophoto.processing.jpeg.v2.masking.SkyMaskEstimator
 import com.example.astrophoto.processing.jpeg.v2.model.FrameAnalysis
 import com.example.astrophoto.processing.jpeg.v2.model.RegistrationResult
+import com.example.astrophoto.processing.jpeg.v2.output.LosslessProcessedImageWriter
 import com.example.astrophoto.processing.jpeg.v2.registration.StarSimilarityRegistrar
+import com.example.astrophoto.processing.jpeg.v2.sampling.ArgbFrameDiskCache
+import com.example.astrophoto.processing.jpeg.v2.sampling.FileBackedArgbPixelSource
 
 data class JpegStackResult(
     val fileName: String,
@@ -890,10 +891,11 @@ class JpegStacker(private val context: Context) {
             )
             val cappedFrames = frames.take(MAX_PROFILE_FRAMES)
             currentStage = "Чтение размеров кадров"
-            val dimensions = cappedFrames.map { frame ->
-                readDimensions(frame)
-                    ?: error("Не удалось прочитать кадр: ${frame.fileName}")
+            val dimensionsByFrameKey = cappedFrames.associate { frame ->
+                frame.key to (readDimensions(frame)
+                    ?: error("Не удалось прочитать кадр: ${frame.fileName}"))
             }
+            val dimensions = dimensionsByFrameKey.values.toList()
             if (source == ManualStackingSource.CROPPED) {
                 require(dimensions.distinct().size == 1) {
                     "Selected cropped frames have different dimensions"
@@ -901,38 +903,16 @@ class JpegStacker(private val context: Context) {
             }
             val commonWidth = dimensions.minOf { it.first }
             val commonHeight = dimensions.minOf { it.second }
-            val pixelCount = commonWidth.toLong() * commonHeight
-            val targetPixels = if (recipe.useSignalPreservingSigma) {
-                complexStackTargetPixels(
-                    sourcePixels = pixelCount,
-                    frameCount = cappedFrames.size,
-                    maxPixels = MAX_SIGMA_PIXELS
-                )
-            } else {
-                minOf(
-                    pixelCount,
-                    MAX_PROFILE_AVERAGE_PIXELS,
-                    averageStackTargetPixels(pixelCount, cappedFrames.size)
-                )
-            }
-            val scale = if (pixelCount > targetPixels) {
-                sqrt(targetPixels.toDouble() / pixelCount)
-            } else {
-                1.0
-            }
-            val targetWidth = (commonWidth * scale).roundToInt().coerceAtLeast(1)
-            val targetHeight = (commonHeight * scale).roundToInt().coerceAtLeast(1)
-            val downscaled = targetWidth < commonWidth || targetHeight < commonHeight
             currentStage = "JPEG frame analysis"
             val analysisScale = minOf(
                 1f,
-                PROFILE_ANALYSIS_MAX_DIMENSION.toFloat() / maxOf(targetWidth, targetHeight)
+                PROFILE_ANALYSIS_MAX_DIMENSION.toFloat() / maxOf(commonWidth, commonHeight)
             )
-            val analysisWidth = maxOf(1, (targetWidth * analysisScale).roundToInt())
-            val analysisHeight = maxOf(1, (targetHeight * analysisScale).roundToInt())
+            val analysisWidth = maxOf(1, (commonWidth * analysisScale).roundToInt())
+            val analysisHeight = maxOf(1, (commonHeight * analysisScale).roundToInt())
             val skyMaskEstimator = SkyMaskEstimator()
             val frameAnalyzer = JpegFrameAnalyzer()
-            val analyzedFrames = frames.map { frame ->
+            val analyzedFrames = cappedFrames.map { frame ->
                 val analysis = runCatching {
                     val sample = decodeMedianFrame(frame, analysisWidth, analysisHeight)
                         ?: error("Unable to decode JPEG for analysis")
@@ -961,6 +941,11 @@ class JpegStacker(private val context: Context) {
             val selectedReference = analyzedFrames.first {
                 it.analysis.id == referenceSelection.analysis.id
             }
+            val referenceDimensions = checkNotNull(
+                dimensionsByFrameKey[selectedReference.frame.key]
+            )
+            val targetWidth = referenceDimensions.first
+            val targetHeight = referenceDimensions.second
             val selectedFrames = (
                 listOf(selectedReference.frame) + cappedFrames.filterNot {
                     it.key == selectedReference.frame.key
@@ -994,9 +979,7 @@ class JpegStacker(private val context: Context) {
             val warnings = mutableListOf<String>()
             var output: Bitmap? = null
             var safeIntermediate: Bitmap? = null
-            val preparedFrames = mutableListOf<MedianPreparedFrame>()
-            val profileRegistrations = mutableListOf<RegistrationResult>()
-            var referenceBitmap: Bitmap? = null
+            var integrationCacheDirectory: File? = null
             var alignmentApplied = 0
             var alignmentRejected = 0
             var referenceStars = 0
@@ -1007,156 +990,69 @@ class JpegStacker(private val context: Context) {
             val registrar = StarSimilarityRegistrar()
 
             try {
-                currentStage = "Подготовка профильной обработки"
+                currentStage = "Stage 1 registration"
                 withContext(Dispatchers.Main.immediate) {
-                    onProgress("Подготовка профильной обработки...", 0, selectedFrames.size)
+                    onProgress("Star alignment", 0, selectedFrames.size)
                 }
-                currentStage = "Чтение опорного кадра"
-                referenceBitmap = decodeMedianFrame(
-                    selectedFrames.first(),
-                    targetWidth,
-                    targetHeight
-                ) ?: error("Не удалось подготовить опорный кадр")
-                currentStage = "Подготовка звёзд опорного кадра"
                 referenceStars = selectedReference.analysis.reliableStarCount
                 if (referenceStars < 4) {
                     warnings += "Звёзд найдено мало: $referenceStars"
                 }
-
-                if (recipe.useSignalPreservingSigma) {
-                    preparedFrames += MedianPreparedFrame(
-                        checkNotNull(referenceBitmap),
-                        AlignmentShift.Zero
+                val referenceRegistration = RegistrationResult(
+                    dx = 0f,
+                    dy = 0f,
+                    rotationRadians = 0f,
+                    scale = 1f,
+                    detectedStars = referenceStars,
+                    matchedStars = referenceStars,
+                    inlierStars = referenceStars,
+                    residualError = 0f,
+                    confidence = 1f,
+                    isReliable = true,
+                    rejectionReason = null,
+                    referenceStars = referenceStars
+                )
+                val acceptedProfileFrames = mutableListOf(
+                    AcceptedProfileFrame(
+                        selectedReference.frame,
+                        selectedReference.analysis,
+                        referenceRegistration
                     )
-                    selectedFrames.drop(1).forEachIndexed { index, frame ->
-                        currentCoroutineContext().ensureActive()
-                        val frameNumber = index + 2
-                        currentStage = "Star alignment: кадр $frameNumber из ${selectedFrames.size}"
-                        withContext(Dispatchers.Main.immediate) {
-                            onProgress(
-                                "Star alignment кадра $frameNumber из ${selectedFrames.size}",
-                                frameNumber,
-                                selectedFrames.size
-                            )
-                        }
-                        val bitmap = decodeMedianFrame(frame, targetWidth, targetHeight)
-                            ?: error("Не удалось прочитать кадр: ${frame.fileName}")
-                        val registration = registerProfileFrame(
-                            reference = selectedReference.analysis,
-                            candidate = checkNotNull(analysisByFrameKey[frame.key]).analysis,
-                            targetWidth = targetWidth,
-                            targetHeight = targetHeight,
-                            registrar = registrar
-                        )
-                        logProfileRegistration(frame.fileName, registration)
-                        if (!registration.isReliable) {
-                            alignmentRejected++
-                            warnings += "Кадр ${frame.fileName} отклонён: " +
-                                (registration.rejectionReason ?: "registration failed")
-                            bitmap.recycle()
-                            return@forEachIndexed
-                        }
-                        val alignedBitmap = try {
-                            warpToReference(bitmap, registration)
-                        } finally {
-                            bitmap.recycle()
-                        }
-                        alignmentApplied++
-                        profileRegistrations += registration
-                        preparedFrames += MedianPreparedFrame(
-                            bitmap = alignedBitmap,
-                            shift = AlignmentShift.Zero
-                        )
-                    }
-                    if (preparedFrames.size < 2) {
-                        Log.i(
-                            PROFILE_REGISTRATION_TAG,
-                            "selectedPreset=${profile.name} totalAccepted=${preparedFrames.size} " +
-                                "totalRejected=$alignmentRejected"
-                        )
-                        error("Недостаточно кадров с надёжной звёздной регистрацией")
-                    }
-                    currentStage = "Signal-preserving sigma"
+                )
+                selectedFrames.drop(1).forEachIndexed { index, frame ->
+                    currentCoroutineContext().ensureActive()
+                    val frameNumber = index + 2
+                    currentStage = "Star alignment: кадр $frameNumber из ${selectedFrames.size}"
                     withContext(Dispatchers.Main.immediate) {
-                        onProgress("Signal-preserving sigma...", 0, targetHeight)
+                        onProgress(
+                            "Star alignment кадра $frameNumber из ${selectedFrames.size}",
+                            frameNumber,
+                            selectedFrames.size
+                        )
                     }
-                    output = calculateSigmaClipping(
-                        frames = preparedFrames,
-                        width = targetWidth,
-                        height = targetHeight,
-                        sigma = recipe.sigma,
-                        signalPreserving = true
-                    ) { completedRows ->
-                        if (
-                            completedRows == targetHeight ||
-                            completedRows % maxOf(1, targetHeight / 10) == 0
-                        ) {
-                            withContext(Dispatchers.Main.immediate) {
-                                onProgress(
-                                    "Signal-preserving sigma...",
-                                    completedRows,
-                                    targetHeight
-                                )
-                            }
-                        }
-                    }
-                } else {
-                    output = checkNotNull(referenceBitmap).copy(Bitmap.Config.ARGB_8888, true)
-                        ?: error("Не удалось подготовить результат")
-                    val averageAccumulator = ArgbAverageAccumulator(
-                        pixelCount = targetWidth * targetHeight,
-                        maximumFrameCount = selectedFrames.size
+                    val analyzed = checkNotNull(analysisByFrameKey[frame.key])
+                    val registration = registerProfileFrame(
+                        reference = selectedReference.analysis,
+                        candidate = analyzed.analysis,
+                        targetWidth = targetWidth,
+                        targetHeight = targetHeight,
+                        registrar = registrar
                     )
-                    var acceptedFrameCount = 1
-                    selectedFrames.drop(1).forEachIndexed { index, frame ->
-                        currentCoroutineContext().ensureActive()
-                        val frameNumber = index + 2
-                        currentStage = "Star alignment: кадр $frameNumber из ${selectedFrames.size}"
-                        withContext(Dispatchers.Main.immediate) {
-                            onProgress(
-                                "Star alignment кадра $frameNumber из ${selectedFrames.size}",
-                                frameNumber,
-                                selectedFrames.size
-                            )
-                        }
-                        val bitmap = decodeMedianFrame(frame, targetWidth, targetHeight)
-                            ?: error("Не удалось прочитать кадр: ${frame.fileName}")
-                        try {
-                            val registration = registerProfileFrame(
-                                reference = selectedReference.analysis,
-                                candidate = checkNotNull(analysisByFrameKey[frame.key]).analysis,
-                                targetWidth = targetWidth,
-                                targetHeight = targetHeight,
-                                registrar = registrar
-                            )
-                            logProfileRegistration(frame.fileName, registration)
-                            if (!registration.isReliable) {
-                                alignmentRejected++
-                                warnings += "Кадр ${frame.fileName} отклонён: " +
-                                    (registration.rejectionReason ?: "registration failed")
-                                return@forEachIndexed
-                            }
-                            val alignedBitmap = warpToReference(bitmap, registration)
-                            try {
-                                alignmentApplied++
-                                acceptedFrameCount++
-                                profileRegistrations += registration
-                                addToRunningAverage(
-                                    accumulator = averageAccumulator,
-                                    average = checkNotNull(output),
-                                    next = alignedBitmap,
-                                    frameNumber = acceptedFrameCount
-                                )
-                            } finally {
-                                alignedBitmap.recycle()
-                            }
-                        } finally {
-                            bitmap.recycle()
-                        }
+                    logProfileRegistration(frame.fileName, registration)
+                    if (registration.isReliable) {
+                        acceptedProfileFrames += AcceptedProfileFrame(
+                            frame,
+                            analyzed.analysis,
+                            registration
+                        )
+                        alignmentApplied++
+                    } else {
+                        alignmentRejected++
+                        warnings += "Кадр ${frame.fileName} отклонён: " +
+                            (registration.rejectionReason ?: "registration failed")
                     }
                 }
-
-                val acceptedFrames = alignmentApplied + 1
+                val acceptedFrames = acceptedProfileFrames.size
                 if (acceptedFrames < 2) {
                     error("Недостаточно кадров с надёжной звёздной регистрацией")
                 }
@@ -1168,21 +1064,139 @@ class JpegStacker(private val context: Context) {
                     "selectedPreset=${profile.name} totalAccepted=$acceptedFrames " +
                         "totalRejected=$alignmentRejected"
                 )
-                output = cropToReliableRegistrationRegion(
-                    checkNotNull(output),
-                    profileRegistrations
+                currentStage = "Calculating frame weights"
+                withContext(Dispatchers.Main.immediate) {
+                    onProgress("Calculating frame weights", 0, acceptedFrames)
+                }
+                val frameWeights = FrameWeightCalculator().calculate(
+                    acceptedProfileFrames.mapIndexed { index, accepted ->
+                        FrameWeightInput(
+                            accepted.analysis,
+                            accepted.registration,
+                            isReference = index == 0
+                        )
+                    }
+                )
+                val weightsById = frameWeights.associateBy { it.frameId }
+                acceptedProfileFrames.forEach { accepted ->
+                    val weight = checkNotNull(weightsById[accepted.analysis.id])
+                    Log.i(
+                        PROFILE_REGISTRATION_TAG,
+                        "frame=${accepted.frame.fileName} registrationWeight=${formatMetric(weight.registrationWeight)} " +
+                            "sharpnessWeight=${formatMetric(weight.sharpnessWeight)} " +
+                            "trailWeight=${formatMetric(weight.trailWeight)} " +
+                            "noiseWeight=${formatMetric(weight.noiseWeight)} " +
+                            "exposureWeight=${formatMetric(weight.exposureWeight)} " +
+                            "rawWeight=${formatMetric(weight.rawWeight)} " +
+                            "normalizedWeight=${formatMetric(weight.normalizedWeight)}"
+                    )
+                }
+                currentStage = "Stacking full-resolution image"
+                withContext(Dispatchers.Main.immediate) {
+                    onProgress("Stacking full-resolution image", 0, 1)
+                }
+                val requiredCacheBytes = targetWidth.toLong() * targetHeight *
+                    Int.SIZE_BYTES * acceptedFrames
+                val cacheDirectory = File(
+                    context.cacheDir,
+                    "jpeg-v2-${System.nanoTime()}"
+                )
+                require(cacheDirectory.mkdir()) { "Не удалось создать временный кэш интеграции" }
+                integrationCacheDirectory = cacheDirectory
+                require(cacheDirectory.usableSpace >= requiredCacheBytes + MIN_CACHE_FREE_SPACE_BYTES) {
+                    "Недостаточно временного места для полноразмерной интеграции"
+                }
+                val cacheWriteContext = currentCoroutineContext()
+                val cachedFrames = acceptedProfileFrames.mapIndexed { index, accepted ->
+                    currentCoroutineContext().ensureActive()
+                    withContext(Dispatchers.Main.immediate) {
+                        onProgress(
+                            "Preparing full-resolution frame ${index + 1} of $acceptedFrames",
+                            index + 1,
+                            acceptedFrames
+                        )
+                    }
+                    val bitmap = decodeMedianFrame(accepted.frame, targetWidth, targetHeight)
+                        ?: error("Не удалось прочитать кадр: ${accepted.frame.fileName}")
+                    val cached = try {
+                        ArgbFrameDiskCache.write(
+                            bitmap,
+                            File(cacheDirectory, "frame-${index.toString().padStart(3, '0')}.argb")
+                        ) {
+                            if (it % 64 == 0) cacheWriteContext.ensureActive()
+                        }
+                    } finally {
+                        bitmap.recycle()
+                    }
+                    accepted to cached
+                }
+                Log.i(
+                    PROFILE_REGISTRATION_TAG,
+                    "integrationCacheBytes=$requiredCacheBytes cachedFrameCount=${cachedFrames.size}"
+                )
+                output = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
+                val maximumWorkingMemory = (Runtime.getRuntime().maxMemory() / 2L)
+                    .coerceIn(MIN_PROFILE_WORKING_MEMORY_BYTES, MAX_PROFILE_WORKING_MEMORY_BYTES)
+                val integrationDiagnostics = LinearWeightedIntegrator().integrate(
+                    outputWidth = targetWidth,
+                    outputHeight = targetHeight,
+                    frames = cachedFrames.map { (accepted, cached) ->
+                        WeightedIntegrationFrame(
+                            id = accepted.analysis.id,
+                            source = cached,
+                            transform = accepted.registration,
+                            normalizedWeight = checkNotNull(
+                                weightsById[accepted.analysis.id]
+                            ).normalizedWeight
+                        )
+                    },
+                    maximumWorkingMemoryBytes = maximumWorkingMemory,
+                    openSource = { cached -> FileBackedArgbPixelSource(cached) },
+                    writeTile = { tile, pixels ->
+                        checkNotNull(output).setPixels(
+                            pixels,
+                            0,
+                            tile.width,
+                            tile.left,
+                            tile.top,
+                            tile.width,
+                            tile.height
+                        )
+                    },
+                    onTileCompleted = { tile ->
+                        withContext(Dispatchers.Main.immediate) {
+                            onProgress(
+                                "Processing tile ${tile.index + 1} of ${tile.total}",
+                                tile.index + 1,
+                                tile.total
+                            )
+                        }
+                    }
+                )
+                Log.i(
+                    PROFILE_REGISTRATION_TAG,
+                    "preset=${profile.name} reference=${selectedReference.frame.fileName} " +
+                        "inputResolution=${commonWidth}x${commonHeight} " +
+                        "referenceResolution=${referenceDimensions.first}x${referenceDimensions.second} " +
+                        "outputResolution=${integrationDiagnostics.outputWidth}x${integrationDiagnostics.outputHeight} " +
+                        "tileSize=${integrationDiagnostics.tileWidth}x${integrationDiagnostics.tileHeight} " +
+                        "acceptedFrames=${integrationDiagnostics.acceptedFrames} rejectedFrames=$alignmentRejected " +
+                        "integrationMode=${integrationDiagnostics.mode} robustMode=${integrationDiagnostics.robustModeEnabled} " +
+                        "validCoverage=${formatMetric(integrationDiagnostics.validCoveragePercent)} " +
+                        "minimumAccumulatedWeight=${formatMetric(integrationDiagnostics.minimumAccumulatedWeight)} " +
+                        "maximumAccumulatedWeight=${formatMetric(integrationDiagnostics.maximumAccumulatedWeight)} " +
+                        "processingDurationMs=${integrationDiagnostics.processingDurationMillis} " +
+                        "estimatedPeakWorkingMemory=${integrationDiagnostics.estimatedPeakWorkingMemoryBytes} " +
+                        "resolutionChanged=${integrationDiagnostics.resolutionChanged}"
                 )
                 safeIntermediate = checkNotNull(output).copy(Bitmap.Config.ARGB_8888, true)
                     ?: error("Не удалось сохранить безопасный промежуточный stack")
                 val beforeMetrics = analyzeProfileBitmap(checkNotNull(safeIntermediate), recipe)
-                logProfileStage(profile, source, "alignedStack", beforeMetrics)
-                if (recipe.useSignalPreservingSigma) {
-                    logProfileStage(profile, source, "signalPreservingStack", beforeMetrics)
-                }
+                logProfileStage(profile, source, "linearWeightedStack", beforeMetrics)
 
-                currentStage = "Удаление фона"
+                currentStage = "Applying preset processing"
                 withContext(Dispatchers.Main.immediate) {
-                    onProgress("Удаление фона и stretch...", 0, 3)
+                    onProgress("Applying preset processing", 0, 3)
                 }
                 try {
                     val backgroundResult = backgroundRemoval.applyInPlace(
@@ -1320,38 +1334,38 @@ class JpegStacker(private val context: Context) {
                     warnings += "Кадров отклонено из-за ненадёжной регистрации: $alignmentRejected"
                 }
 
-                currentStage = "Сохранение результата"
+                currentStage = "Saving lossless PNG"
                 withContext(Dispatchers.Main.immediate) {
-                    onProgress("Сохранение результата...", 3, 3)
+                    onProgress("Saving lossless PNG", 3, 3)
                 }
                 val now = System.currentTimeMillis()
                 val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
                     .format(Date(now))
                 val prefix = if (fallback == "RecoveredStars") "RecoveredStars" else profile.filePrefix
-                val fileName = "${prefix}_$timestamp.jpg"
+                val requestedFileName = "${prefix}_$timestamp.png"
+                val saved = LosslessProcessedImageWriter(context).write(
+                    session,
+                    checkNotNull(output),
+                    requestedFileName
+                )
+                val fileName = saved.fileName
                 Log.i(
                     "AstroPhotoProfile",
                     "profile=${profile.name} source=${source.metadataValue} " +
                         "inputFrames=${selectedFrames.size} acceptedFrames=$acceptedFrames " +
                         "alignedFrames=$alignmentApplied " +
-                        "alignmentFailures=$alignmentRejected stackingMethod=" +
-                        "${if (recipe.useSignalPreservingSigma) "signalPreservingSigma" else "average"} " +
+                        "alignmentFailures=$alignmentRejected stackingMethod=linearWeighted " +
                         "starsBefore=${beforeMetrics.stars} starsAfter=${afterMetrics.stars} " +
                         "backgroundBefore=${beforeMetrics.background} " +
                         "backgroundAfter=${afterMetrics.background} sanity=$sanityStatus " +
                         "fallback=$fallback fallbackReason=$fallbackReason outputName=$fileName"
                 )
-                val saved = saveBitmap(session, checkNotNull(output), fileName)
                 val infoUpdated = runCatching {
                     appendProfileSessionInfo(
                         session = session,
                         fileName = fileName,
                         profile = profile,
-                        method = if (recipe.useSignalPreservingSigma) {
-                            "Signal-preserving sigma ${recipe.sigma}"
-                        } else {
-                            "Average + Star Similarity"
-                        },
+                        method = "Full-resolution linear weighted + Star Similarity",
                         framesUsed = acceptedFrames,
                         framesRejected = framesRejected + (frames.size - selectedFrames.size) +
                             alignmentRejected,
@@ -1381,7 +1395,7 @@ class JpegStacker(private val context: Context) {
                     sessionInfoUpdated = infoUpdated,
                     alignmentEnabled = alignmentApplied > 0,
                     astroStretchApplied = recipe.stretchMode != AstroStretchMode.OFF,
-                    downscaled = downscaled,
+                    downscaled = false,
                     profile = profile,
                     starCount = finalStars,
                     warnings = warnings.distinct(),
@@ -1389,24 +1403,15 @@ class JpegStacker(private val context: Context) {
                 )
             } catch (error: OutOfMemoryError) {
                 throw IllegalStateException(
-                    "Недостаточно памяти для профильной JPEG обработки. " +
-                        "Попробуйте меньше кадров.",
+                    "Недостаточно памяти для полноразмерной JPEG обработки; " +
+                        "разрешение результата не было уменьшено.",
                     error
                 )
             } finally {
                 output?.takeUnless(Bitmap::isRecycled)?.recycle()
-                val reference = referenceBitmap
-                if (
-                    reference != null &&
-                    !reference.isRecycled &&
-                    preparedFrames.none { frame -> frame.bitmap === reference }
-                ) {
-                    reference.recycle()
-                }
                 safeIntermediate?.takeUnless(Bitmap::isRecycled)?.recycle()
-                preparedFrames.forEach {
-                    it.bitmap.takeUnless(Bitmap::isRecycled)?.recycle()
-                }
+                integrationCacheDirectory?.listFiles()?.forEach { it.delete() }
+                integrationCacheDirectory?.delete()
             }
         }
         stackResult.exceptionOrNull()?.let { error ->
@@ -1475,6 +1480,12 @@ class JpegStacker(private val context: Context) {
     private data class ProfileAnalyzedFrame(
         val frame: SessionFrame,
         val analysis: FrameAnalysis
+    )
+
+    private data class AcceptedProfileFrame(
+        val frame: SessionFrame,
+        val analysis: FrameAnalysis,
+        val registration: RegistrationResult
     )
 
     private fun decodeMedianFrame(
@@ -1785,72 +1796,6 @@ class JpegStacker(private val context: Context) {
                 "accepted=${registration.isReliable} " +
                 "rejectionReason=${registration.rejectionReason.orEmpty()}"
         )
-    }
-
-    private fun warpToReference(bitmap: Bitmap, registration: RegistrationResult): Bitmap {
-        require(registration.isReliable)
-        val cosine = kotlin.math.cos(registration.rotationRadians)
-        val sine = kotlin.math.sin(registration.rotationRadians)
-        val referenceToCandidate = Matrix().apply {
-            setValues(
-                floatArrayOf(
-                    registration.scale * cosine,
-                    -registration.scale * sine,
-                    registration.dx,
-                    registration.scale * sine,
-                    registration.scale * cosine,
-                    registration.dy,
-                    0f,
-                    0f,
-                    1f
-                )
-            )
-        }
-        val candidateToReference = Matrix()
-        require(referenceToCandidate.invert(candidateToReference)) {
-            "Unable to invert star registration transform"
-        }
-        val aligned = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
-        Canvas(aligned).apply {
-            drawColor(AndroidColor.BLACK)
-            drawBitmap(
-                bitmap,
-                candidateToReference,
-                Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-            )
-        }
-        return aligned
-    }
-
-    private fun cropToReliableRegistrationRegion(
-        bitmap: Bitmap,
-        registrations: List<RegistrationResult>
-    ): Bitmap {
-        if (registrations.isEmpty()) return bitmap
-        val marginX = registrations.maxOf { registration ->
-            ceil(
-                abs(registration.dx) +
-                    abs(sin(registration.rotationRadians)) * bitmap.height +
-                    abs(registration.scale - 1f) * bitmap.width + 2f
-            ).toInt()
-        }.coerceAtMost((bitmap.width - 2).coerceAtLeast(0) / 2)
-        val marginY = registrations.maxOf { registration ->
-            ceil(
-                abs(registration.dy) +
-                    abs(sin(registration.rotationRadians)) * bitmap.width +
-                    abs(registration.scale - 1f) * bitmap.height + 2f
-            ).toInt()
-        }.coerceAtMost((bitmap.height - 2).coerceAtLeast(0) / 2)
-        if (marginX == 0 && marginY == 0) return bitmap
-        val cropped = Bitmap.createBitmap(
-            bitmap,
-            marginX,
-            marginY,
-            bitmap.width - marginX * 2,
-            bitmap.height - marginY * 2
-        )
-        bitmap.recycle()
-        return cropped
     }
 
     private fun formatMetric(value: Float): String =
@@ -2843,7 +2788,9 @@ class JpegStacker(private val context: Context) {
         private const val MAX_PROFILE_FRAMES = 30
         private const val PROFILE_ANALYSIS_MAX_DIMENSION = 960
         private const val PROFILE_REGISTRATION_TAG = "AstroPhotoJpegV2"
-        private const val MAX_PROFILE_AVERAGE_PIXELS = 8_000_000L
+        private const val MIN_PROFILE_WORKING_MEMORY_BYTES = 64L * 1024L * 1024L
+        private const val MAX_PROFILE_WORKING_MEMORY_BYTES = 256L * 1024L * 1024L
+        private const val MIN_CACHE_FREE_SPACE_BYTES = 32L * 1024L * 1024L
         private const val MAX_COMPLEX_STACK_PIXELS_MANY_FRAMES = 2_500_000L
         private const val MAX_COMPLEX_STACK_PIXELS_MEDIUM_SERIES = 4_000_000L
         private const val ARGB_BYTES_PER_PIXEL = 4L

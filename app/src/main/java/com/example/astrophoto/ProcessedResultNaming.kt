@@ -39,8 +39,10 @@ fun findUniqueProcessedResultName(
     maxAttempts: Int = DEFAULT_PROCESSED_NAME_ATTEMPTS,
     exists: (String) -> Boolean
 ): String {
-    require(baseName.endsWith(".jpg", ignoreCase = true)) {
-        "Processed result name must use the .jpg extension"
+    val extension = baseName.substringAfterLast('.', missingDelimiterValue = "")
+        .lowercase(Locale.US)
+    require(extension in setOf("jpg", "jpeg", "png")) {
+        "Processed result name must use a supported image extension"
     }
     require(maxAttempts > 0) { "Collision attempt count must be positive" }
 
@@ -49,7 +51,7 @@ fun findUniqueProcessedResultName(
         val candidate = if (attempt == 0) {
             baseName
         } else {
-            "${base}_${attempt.toString().padStart(2, '0')}.jpg"
+            "${base}_${attempt.toString().padStart(2, '0')}.$extension"
         }
         if (!exists(candidate)) return candidate
     }
