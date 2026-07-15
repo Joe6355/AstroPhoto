@@ -71,13 +71,23 @@ import com.example.astrophoto.ui.AstroTestTags
 import com.example.astrophoto.ui.theme.AstroColors
 import com.example.astrophoto.processing.jpeg.v2.analysis.JpegFrameAnalyzer
 import com.example.astrophoto.processing.jpeg.v2.analysis.ReferenceFrameSelector
+import com.example.astrophoto.processing.jpeg.v2.composition.MaskFeathering
+import com.example.astrophoto.processing.jpeg.v2.composition.SkyForegroundComposer
 import com.example.astrophoto.processing.jpeg.v2.integration.FrameWeightCalculator
 import com.example.astrophoto.processing.jpeg.v2.integration.FrameWeightInput
 import com.example.astrophoto.processing.jpeg.v2.integration.LinearWeightedIntegrator
 import com.example.astrophoto.processing.jpeg.v2.integration.WeightedIntegrationFrame
+import com.example.astrophoto.processing.jpeg.v2.masking.ForegroundProtectionMask
 import com.example.astrophoto.processing.jpeg.v2.masking.SkyMaskEstimator
+import com.example.astrophoto.processing.jpeg.v2.masking.SkyMaskRefiner
+import com.example.astrophoto.processing.jpeg.v2.model.AlphaMask
+import com.example.astrophoto.processing.jpeg.v2.model.CompositeDiagnostics
+import com.example.astrophoto.processing.jpeg.v2.model.DetectedStar as V2DetectedStar
 import com.example.astrophoto.processing.jpeg.v2.model.FrameAnalysis
 import com.example.astrophoto.processing.jpeg.v2.model.RegistrationResult
+import com.example.astrophoto.processing.jpeg.v2.model.RefinedSkyMask
+import com.example.astrophoto.processing.jpeg.v2.model.SkyMask
+import com.example.astrophoto.processing.jpeg.v2.model.SkyMaskResult
 import com.example.astrophoto.processing.jpeg.v2.output.LosslessProcessedImageWriter
 import com.example.astrophoto.processing.jpeg.v2.registration.StarSimilarityRegistrar
 import com.example.astrophoto.processing.jpeg.v2.sampling.ArgbFrameDiskCache
@@ -913,13 +923,22 @@ class JpegStacker(private val context: Context) {
             val skyMaskEstimator = SkyMaskEstimator()
             val frameAnalyzer = JpegFrameAnalyzer()
             val analyzedFrames = cappedFrames.map { frame ->
-                val analysis = runCatching {
+                val analyzed = runCatching {
                     val sample = decodeMedianFrame(frame, analysisWidth, analysisHeight)
                         ?: error("Unable to decode JPEG for analysis")
                     try {
                         val image = bitmapToArgbImage(sample)
                         val skyMask = skyMaskEstimator.estimate(image)
-                        frameAnalyzer.analyze(frame.key, frame.fileName, image, skyMask)
+                        ProfileAnalyzedFrame(
+                            frame = frame,
+                            analysis = frameAnalyzer.analyze(
+                                frame.key,
+                                frame.fileName,
+                                image,
+                                skyMask
+                            ),
+                            skyMask = skyMask
+                        )
                     } finally {
                         sample.recycle()
                     }
@@ -928,14 +947,23 @@ class JpegStacker(private val context: Context) {
                         PROFILE_REGISTRATION_TAG,
                         "frame=${frame.fileName} analysisRejected reason=${error.message.orEmpty()}"
                     )
-                    FrameAnalysis.invalid(frame.key, frame.fileName)
+                    ProfileAnalyzedFrame(
+                        frame = frame,
+                        analysis = FrameAnalysis.invalid(frame.key, frame.fileName),
+                        skyMask = SkyMaskResult(
+                            SkyMask.empty(analysisWidth, analysisHeight),
+                            confidence = 0f,
+                            usedFallback = true
+                        )
+                    )
                 }
                 Log.i(
                     PROFILE_REGISTRATION_TAG,
-                    "frame=${frame.fileName} skyMaskConfidence=${formatMetric(analysis.skyMaskConfidence)} " +
-                        "skyMaskFallback=${analysis.skyMaskUsedFallback} detectedStars=${analysis.reliableStarCount}"
+                    "frame=${frame.fileName} skyMaskConfidence=${formatMetric(analyzed.analysis.skyMaskConfidence)} " +
+                        "skyMaskFallback=${analyzed.analysis.skyMaskUsedFallback} " +
+                        "detectedStars=${analyzed.analysis.reliableStarCount}"
                 )
-                ProfileAnalyzedFrame(frame, analysis)
+                analyzed
             }
             val referenceSelection = ReferenceFrameSelector().select(analyzedFrames.map { it.analysis })
             val selectedReference = analyzedFrames.first {
@@ -980,6 +1008,11 @@ class JpegStacker(private val context: Context) {
             var output: Bitmap? = null
             var safeIntermediate: Bitmap? = null
             var integrationCacheDirectory: File? = null
+            var refinedSkyMask: RefinedSkyMask? = null
+            var compositionDiagnostics: CompositeDiagnostics? = null
+            var thinStructureProtectedPixels = 0
+            var protectionRadius = 0
+            var featherRadius = 0
             var alignmentApplied = 0
             var alignmentRejected = 0
             var referenceStars = 0
@@ -1134,6 +1167,12 @@ class JpegStacker(private val context: Context) {
                     PROFILE_REGISTRATION_TAG,
                     "integrationCacheBytes=$requiredCacheBytes cachedFrameCount=${cachedFrames.size}"
                 )
+                val initialFullResolutionSkyMask = scaleSkyMask(
+                    selectedReference.skyMask.mask,
+                    targetWidth,
+                    targetHeight
+                )
+                val validCoverageValues = FloatArray(targetWidth * targetHeight)
                 output = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
                 val maximumWorkingMemory = (Runtime.getRuntime().maxMemory() / 2L)
                     .coerceIn(MIN_PROFILE_WORKING_MEMORY_BYTES, MAX_PROFILE_WORKING_MEMORY_BYTES)
@@ -1152,6 +1191,7 @@ class JpegStacker(private val context: Context) {
                     },
                     maximumWorkingMemoryBytes = maximumWorkingMemory,
                     openSource = { cached -> FileBackedArgbPixelSource(cached) },
+                    includeOutputPixel = { x, y -> initialFullResolutionSkyMask.contains(x, y) },
                     writeTile = { tile, pixels ->
                         checkNotNull(output).setPixels(
                             pixels,
@@ -1162,6 +1202,16 @@ class JpegStacker(private val context: Context) {
                             tile.width,
                             tile.height
                         )
+                    },
+                    writeCoverageTile = { tile, coverage ->
+                        for (row in 0 until tile.height) {
+                            coverage.copyInto(
+                                validCoverageValues,
+                                destinationOffset = (tile.top + row) * targetWidth + tile.left,
+                                startIndex = row * tile.width,
+                                endIndex = (row + 1) * tile.width
+                            )
+                        }
                     },
                     onTileCompleted = { tile ->
                         withContext(Dispatchers.Main.immediate) {
@@ -1189,10 +1239,98 @@ class JpegStacker(private val context: Context) {
                         "estimatedPeakWorkingMemory=${integrationDiagnostics.estimatedPeakWorkingMemoryBytes} " +
                         "resolutionChanged=${integrationDiagnostics.resolutionChanged}"
                 )
+                currentStage = "Refining sky mask"
+                withContext(Dispatchers.Main.immediate) {
+                    onProgress("Refining sky mask", 0, 3)
+                }
+                val referenceBitmap = decodeMedianFrame(
+                    selectedReference.frame,
+                    targetWidth,
+                    targetHeight
+                ) ?: error("Не удалось прочитать опорный кадр для композиции")
+                val referenceImage = try {
+                    bitmapToArgbImage(referenceBitmap)
+                } finally {
+                    referenceBitmap.recycle()
+                }
+                val fullResolutionStars = scaleV2Stars(
+                    selectedReference.analysis.stars,
+                    selectedReference.analysis.width,
+                    selectedReference.analysis.height,
+                    targetWidth,
+                    targetHeight
+                )
+                val initialRefinedMask = SkyMaskRefiner().refine(
+                    initialMask = initialFullResolutionSkyMask,
+                    reference = referenceImage,
+                    stars = fullResolutionStars,
+                    initialConfidence = selectedReference.skyMask.confidence,
+                    initialUsedFallback = selectedReference.skyMask.usedFallback,
+                    registrationConfidence = acceptedProfileFrames
+                        .map { it.registration.confidence }
+                        .average()
+                        .toFloat()
+                )
+                currentStage = "Protecting foreground"
+                withContext(Dispatchers.Main.immediate) {
+                    onProgress("Protecting foreground", 1, 3)
+                }
+                val protection = ForegroundProtectionMask().detect(
+                    referenceImage,
+                    fullResolutionStars
+                )
+                thinStructureProtectedPixels = protection.protectedPixelCount
+                protectionRadius = protection.dilationRadius
+                val finalSkyPixels = initialRefinedMask.binaryMask.copyPixels()
+                val protectionPixels = protection.mask.copyPixels()
+                finalSkyPixels.indices.forEach { index ->
+                    if (protectionPixels[index]) finalSkyPixels[index] = false
+                }
+                val finalBinarySkyMask = SkyMask(targetWidth, targetHeight, finalSkyPixels)
+                val featheringResult = MaskFeathering().feather(
+                    initialRefinedMask.binaryMask,
+                    protection.mask
+                )
+                featherRadius = featheringResult.broadRadius
+                refinedSkyMask = initialRefinedMask.copy(
+                    binaryMask = finalBinarySkyMask,
+                    featheredMask = featheringResult.alphaMask,
+                    protectedForegroundRatio = 1f - finalBinarySkyMask.retainedFraction(),
+                    diagnostics = initialRefinedMask.diagnostics.copy(
+                        refinedSkyRatio = finalBinarySkyMask.retainedFraction(),
+                        featherRadius = featherRadius
+                    )
+                )
+                val validCoverageMask = AlphaMask(
+                    targetWidth,
+                    targetHeight,
+                    validCoverageValues
+                )
+                val composer = SkyForegroundComposer()
+                var effectiveSkyAlpha: AlphaMask? = null
+                fun restoreReferenceForeground(): CompositeDiagnostics {
+                    val composite = composer.compose(
+                        stackedSky = bitmapToArgbImage(checkNotNull(output)),
+                        reference = referenceImage,
+                        featheredSkyMask = checkNotNull(refinedSkyMask).featheredMask,
+                        validCoverage = validCoverageMask,
+                        precomputedEffectiveSkyAlpha = effectiveSkyAlpha
+                    )
+                    output?.takeUnless(Bitmap::isRecycled)?.recycle()
+                    output = bitmapFromArgbImage(composite.image)
+                    effectiveSkyAlpha = composite.effectiveSkyAlpha
+                    compositionDiagnostics = composite.diagnostics
+                    return composite.diagnostics
+                }
+                currentStage = "Combining sky and foreground"
+                withContext(Dispatchers.Main.immediate) {
+                    onProgress("Combining sky and foreground", 2, 3)
+                }
+                restoreReferenceForeground()
                 safeIntermediate = checkNotNull(output).copy(Bitmap.Config.ARGB_8888, true)
                     ?: error("Не удалось сохранить безопасный промежуточный stack")
                 val beforeMetrics = analyzeProfileBitmap(checkNotNull(safeIntermediate), recipe)
-                logProfileStage(profile, source, "linearWeightedStack", beforeMetrics)
+                logProfileStage(profile, source, "skyForegroundComposite", beforeMetrics)
 
                 currentStage = "Applying preset processing"
                 withContext(Dispatchers.Main.immediate) {
@@ -1213,6 +1351,7 @@ class JpegStacker(private val context: Context) {
                     )
                     warnings += "Удаление фона не удалось, сохранён stack без этого шага."
                 }
+                restoreReferenceForeground()
                 val backgroundMetrics = analyzeProfileBitmap(checkNotNull(output), recipe)
                 logProfileStage(profile, source, "backgroundRemoval", backgroundMetrics)
                 if (recipe.backgroundMode == BackgroundRemovalMode.URBAN) {
@@ -1233,6 +1372,7 @@ class JpegStacker(private val context: Context) {
                     )
                     warnings += "Astro Stretch не удался, сохранён результат без stretch."
                 }
+                restoreReferenceForeground()
                 logProfileStage(
                     profile,
                     source,
@@ -1244,7 +1384,10 @@ class JpegStacker(private val context: Context) {
                         bitmap = checkNotNull(output),
                         roi = recipe.roi,
                         sensitivity = recipe.sensitivity
-                    ).stars
+                    ).stars.filter { star ->
+                        checkNotNull(effectiveSkyAlpha).alphaAt(star.x, star.y) >=
+                            MIN_SKY_ALPHA_FOR_STAR_BOOST
+                    }
                 } catch (error: Exception) {
                     Log.e(
                         "AstroPhotoProcessing",
@@ -1273,6 +1416,7 @@ class JpegStacker(private val context: Context) {
                     )
                     warnings += "Star Boost не удался, сохранён результат без усиления звёзд."
                 }
+                restoreReferenceForeground()
                 logProfileStage(
                     profile,
                     source,
@@ -1303,7 +1447,8 @@ class JpegStacker(private val context: Context) {
                             is RecoveredStarsResult.Recovered -> {
                                 output?.recycle()
                                 output = bitmapFromArgbImage(recovered.image)
-                                afterMetrics = recovered.sanity.metrics
+                                restoreReferenceForeground()
+                                afterMetrics = analyzeProfileBitmap(checkNotNull(output), recipe)
                                 sanityStatus = "passed"
                                 fallback = "RecoveredStars"
                                 fallbackReason = sanity.reason
@@ -1333,6 +1478,36 @@ class JpegStacker(private val context: Context) {
                 if (alignmentRejected > 0) {
                     warnings += "Кадров отклонено из-за ненадёжной регистрации: $alignmentRejected"
                 }
+                val finalMask = checkNotNull(refinedSkyMask)
+                val finalComposition = checkNotNull(compositionDiagnostics)
+                require(finalComposition.maximumForegroundChannelDifference <= 1) {
+                    "Композиция изменила защищённый foreground"
+                }
+                require(
+                    finalComposition.foregroundSharpnessAfter + FOREGROUND_SHARPNESS_TOLERANCE >=
+                        finalComposition.foregroundSharpnessBefore
+                ) {
+                    "Резкость защищённого foreground снизилась"
+                }
+                Log.i(
+                    PROFILE_REGISTRATION_TAG,
+                    "preset=${profile.name} reference=${selectedReference.frame.fileName} " +
+                        "initialSkyMaskConfidence=${formatMetric(selectedReference.skyMask.confidence)} " +
+                        "refinedSkyMaskConfidence=${formatMetric(finalMask.confidence)} " +
+                        "initialSkyRatio=${formatMetric(finalMask.diagnostics.initialSkyRatio)} " +
+                        "refinedSkyRatio=${formatMetric(finalMask.diagnostics.refinedSkyRatio)} " +
+                        "protectedForegroundRatio=${formatMetric(finalMask.protectedForegroundRatio)} " +
+                        "thinStructureProtectedPixelCount=$thinStructureProtectedPixels " +
+                        "protectionRadius=$protectionRadius featherRadius=$featherRadius " +
+                        "validSkyCoverageRatio=${formatMetric(finalComposition.validSkyCoverageRatio)} " +
+                        "referenceFallbackRatio=${formatMetric(finalComposition.referenceFallbackRatio)} " +
+                        "output=${finalComposition.outputWidth}x${finalComposition.outputHeight} " +
+                        "cropApplied=${finalComposition.cropApplied} " +
+                        "foregroundSharpnessBefore=${formatMetric(finalComposition.foregroundSharpnessBefore)} " +
+                        "foregroundSharpnessAfter=${formatMetric(finalComposition.foregroundSharpnessAfter)} " +
+                        "maximumForegroundDifference=${finalComposition.maximumForegroundChannelDifference} " +
+                        "compositionDurationMs=${finalComposition.compositionDurationMillis}"
+                )
 
                 currentStage = "Saving lossless PNG"
                 withContext(Dispatchers.Main.immediate) {
@@ -1365,7 +1540,7 @@ class JpegStacker(private val context: Context) {
                         session = session,
                         fileName = fileName,
                         profile = profile,
-                        method = "Full-resolution linear weighted + Star Similarity",
+                        method = "Full-resolution linear weighted sky + protected reference foreground",
                         framesUsed = acceptedFrames,
                         framesRejected = framesRejected + (frames.size - selectedFrames.size) +
                             alignmentRejected,
@@ -1479,7 +1654,8 @@ class JpegStacker(private val context: Context) {
 
     private data class ProfileAnalyzedFrame(
         val frame: SessionFrame,
-        val analysis: FrameAnalysis
+        val analysis: FrameAnalysis,
+        val skyMask: SkyMaskResult
     )
 
     private data class AcceptedProfileFrame(
@@ -1797,6 +1973,38 @@ class JpegStacker(private val context: Context) {
                 "rejectionReason=${registration.rejectionReason.orEmpty()}"
         )
     }
+
+    private fun scaleV2Stars(
+        stars: List<V2DetectedStar>,
+        sourceWidth: Int,
+        sourceHeight: Int,
+        targetWidth: Int,
+        targetHeight: Int
+    ): List<V2DetectedStar> {
+        val scaleX = targetWidth.toFloat() / sourceWidth.coerceAtLeast(1)
+        val scaleY = targetHeight.toFloat() / sourceHeight.coerceAtLeast(1)
+        val sizeScale = (scaleX + scaleY) / 2f
+        return stars.map { star ->
+            star.copy(
+                x = star.x * scaleX,
+                y = star.y * scaleY,
+                width = star.width * sizeScale
+            )
+        }
+    }
+
+    private fun scaleSkyMask(mask: SkyMask, width: Int, height: Int): SkyMask =
+        SkyMask(
+            width,
+            height,
+            BooleanArray(width * height) { index ->
+                val x = index % width
+                val y = index / width
+                val sourceX = (x.toLong() * mask.width / width).toInt().coerceIn(0, mask.width - 1)
+                val sourceY = (y.toLong() * mask.height / height).toInt().coerceIn(0, mask.height - 1)
+                mask.contains(sourceX, sourceY)
+            }
+        )
 
     private fun formatMetric(value: Float): String =
         if (value.isFinite()) "%.4f".format(Locale.US, value) else "n/a"
@@ -2791,6 +2999,8 @@ class JpegStacker(private val context: Context) {
         private const val MIN_PROFILE_WORKING_MEMORY_BYTES = 64L * 1024L * 1024L
         private const val MAX_PROFILE_WORKING_MEMORY_BYTES = 256L * 1024L * 1024L
         private const val MIN_CACHE_FREE_SPACE_BYTES = 32L * 1024L * 1024L
+        private const val MIN_SKY_ALPHA_FOR_STAR_BOOST = 0.60f
+        private const val FOREGROUND_SHARPNESS_TOLERANCE = 0.05f
         private const val MAX_COMPLEX_STACK_PIXELS_MANY_FRAMES = 2_500_000L
         private const val MAX_COMPLEX_STACK_PIXELS_MEDIUM_SERIES = 4_000_000L
         private const val ARGB_BYTES_PER_PIXEL = 4L

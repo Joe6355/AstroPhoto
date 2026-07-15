@@ -15,11 +15,19 @@ class SkyMask(
 
     fun retainedFraction(): Float = pixels.count { it }.toFloat() / pixels.size
 
+    fun copyPixels(): BooleanArray = pixels.copyOf()
+
     companion object {
         fun full(width: Int, height: Int) = SkyMask(
             width,
             height,
             BooleanArray(width * height) { true }
+        )
+
+        fun empty(width: Int, height: Int) = SkyMask(
+            width,
+            height,
+            BooleanArray(width * height)
         )
     }
 }

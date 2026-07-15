@@ -79,7 +79,7 @@ class TileProcessingCoordinator(
         const val MINIMUM_TILE_SIZE = 32
         private const val OUTPUT_BITMAP_BYTES_PER_PIXEL = 4L
         private const val ONE_DECODED_FRAME_BYTES_PER_PIXEL = 4L
-        private const val PLAIN_TILE_BYTES_PER_PIXEL = 20L
-        private const val ROBUST_TILE_BYTES_PER_PIXEL = 48L
+        private const val PLAIN_TILE_BYTES_PER_PIXEL = 25L
+        private const val ROBUST_TILE_BYTES_PER_PIXEL = 52L
     }
 }

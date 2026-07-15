@@ -28,7 +28,9 @@ class LinearWeightedIntegrator(
         frames: List<WeightedIntegrationFrame<T>>,
         maximumWorkingMemoryBytes: Long,
         openSource: (T) -> ArgbPixelSource,
+        includeOutputPixel: (Int, Int) -> Boolean = { _, _ -> true },
         writeTile: (TileSpec, IntArray) -> Unit,
+        writeCoverageTile: (TileSpec, FloatArray) -> Unit = { _, _ -> },
         onTileCompleted: suspend (TileSpec) -> Unit = {}
     ): IntegrationDiagnostics {
         require(outputWidth > 0 && outputHeight > 0)
@@ -45,6 +47,7 @@ class LinearWeightedIntegrator(
         var validPixels = 0L
         var minimumWeight = Float.POSITIVE_INFINITY
         var maximumWeight = 0f
+        val expectedWeight = frames.sumOf { it.normalizedWeight.toDouble() }.toFloat()
         for (tile in plan.tiles) {
             currentCoroutineContext().ensureActive()
             val accumulator = RobustSampleAccumulator(tile.pixelCount, robustMode)
@@ -56,6 +59,7 @@ class LinearWeightedIntegrator(
                         val outputY = tile.top + localY
                         for (localX in 0 until tile.width) {
                             val outputX = tile.left + localX
+                            if (!includeOutputPixel(outputX, outputY)) continue
                             val sample = sampler.sample(
                                 source,
                                 frame.transform,
@@ -74,18 +78,22 @@ class LinearWeightedIntegrator(
                 }
             }
             val output = IntArray(tile.pixelCount)
+            val coverage = FloatArray(tile.pixelCount)
             output.indices.forEach { index ->
                 val pixel = accumulator.finish(index)
                 if (pixel == null) {
                     output[index] = OPAQUE_BLACK
+                    coverage[index] = 0f
                 } else {
                     validPixels++
                     minimumWeight = minOf(minimumWeight, pixel.accumulatedWeight)
                     maximumWeight = maxOf(maximumWeight, pixel.accumulatedWeight)
+                    coverage[index] = (pixel.accumulatedWeight / expectedWeight).coerceIn(0f, 1f)
                     output[index] = linearToArgb(pixel.red, pixel.green, pixel.blue)
                 }
             }
             writeTile(tile, output)
+            writeCoverageTile(tile, coverage)
             onTileCompleted(tile)
         }
         val totalPixels = outputWidth.toLong() * outputHeight
