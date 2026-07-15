@@ -36,3 +36,6 @@ astrophoto_*_logcat.txt
 *.temp
 .DS_Store
 Thumbs.db
+
+# Developer-only Stage 6 JPEG regression fixtures may contain private session crops.
+/local-fixtures/jpeg-stage6/

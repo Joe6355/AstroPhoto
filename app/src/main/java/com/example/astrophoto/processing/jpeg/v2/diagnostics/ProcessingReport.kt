@@ -17,7 +17,22 @@ data class FrameRegistrationReport(
     val rotationRadians: Float,
     val scale: Float,
     val residualError: Float,
-    val confidence: Float
+    val confidence: Float,
+    val registrationModel: String = "LEGACY_SIMILARITY",
+    val scaleFixed: Boolean = false,
+    val rotationAllowed: Boolean = false,
+    val rotationRejectionReason: String? = null,
+    val occupiedDistributionCells: Int = 0,
+    val horizontalDistributionSpan: Float = 0f,
+    val verticalDistributionSpan: Float = 0f,
+    val spatialDistributionScore: Float = 0f,
+    val rawDx: Float = dx,
+    val rawDy: Float = dy,
+    val rawRotationRadians: Float = rotationRadians,
+    val transformSequenceScore: Float = 1f,
+    val transformSequenceDeviation: Float = 0f,
+    val neighborTransformDelta: Float = 0f,
+    val transformRetryUsed: Boolean = false
 )
 
 data class FrameWeightReport(
@@ -43,7 +58,12 @@ data class IntegrationReport(
     val validCoveragePercent: Float,
     val estimatedWorkingMemoryBytes: Long,
     val outputAllocationBytes: Long,
-    val diskCacheBytes: Long
+    val diskCacheBytes: Long,
+    val robustModeReason: String = if (robustMode) {
+        "legacy_repeatability_mode"
+    } else {
+        "plain_weighted_average"
+    }
 )
 
 data class ProcessingReport(
@@ -74,7 +94,28 @@ data class ProcessingReport(
     val internalFallbackLabel: String?,
     val warnings: List<String>,
     val outputPngDisplayName: String,
-    val stageDurationsMillis: Map<String, Long>
+    val stageDurationsMillis: Map<String, Long>,
+    val stage4Executed: Boolean = true,
+    val cleanStackAccepted: Boolean = cleanStackDecision.accepted,
+    val cleanStackRejectionReasons: List<String> = cleanStackDecision.hardFailureReasons,
+    val referenceReliableStarCount: Int = referenceMetrics.reliableStarCount,
+    val retainedReferenceStarCount: Int = referenceMetrics.reliableStarCount,
+    val referenceStarRetentionRatio: Float = 1f,
+    val referenceStarContrastBefore: Float = referenceMetrics.medianStarLocalContrast,
+    val referenceStarContrastAfter: Float = cleanStackMetrics.medianStarLocalContrast,
+    val referenceStarWidthBefore: Float = referenceMetrics.medianStarWidth,
+    val referenceStarWidthAfter: Float = cleanStackMetrics.medianStarWidth,
+    val referenceStarSmearRate: Float = 0f,
+    val coverageMinimum: Float = 1f,
+    val coverageMedian: Float = 1f,
+    val coverageMaximum: Float = 1f,
+    val coverageUniformityScore: Float = 1f,
+    val coverageWedgeDiscontinuityScore: Float = 0f,
+    val lineArtifactScore: Float = 0f,
+    val fanPatternScore: Float = 0f,
+    val transformSequenceScore: Float = 1f,
+    val staticArtifactCandidates: Int = 0,
+    val staticArtifactMaskRatio: Float = 0f
 ) {
     fun toJson(): String = buildString {
         append("{\n")
@@ -102,6 +143,27 @@ data class ProcessingReport(
         append("\n  \"cleanStackDecision\": ${decisionJson(cleanStackDecision)},")
         append("\n  \"processedDecision\": ${decisionJson(processedDecision)},")
         append("\n")
+        property("stage4Executed", stage4Executed)
+        property("cleanStackAccepted", cleanStackAccepted)
+        append("  \"cleanStackRejectionReasons\": ${stringArray(cleanStackRejectionReasons)},\n")
+        property("referenceReliableStarCount", referenceReliableStarCount)
+        property("retainedReferenceStarCount", retainedReferenceStarCount)
+        property("referenceStarRetentionRatio", referenceStarRetentionRatio)
+        property("referenceStarContrastBefore", referenceStarContrastBefore)
+        property("referenceStarContrastAfter", referenceStarContrastAfter)
+        property("referenceStarWidthBefore", referenceStarWidthBefore)
+        property("referenceStarWidthAfter", referenceStarWidthAfter)
+        property("referenceStarSmearRate", referenceStarSmearRate)
+        property("coverageMinimum", coverageMinimum)
+        property("coverageMedian", coverageMedian)
+        property("coverageMaximum", coverageMaximum)
+        property("coverageUniformityScore", coverageUniformityScore)
+        property("coverageWedgeDiscontinuityScore", coverageWedgeDiscontinuityScore)
+        property("lineArtifactScore", lineArtifactScore)
+        property("fanPatternScore", fanPatternScore)
+        property("transformSequenceScore", transformSequenceScore)
+        property("staticArtifactCandidates", staticArtifactCandidates)
+        property("staticArtifactMaskRatio", staticArtifactMaskRatio)
         property("selectedCandidateType", selectedCandidateType)
         property("fallbackUsed", fallbackUsed)
         nullableProperty("fallbackReason", fallbackReason)
@@ -150,7 +212,20 @@ data class ProcessingReport(
             "matchedStars":${value.matchedStars},"inlierStars":${value.inlierStars},
             "dx":${number(value.dx)},"dy":${number(value.dy)},
             "rotationRadians":${number(value.rotationRadians)},"scale":${number(value.scale)},
-            "residualError":${number(value.residualError)},"confidence":${number(value.confidence)}
+            "residualError":${number(value.residualError)},"confidence":${number(value.confidence)},
+            "registrationModel":"${escape(value.registrationModel)}","scaleFixed":${value.scaleFixed},
+            "rotationAllowed":${value.rotationAllowed},
+            "rotationRejectionReason":${nullableString(value.rotationRejectionReason)},
+            "occupiedDistributionCells":${value.occupiedDistributionCells},
+            "horizontalDistributionSpan":${number(value.horizontalDistributionSpan)},
+            "verticalDistributionSpan":${number(value.verticalDistributionSpan)},
+            "spatialDistributionScore":${number(value.spatialDistributionScore)},
+            "rawDx":${number(value.rawDx)},"rawDy":${number(value.rawDy)},
+            "rawRotationRadians":${number(value.rawRotationRadians)},
+            "transformSequenceScore":${number(value.transformSequenceScore)},
+            "transformSequenceDeviation":${number(value.transformSequenceDeviation)},
+            "neighborTransformDelta":${number(value.neighborTransformDelta)},
+            "transformRetryUsed":${value.transformRetryUsed}
         }""".trimIndent().replace("\n", "")
 
         private fun weightJson(value: FrameWeightReport): String = """{
@@ -167,7 +242,8 @@ data class ProcessingReport(
             "tileWidth":${value.tileWidth},"tileHeight":${value.tileHeight},
             "resolutionChanged":${value.resolutionChanged},"validCoveragePercent":${number(value.validCoveragePercent)},
             "estimatedWorkingMemoryBytes":${value.estimatedWorkingMemoryBytes},
-            "outputAllocationBytes":${value.outputAllocationBytes},"diskCacheBytes":${value.diskCacheBytes}
+            "outputAllocationBytes":${value.outputAllocationBytes},"diskCacheBytes":${value.diskCacheBytes},
+            "robustModeReason":"${escape(value.robustModeReason)}"
         }""".trimIndent().replace("\n", "")
 
         private fun parametersJson(value: AdaptiveProcessingParameters): String = """{

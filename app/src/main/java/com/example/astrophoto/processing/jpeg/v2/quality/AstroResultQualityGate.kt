@@ -11,6 +11,11 @@ class AstroResultQualityGate(
     private val backgroundComparator: BackgroundQualityComparator = BackgroundQualityComparator(),
     private val foregroundComparator: ForegroundQualityComparator = ForegroundQualityComparator()
 ) {
+    fun evaluateReference(reference: ResultCandidate): QualityGateDecision = decision(
+        reference,
+        listOf(foregroundComparator.compare(reference.metrics, reference.metrics))
+    )
+
     fun evaluateProcessed(
         reference: ResultCandidate,
         cleanStack: ResultCandidate,
@@ -33,13 +38,17 @@ class AstroResultQualityGate(
     fun evaluateCleanStack(
         reference: ResultCandidate,
         cleanStack: ResultCandidate,
-        profile: AstroProcessingProfile
+        profile: AstroProcessingProfile,
+        evidence: CleanStackValidationEvidence? = null
     ): QualityGateDecision = decision(
         cleanStack,
-        listOf(
-            foregroundComparator.compare(reference.metrics, cleanStack.metrics),
-            starComparator.compare(reference.metrics, cleanStack.metrics, profile)
-        )
+        buildList {
+            add(foregroundComparator.compare(reference.metrics, cleanStack.metrics))
+            add(starComparator.compare(reference.metrics, cleanStack.metrics, profile))
+            evidence?.let {
+                add(QualityComparison(it.hardFailureReasons, it.warningReasons))
+            }
+        }
     )
 
     private fun decision(

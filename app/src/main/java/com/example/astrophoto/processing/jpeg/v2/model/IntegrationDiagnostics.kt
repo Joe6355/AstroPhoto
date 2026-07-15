@@ -18,5 +18,10 @@ data class IntegrationDiagnostics(
     val maximumAccumulatedWeight: Float,
     val processingDurationMillis: Long,
     val estimatedPeakWorkingMemoryBytes: Long,
-    val resolutionChanged: Boolean
+    val resolutionChanged: Boolean,
+    val robustModeReason: String = if (robustModeEnabled) {
+        "legacy_repeatability_mode"
+    } else {
+        "plain_weighted_average"
+    }
 )

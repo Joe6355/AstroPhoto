@@ -2,6 +2,7 @@ package com.example.astrophoto.processing.jpeg.v2.analysis
 
 import com.example.astrophoto.ArgbPixelImage
 import com.example.astrophoto.pixelLuminance
+import com.example.astrophoto.processing.jpeg.v2.artifacts.StaticArtifactMask
 import com.example.astrophoto.processing.jpeg.v2.model.DetectedStar
 import com.example.astrophoto.processing.jpeg.v2.model.SkyMask
 import kotlin.math.abs
@@ -18,9 +19,14 @@ class JpegStarDetector {
     fun detect(
         image: ArgbPixelImage,
         mask: SkyMask,
-        maxStars: Int = 260
+        maxStars: Int = 260,
+        staticArtifactMask: StaticArtifactMask? = null
     ): JpegStarDetectionResult {
         require(mask.width == image.width && mask.height == image.height)
+        require(
+            staticArtifactMask == null ||
+                staticArtifactMask.width == image.width && staticArtifactMask.height == image.height
+        )
         require(maxStars >= 0)
         val histogram = IntArray(256)
         var samples = 0L
@@ -50,6 +56,7 @@ class JpegStarDetector {
         for (centerY in ANALYSIS_RADIUS until image.height - ANALYSIS_RADIUS) {
             for (centerX in ANALYSIS_RADIUS until image.width - ANALYSIS_RADIUS) {
                 if (!mask.contains(centerX, centerY)) continue
+                if (staticArtifactMask?.contains(centerX.toFloat(), centerY.toFloat()) == true) continue
                 val peak = pixelLuminance(image.pixelAt(centerX, centerY))
                 if (peak < threshold || !isDeterministicLocalMaximum(image, mask, centerX, centerY, peak)) {
                     continue

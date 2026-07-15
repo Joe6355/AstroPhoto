@@ -28,6 +28,7 @@ class LinearWeightedIntegrator(
         frames: List<WeightedIntegrationFrame<T>>,
         maximumWorkingMemoryBytes: Long,
         openSource: (T) -> ArgbPixelSource,
+        allowRobustClipping: Boolean = true,
         includeOutputPixel: (Int, Int) -> Boolean = { _, _ -> true },
         writeTile: (TileSpec, IntArray) -> Unit,
         writeCoverageTile: (TileSpec, FloatArray) -> Unit = { _, _ -> },
@@ -36,7 +37,8 @@ class LinearWeightedIntegrator(
         require(outputWidth > 0 && outputHeight > 0)
         require(frames.isNotEmpty())
         require(frames.all { it.transform.isReliable && it.normalizedWeight > 0f })
-        val robustMode = frames.size >= RobustSampleAccumulator.MIN_ROBUST_SAMPLES
+        val robustMode = allowRobustClipping &&
+            frames.size >= RobustSampleAccumulator.MIN_ROBUST_SAMPLES
         val plan = tileCoordinator.plan(
             outputWidth,
             outputHeight,
@@ -114,7 +116,12 @@ class LinearWeightedIntegrator(
             maximumAccumulatedWeight = maximumWeight,
             processingDurationMillis = (System.nanoTime() - started) / 1_000_000L,
             estimatedPeakWorkingMemoryBytes = plan.estimatedPeakWorkingMemoryBytes,
-            resolutionChanged = false
+            resolutionChanged = false,
+            robustModeReason = if (allowRobustClipping) {
+                if (robustMode) "legacy_repeatability_mode" else "too_few_samples_for_legacy_robust_mode"
+            } else {
+                "faint_star_preservation"
+            }
         )
     }
 

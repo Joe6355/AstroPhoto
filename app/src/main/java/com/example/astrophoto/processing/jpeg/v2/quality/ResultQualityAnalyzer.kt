@@ -3,6 +3,7 @@ package com.example.astrophoto.processing.jpeg.v2.quality
 import com.example.astrophoto.ArgbPixelImage
 import com.example.astrophoto.pixelLuminance
 import com.example.astrophoto.processing.jpeg.v2.analysis.JpegStarDetector
+import com.example.astrophoto.processing.jpeg.v2.artifacts.StaticArtifactMask
 import com.example.astrophoto.processing.jpeg.v2.model.AlphaMask
 import com.example.astrophoto.processing.jpeg.v2.model.ResultQualityMetrics
 import com.example.astrophoto.processing.jpeg.v2.model.SkyMask
@@ -12,7 +13,8 @@ import kotlin.math.abs
 class ResultQualityAnalyzer(
     private val starDetector: JpegStarDetector = JpegStarDetector(),
     private val skyStatistics: SkyStatistics = SkyStatistics(),
-    private val bandingEstimator: BandingEstimator = BandingEstimator()
+    private val bandingEstimator: BandingEstimator = BandingEstimator(),
+    private val staticArtifactMask: StaticArtifactMask? = null
 ) {
     fun analyze(
         image: ArgbPixelImage,
@@ -29,7 +31,11 @@ class ResultQualityAnalyzer(
                     SKY_ALPHA_THRESHOLD
             }
         )
-        val detectedStars = starDetector.detect(image, binarySky).stars
+        val detectedStars = starDetector.detect(
+            image,
+            binarySky,
+            staticArtifactMask = staticArtifactMask
+        ).stars
         val sky = skyStatistics.calculate(image, effectiveSkyAlpha, detectedStars)
         val starWidths = detectedStars.map { it.width }.sorted()
         val starEllipticities = detectedStars.map { it.ellipticity }.sorted()

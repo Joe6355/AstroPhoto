@@ -72,6 +72,9 @@ import com.example.astrophoto.ui.theme.AstroColors
 import com.example.astrophoto.processing.jpeg.v2.analysis.JpegFrameAnalyzer
 import com.example.astrophoto.processing.jpeg.v2.analysis.JpegStarDetector
 import com.example.astrophoto.processing.jpeg.v2.analysis.ReferenceFrameSelector
+import com.example.astrophoto.processing.jpeg.v2.artifacts.ArtifactFrameObservation
+import com.example.astrophoto.processing.jpeg.v2.artifacts.StaticArtifactAnalyzer
+import com.example.astrophoto.processing.jpeg.v2.artifacts.StaticArtifactMask
 import com.example.astrophoto.processing.jpeg.v2.composition.MaskFeathering
 import com.example.astrophoto.processing.jpeg.v2.composition.SkyForegroundComposer
 import com.example.astrophoto.processing.jpeg.v2.diagnostics.FrameRegistrationReport
@@ -92,6 +95,7 @@ import com.example.astrophoto.processing.jpeg.v2.model.AlphaMask
 import com.example.astrophoto.processing.jpeg.v2.model.CompositeDiagnostics
 import com.example.astrophoto.processing.jpeg.v2.model.DetectedStar as V2DetectedStar
 import com.example.astrophoto.processing.jpeg.v2.model.FrameAnalysis
+import com.example.astrophoto.processing.jpeg.v2.model.QualityGateDecision
 import com.example.astrophoto.processing.jpeg.v2.model.RegistrationResult
 import com.example.astrophoto.processing.jpeg.v2.model.RefinedSkyMask
 import com.example.astrophoto.processing.jpeg.v2.model.ResultCandidate
@@ -102,9 +106,16 @@ import com.example.astrophoto.processing.jpeg.v2.output.LosslessProcessedImageWr
 import com.example.astrophoto.processing.jpeg.v2.postprocessing.AdaptivePresetProcessor
 import com.example.astrophoto.processing.jpeg.v2.profile.ExistingPresetParameterMapper
 import com.example.astrophoto.processing.jpeg.v2.quality.AstroResultQualityGate
+import com.example.astrophoto.processing.jpeg.v2.quality.CleanStackValidationEvidence
+import com.example.astrophoto.processing.jpeg.v2.quality.CleanStackExecutionPolicy
+import com.example.astrophoto.processing.jpeg.v2.quality.CoverageUniformityValidator
+import com.example.astrophoto.processing.jpeg.v2.quality.LineArtifactDetector
+import com.example.astrophoto.processing.jpeg.v2.quality.ReferenceStarRetentionValidator
 import com.example.astrophoto.processing.jpeg.v2.quality.ResultQualityAnalyzer
 import com.example.astrophoto.processing.jpeg.v2.quality.ResultSelectionPolicy
 import com.example.astrophoto.processing.jpeg.v2.registration.StarSimilarityRegistrar
+import com.example.astrophoto.processing.jpeg.v2.registration.OrderedRegistration
+import com.example.astrophoto.processing.jpeg.v2.registration.TransformSequenceValidator
 import com.example.astrophoto.processing.jpeg.v2.sampling.ArgbFrameDiskCache
 import com.example.astrophoto.processing.jpeg.v2.sampling.FileBackedArgbPixelSource
 
@@ -943,7 +954,7 @@ class JpegStacker(private val context: Context) {
             val skyMaskEstimator = SkyMaskEstimator()
             val frameAnalyzer = JpegFrameAnalyzer()
             val frameAnalysisStarted = System.nanoTime()
-            val analyzedFrames = cappedFrames.map { frame ->
+            val rawAnalyzedFrames = cappedFrames.map { frame ->
                 val analyzed = runCatching {
                     val sample = decodeMedianFrame(frame, analysisWidth, analysisHeight)
                         ?: error("Unable to decode JPEG for analysis")
@@ -989,6 +1000,36 @@ class JpegStacker(private val context: Context) {
             pipelineTiming.record(
                 "frame_analysis",
                 (System.nanoTime() - frameAnalysisStarted) / 1_000_000L
+            )
+            currentStage = "Static artifact analysis"
+            val staticArtifactStarted = System.nanoTime()
+            val staticArtifactAnalyzer = StaticArtifactAnalyzer()
+            val staticArtifactMask = staticArtifactAnalyzer.analyze(
+                rawAnalyzedFrames.map { analyzed ->
+                    ArtifactFrameObservation(analyzed.frame.key, analyzed.analysis.stars)
+                },
+                analysisWidth,
+                analysisHeight
+            )
+            val analyzedFrames = rawAnalyzedFrames.map { analyzed ->
+                analyzed.copy(
+                    analysis = staticArtifactAnalyzer.excludeFrom(
+                        analyzed.analysis,
+                        staticArtifactMask
+                    )
+                )
+            }
+            pipelineTiming.record(
+                "static_artifact_analysis",
+                (System.nanoTime() - staticArtifactStarted) / 1_000_000L
+            )
+            Log.i(
+                PROFILE_REGISTRATION_TAG,
+                "staticArtifactCandidates=${staticArtifactMask.regions.size} " +
+                    "staticHotPixels=${staticArtifactMask.staticHotPixelCandidates.size} " +
+                    "staticReflections=${staticArtifactMask.staticReflectionCandidates.size} " +
+                    "staticArtifactMaskRatio=${formatMetric(staticArtifactMask.maskRatio)} " +
+                    "staticArtifactConfidence=${formatMetric(staticArtifactMask.confidence)}"
             )
             val referenceSelectionStarted = System.nanoTime()
             val referenceSelection = ReferenceFrameSelector().select(analyzedFrames.map { it.analysis })
@@ -1045,6 +1086,7 @@ class JpegStacker(private val context: Context) {
             var sanityStatus = "passed"
             var fallback = "none"
             var fallbackReason = ""
+            var transformSequenceScore = 0f
             val registrar = StarSimilarityRegistrar()
             val registrationReports = mutableListOf<FrameRegistrationReport>()
 
@@ -1070,16 +1112,21 @@ class JpegStacker(private val context: Context) {
                     confidence = 1f,
                     isReliable = true,
                     rejectionReason = null,
-                    referenceStars = referenceStars
+                    referenceStars = referenceStars,
+                    registrationModel = "REFERENCE_IDENTITY",
+                    scaleFixed = true,
+                    rotationAllowed = false,
+                    rotationRejectionReason = "reference_identity"
                 )
-                registrationReports += referenceRegistration.toReport(
-                    selectedReference.frame.fileName
+                val allRegistrationsByKey = mutableMapOf(
+                    selectedReference.frame.key to referenceRegistration
                 )
                 val acceptedProfileFrames = mutableListOf(
                     AcceptedProfileFrame(
                         selectedReference.frame,
                         selectedReference.analysis,
-                        referenceRegistration
+                        referenceRegistration,
+                        cappedFrames.indexOfFirst { it.key == selectedReference.frame.key }
                     )
                 )
                 selectedFrames.drop(1).forEachIndexed { index, frame ->
@@ -1099,26 +1146,72 @@ class JpegStacker(private val context: Context) {
                         candidate = analyzed.analysis,
                         targetWidth = targetWidth,
                         targetHeight = targetHeight,
-                        registrar = registrar
+                        registrar = registrar,
+                        forceTranslationOnly = false
                     )
-                    registrationReports += registration.toReport(frame.fileName)
+                    allRegistrationsByKey[frame.key] = registration
                     logProfileRegistration(frame.fileName, registration)
                     if (registration.isReliable) {
                         acceptedProfileFrames += AcceptedProfileFrame(
                             frame,
                             analyzed.analysis,
-                            registration
+                            registration,
+                            cappedFrames.indexOfFirst { it.key == frame.key }
                         )
-                        alignmentApplied++
-                    } else {
-                        alignmentRejected++
+                    }
+                }
+                val sequenceValidation = TransformSequenceValidator().validate(
+                    acceptedProfileFrames.map { accepted ->
+                        OrderedRegistration(
+                            frameId = accepted.frame.key,
+                            captureIndex = accepted.captureIndex,
+                            isReference = accepted.frame.key == selectedReference.frame.key,
+                            registration = accepted.registration
+                        )
+                    },
+                    retryTranslationOnly = { ordered ->
+                        val accepted = acceptedProfileFrames.firstOrNull {
+                            it.frame.key == ordered.frameId
+                        } ?: return@validate null
+                        if (accepted.frame.key == selectedReference.frame.key) return@validate null
+                        registerProfileFrame(
+                            reference = selectedReference.analysis,
+                            candidate = accepted.analysis,
+                            targetWidth = targetWidth,
+                            targetHeight = targetHeight,
+                            registrar = registrar,
+                            forceTranslationOnly = true
+                        )
+                    }
+                )
+                transformSequenceScore = sequenceValidation.score
+                val validatedByKey = sequenceValidation.registrations.associate {
+                    it.frameId to it.registration
+                }
+                acceptedProfileFrames.replaceAll { accepted ->
+                    accepted.copy(
+                        registration = validatedByKey[accepted.frame.key] ?: accepted.registration
+                    )
+                }
+                acceptedProfileFrames.removeAll { !it.registration.isReliable }
+                validatedByKey.forEach { (key, registration) ->
+                    allRegistrationsByKey[key] = registration
+                }
+                registrationReports.clear()
+                selectedFrames.forEach { frame ->
+                    val registration = checkNotNull(allRegistrationsByKey[frame.key])
+                    registrationReports += registration.toReport(frame.fileName)
+                    logProfileRegistration(frame.fileName, registration)
+                    if (!registration.isReliable) {
                         warnings += "Кадр ${frame.fileName} отклонён: " +
                             (registration.rejectionReason ?: "registration failed")
                     }
                 }
                 val acceptedFrames = acceptedProfileFrames.size
+                alignmentApplied = (acceptedFrames - 1).coerceAtLeast(0)
+                alignmentRejected = (selectedFrames.size - acceptedFrames).coerceAtLeast(0)
                 if (acceptedFrames < 2) {
-                    error("Недостаточно кадров с надёжной звёздной регистрацией")
+                    warnings += "Надёжно зарегистрирован только опорный кадр; будет сохранён лучший оригинал"
                 }
                 if (acceptedFrames < profile.minimumFrames) {
                     warnings += "После регистрации принято $acceptedFrames из ${selectedFrames.size} кадров"
@@ -1231,6 +1324,7 @@ class JpegStacker(private val context: Context) {
                     },
                     maximumWorkingMemoryBytes = maximumWorkingMemory,
                     openSource = { cached -> FileBackedArgbPixelSource(cached) },
+                    allowRobustClipping = false,
                     includeOutputPixel = { x, y -> initialFullResolutionSkyMask.contains(x, y) },
                     writeTile = { tile, pixels ->
                         checkNotNull(output).setPixels(
@@ -1273,6 +1367,7 @@ class JpegStacker(private val context: Context) {
                         "tileSize=${integrationDiagnostics.tileWidth}x${integrationDiagnostics.tileHeight} " +
                         "acceptedFrames=${integrationDiagnostics.acceptedFrames} rejectedFrames=$alignmentRejected " +
                         "integrationMode=${integrationDiagnostics.mode} robustMode=${integrationDiagnostics.robustModeEnabled} " +
+                        "robustModeReason=${integrationDiagnostics.robustModeReason} " +
                         "validCoverage=${formatMetric(integrationDiagnostics.validCoveragePercent)} " +
                         "minimumAccumulatedWeight=${formatMetric(integrationDiagnostics.minimumAccumulatedWeight)} " +
                         "maximumAccumulatedWeight=${formatMetric(integrationDiagnostics.maximumAccumulatedWeight)} " +
@@ -1379,110 +1474,181 @@ class JpegStacker(private val context: Context) {
                 )
                 logProfileStage(profile, source, "skyForegroundComposite", beforeMetrics)
 
-                val effectiveBinarySky = SkyMask(
-                    targetWidth,
-                    targetHeight,
-                    BooleanArray(targetWidth * targetHeight) { index ->
-                        effectiveSkyAlpha.alphaAt(index % targetWidth, index / targetWidth) >=
-                            MIN_SKY_ALPHA_FOR_ADAPTIVE_STATISTICS
-                    }
-                )
-                val alignedStackStars = JpegStarDetector().detect(
-                    stackedSkyImage,
-                    effectiveBinarySky
-                ).stars
-                val adaptiveResult = AdaptivePresetProcessor().process(
-                    stackedSky = stackedSkyImage,
-                    referenceForeground = referenceImage,
-                    effectiveSkyAlpha = effectiveSkyAlpha,
-                    profile = profile,
-                    frameCount = acceptedFrames,
-                    alignedStackStars = alignedStackStars,
-                    onProgress = { message, current, total ->
-                        currentStage = message
-                        withContext(Dispatchers.Main.immediate) {
-                            onProgress(message, current, total)
-                        }
-                    }
-                )
-                val adaptive = adaptiveResult.diagnostics
-                pipelineTiming.recordAll(adaptive.stageDurationsMillis)
-                Log.i(
-                    ADAPTIVE_PROCESSING_TAG,
-                    "preset=${adaptive.preset} " +
-                        "effectiveSkyPixelCount=${adaptive.before.skyPixelCount} " +
-                        "effectiveSkyRatio=${formatMetric(adaptive.before.skyCoverageRatio)} " +
-                        "skyStatisticsConfidence=${formatMetric(adaptive.before.confidence)} " +
-                        "skyMedianBefore=${formatMetric(adaptive.before.luminanceMedian)} " +
-                        "skyMadBefore=${formatMetric(adaptive.before.luminanceMad)} " +
-                        "channelMediansBefore=${formatMetric(adaptive.before.channelMedian.red)}," +
-                        "${formatMetric(adaptive.before.channelMedian.green)}," +
-                        "${formatMetric(adaptive.before.channelMedian.blue)} " +
-                        "channelClippingBefore=${formatMetric(adaptive.before.channelClippingPercent.red)}," +
-                        "${formatMetric(adaptive.before.channelClippingPercent.green)}," +
-                        "${formatMetric(adaptive.before.channelClippingPercent.blue)} " +
-                        "gradientModelConfidence=${formatMetric(adaptive.gradient.modelConfidence)} " +
-                        "gradientStrength=${formatMetric(adaptive.before.largeScaleGradientStrength)} " +
-                        "maximumGradientCorrection=${formatMetric(adaptive.gradient.maximumCorrection)} " +
-                        "neutralizationCorrection=${formatMetric(adaptive.neutralization.correction.red)}," +
-                        "${formatMetric(adaptive.neutralization.correction.green)}," +
-                        "${formatMetric(adaptive.neutralization.correction.blue)} " +
-                        "blackPoint=${formatMetric(adaptive.stretch.blackPoint)} " +
-                        "whitePoint=${formatMetric(adaptive.stretch.whitePoint)} " +
-                        "asinhStrength=${formatMetric(adaptive.stretch.asinhStrength)} " +
-                        "highlightProtection=${formatMetric(adaptive.stretch.highlightProtectionStrength)} " +
-                        "chromaNoiseStrength=${formatMetric(adaptive.chromaNoise.strength)} " +
-                        "chromaRadius=${adaptive.chromaNoise.radius} " +
-                        "starEnhancementStrength=${formatMetric(adaptive.starEnhancement.strength)} " +
-                        "reliableStarsConsidered=${adaptive.starEnhancement.considered} " +
-                        "starsEnhanced=${adaptive.starEnhancement.enhanced} " +
-                        "starsRejected=${adaptive.starEnhancement.rejected} " +
-                        "skyMedianAfter=${formatMetric(adaptive.after.luminanceMedian)} " +
-                        "skyMadAfter=${formatMetric(adaptive.after.luminanceMad)} " +
-                        "channelClippingAfter=${formatMetric(adaptive.after.channelClippingPercent.red)}," +
-                        "${formatMetric(adaptive.after.channelClippingPercent.green)}," +
-                        "${formatMetric(adaptive.after.channelClippingPercent.blue)} " +
-                        "foregroundDifferenceOutsideMask=${adaptive.foregroundDifferenceOutsideMask} " +
-                        "processingDurationMs=${adaptive.processingDurationMillis}"
-                )
-                logProfileStage(
-                    profile,
-                    source,
-                    "adaptiveStage4",
-                    analyzeProfileImage(adaptiveResult.image, recipe.roi, recipe.sensitivity)
-                )
-
-                currentStage = "Final quality analysis"
+                currentStage = "Clean stack validation"
                 val qualityAnalysisStarted = System.nanoTime()
-                val qualityAnalyzer = ResultQualityAnalyzer()
+                val fullStaticArtifactMask = staticArtifactMask.scaledTo(targetWidth, targetHeight)
+                val qualityAnalyzer = ResultQualityAnalyzer(
+                    staticArtifactMask = fullStaticArtifactMask
+                )
                 val referenceCandidate = ResultCandidate(
                     ResultCandidateType.REFERENCE,
                     referenceImage,
                     qualityAnalyzer.analyze(referenceImage, referenceImage, effectiveSkyAlpha)
                 )
+                val qualityGate = AstroResultQualityGate()
+                val referenceDecision = qualityGate.evaluateReference(referenceCandidate)
+                require(referenceDecision.accepted) {
+                    "Selected JPEG reference failed structural validation: " +
+                        referenceDecision.hardFailureReasons.joinToString("|")
+                }
                 val cleanStackCandidate = ResultCandidate(
                     ResultCandidateType.CLEAN_STACK,
                     baseComposite.image,
                     qualityAnalyzer.analyze(baseComposite.image, referenceImage, effectiveSkyAlpha)
                 )
-                val processedCandidate = ResultCandidate(
-                    ResultCandidateType.PROCESSED,
-                    adaptiveResult.image,
-                    qualityAnalyzer.analyze(adaptiveResult.image, referenceImage, effectiveSkyAlpha)
+                val retentionValidation = ReferenceStarRetentionValidator().validate(
+                    referenceImage,
+                    baseComposite.image,
+                    fullResolutionStars
                 )
-                val qualityGate = AstroResultQualityGate()
+                val coverageValidation = CoverageUniformityValidator().validate(
+                    validCoverageMask,
+                    effectiveSkyAlpha
+                )
+                val lineArtifactValidation = LineArtifactDetector().compare(
+                    referenceImage,
+                    baseComposite.image,
+                    effectiveSkyAlpha
+                )
+                val cleanStackEvidence = CleanStackValidationEvidence(
+                    referenceStarRetention = retentionValidation,
+                    coverageUniformity = coverageValidation,
+                    lineArtifacts = lineArtifactValidation,
+                    transformSequenceScore = transformSequenceScore,
+                    acceptedFrameCount = acceptedFrames,
+                    transformSequenceValid = acceptedFrames >= 2 && transformSequenceScore >= 0.50f
+                )
                 val cleanStackDecision = qualityGate.evaluateCleanStack(
                     referenceCandidate,
                     cleanStackCandidate,
-                    profile
-                )
-                val processedDecision = qualityGate.evaluateProcessed(
-                    referenceCandidate,
-                    cleanStackCandidate,
-                    processedCandidate,
                     profile,
-                    acceptedFrames
+                    cleanStackEvidence
                 )
+                Log.i(
+                    "AstroPhotoJpegCleanStack",
+                    "accepted=${cleanStackDecision.accepted} " +
+                        "retention=${formatMetric(retentionValidation.metrics.retentionRatio)} " +
+                        "contrastRatio=${formatMetric(retentionValidation.metrics.medianContrastRatio)} " +
+                        "widthGrowth=${formatMetric(retentionValidation.metrics.medianWidthGrowth)} " +
+                        "smearRate=${formatMetric(retentionValidation.metrics.lineLikeSmearRate)} " +
+                        "coverageScore=${formatMetric(coverageValidation.metrics.uniformityScore)} " +
+                        "coverageWedgeScore=${formatMetric(coverageValidation.metrics.wedgeDiscontinuityScore)} " +
+                        "lineArtifactScore=${formatMetric(lineArtifactValidation.metrics.lineArtifactScore)} " +
+                        "fanPatternScore=${formatMetric(lineArtifactValidation.metrics.fanPatternScore)} " +
+                        "sequenceScore=${formatMetric(transformSequenceScore)} " +
+                        "hardFailures=${cleanStackDecision.hardFailureReasons.joinToString("|")}"
+                )
+                val stage4Executed = CleanStackExecutionPolicy()
+                    .shouldExecuteStage4(cleanStackDecision)
+                val processedCandidate: ResultCandidate
+                val processedDecision: QualityGateDecision
+                if (stage4Executed) {
+                    val effectiveBinarySky = SkyMask(
+                        targetWidth,
+                        targetHeight,
+                        BooleanArray(targetWidth * targetHeight) { index ->
+                            effectiveSkyAlpha.alphaAt(index % targetWidth, index / targetWidth) >=
+                                MIN_SKY_ALPHA_FOR_ADAPTIVE_STATISTICS
+                        }
+                    )
+                    val alignedStackStars = JpegStarDetector().detect(
+                        stackedSkyImage,
+                        effectiveBinarySky,
+                        staticArtifactMask = fullStaticArtifactMask
+                    ).stars
+                    val adaptiveResult = AdaptivePresetProcessor().process(
+                        stackedSky = stackedSkyImage,
+                        referenceForeground = referenceImage,
+                        effectiveSkyAlpha = effectiveSkyAlpha,
+                        profile = profile,
+                        frameCount = acceptedFrames,
+                        alignedStackStars = alignedStackStars,
+                        onProgress = { message, current, total ->
+                            currentStage = message
+                            withContext(Dispatchers.Main.immediate) {
+                                onProgress(message, current, total)
+                            }
+                        }
+                    )
+                    val adaptive = adaptiveResult.diagnostics
+                    pipelineTiming.recordAll(adaptive.stageDurationsMillis)
+                    Log.i(
+                        ADAPTIVE_PROCESSING_TAG,
+                        "preset=${adaptive.preset} " +
+                            "effectiveSkyPixelCount=${adaptive.before.skyPixelCount} " +
+                            "effectiveSkyRatio=${formatMetric(adaptive.before.skyCoverageRatio)} " +
+                            "skyStatisticsConfidence=${formatMetric(adaptive.before.confidence)} " +
+                            "skyMedianBefore=${formatMetric(adaptive.before.luminanceMedian)} " +
+                            "skyMadBefore=${formatMetric(adaptive.before.luminanceMad)} " +
+                            "channelMediansBefore=${formatMetric(adaptive.before.channelMedian.red)}," +
+                            "${formatMetric(adaptive.before.channelMedian.green)}," +
+                            "${formatMetric(adaptive.before.channelMedian.blue)} " +
+                            "channelClippingBefore=${formatMetric(adaptive.before.channelClippingPercent.red)}," +
+                            "${formatMetric(adaptive.before.channelClippingPercent.green)}," +
+                            "${formatMetric(adaptive.before.channelClippingPercent.blue)} " +
+                            "gradientModelConfidence=${formatMetric(adaptive.gradient.modelConfidence)} " +
+                            "gradientStrength=${formatMetric(adaptive.before.largeScaleGradientStrength)} " +
+                            "maximumGradientCorrection=${formatMetric(adaptive.gradient.maximumCorrection)} " +
+                            "neutralizationCorrection=${formatMetric(adaptive.neutralization.correction.red)}," +
+                            "${formatMetric(adaptive.neutralization.correction.green)}," +
+                            "${formatMetric(adaptive.neutralization.correction.blue)} " +
+                            "blackPoint=${formatMetric(adaptive.stretch.blackPoint)} " +
+                            "whitePoint=${formatMetric(adaptive.stretch.whitePoint)} " +
+                            "asinhStrength=${formatMetric(adaptive.stretch.asinhStrength)} " +
+                            "highlightProtection=${formatMetric(adaptive.stretch.highlightProtectionStrength)} " +
+                            "chromaNoiseStrength=${formatMetric(adaptive.chromaNoise.strength)} " +
+                            "chromaRadius=${adaptive.chromaNoise.radius} " +
+                            "starEnhancementStrength=${formatMetric(adaptive.starEnhancement.strength)} " +
+                            "reliableStarsConsidered=${adaptive.starEnhancement.considered} " +
+                            "starsEnhanced=${adaptive.starEnhancement.enhanced} " +
+                            "starsRejected=${adaptive.starEnhancement.rejected} " +
+                            "skyMedianAfter=${formatMetric(adaptive.after.luminanceMedian)} " +
+                            "skyMadAfter=${formatMetric(adaptive.after.luminanceMad)} " +
+                            "channelClippingAfter=${formatMetric(adaptive.after.channelClippingPercent.red)}," +
+                            "${formatMetric(adaptive.after.channelClippingPercent.green)}," +
+                            "${formatMetric(adaptive.after.channelClippingPercent.blue)} " +
+                            "foregroundDifferenceOutsideMask=${adaptive.foregroundDifferenceOutsideMask} " +
+                            "processingDurationMs=${adaptive.processingDurationMillis}"
+                    )
+                    logProfileStage(
+                        profile,
+                        source,
+                        "adaptiveStage4",
+                        analyzeProfileImage(adaptiveResult.image, recipe.roi, recipe.sensitivity)
+                    )
+                    processedCandidate = ResultCandidate(
+                        ResultCandidateType.PROCESSED,
+                        adaptiveResult.image,
+                        qualityAnalyzer.analyze(adaptiveResult.image, referenceImage, effectiveSkyAlpha)
+                    )
+                    processedDecision = qualityGate.evaluateProcessed(
+                        referenceCandidate,
+                        cleanStackCandidate,
+                        processedCandidate,
+                        profile,
+                        acceptedFrames
+                    )
+                } else {
+                    pipelineTiming.record("stage4_skipped", 0L)
+                    processedCandidate = ResultCandidate(
+                        ResultCandidateType.PROCESSED,
+                        referenceImage,
+                        referenceCandidate.metrics
+                    )
+                    processedDecision = QualityGateDecision(
+                        accepted = false,
+                        score = 0f,
+                        hardFailureReasons = listOf("stage4_skipped_clean_stack_invalid"),
+                        warningReasons = cleanStackDecision.warningReasons,
+                        metrics = referenceCandidate.metrics
+                    )
+                    Log.w(
+                        ADAPTIVE_PROCESSING_TAG,
+                        "stage4Skipped=true reason=clean_stack_invalid " +
+                            "hardFailures=${cleanStackDecision.hardFailureReasons.joinToString("|")}"
+                    )
+                }
+                currentStage = "Final quality analysis"
                 val finalSelection = ResultSelectionPolicy().select(
                     referenceCandidate,
                     cleanStackCandidate,
@@ -1622,7 +1788,8 @@ class JpegStacker(private val context: Context) {
                         validCoveragePercent = integrationDiagnostics.validCoveragePercent,
                         estimatedWorkingMemoryBytes = integrationDiagnostics.estimatedPeakWorkingMemoryBytes,
                         outputAllocationBytes = targetWidth.toLong() * targetHeight * Int.SIZE_BYTES,
-                        diskCacheBytes = requiredCacheBytes
+                        diskCacheBytes = requiredCacheBytes,
+                        robustModeReason = integrationDiagnostics.robustModeReason
                     ),
                     stage4Parameters = ExistingPresetParameterMapper.parametersFor(
                         profile,
@@ -1642,7 +1809,28 @@ class JpegStacker(private val context: Context) {
                             processedDecision.warningReasons
                         ).distinct(),
                     outputPngDisplayName = fileName,
-                    stageDurationsMillis = pipelineTiming.snapshot()
+                    stageDurationsMillis = pipelineTiming.snapshot(),
+                    stage4Executed = stage4Executed,
+                    cleanStackAccepted = cleanStackDecision.accepted,
+                    cleanStackRejectionReasons = cleanStackDecision.hardFailureReasons,
+                    referenceReliableStarCount = retentionValidation.metrics.referenceReliableStarCount,
+                    retainedReferenceStarCount = retentionValidation.metrics.retainedReferenceStarCount,
+                    referenceStarRetentionRatio = retentionValidation.metrics.retentionRatio,
+                    referenceStarContrastBefore = retentionValidation.metrics.medianContrastBefore,
+                    referenceStarContrastAfter = retentionValidation.metrics.medianContrastAfter,
+                    referenceStarWidthBefore = retentionValidation.metrics.medianWidthBefore,
+                    referenceStarWidthAfter = retentionValidation.metrics.medianWidthAfter,
+                    referenceStarSmearRate = retentionValidation.metrics.lineLikeSmearRate,
+                    coverageMinimum = coverageValidation.metrics.minimumCoverage,
+                    coverageMedian = coverageValidation.metrics.medianCoverage,
+                    coverageMaximum = coverageValidation.metrics.maximumCoverage,
+                    coverageUniformityScore = coverageValidation.metrics.uniformityScore,
+                    coverageWedgeDiscontinuityScore = coverageValidation.metrics.wedgeDiscontinuityScore,
+                    lineArtifactScore = lineArtifactValidation.metrics.lineArtifactScore,
+                    fanPatternScore = lineArtifactValidation.metrics.fanPatternScore,
+                    transformSequenceScore = transformSequenceScore,
+                    staticArtifactCandidates = staticArtifactMask.regions.size,
+                    staticArtifactMaskRatio = staticArtifactMask.maskRatio
                 )
                 currentStage = "Writing processing report"
                 val reportOutcome = try {
@@ -1819,7 +2007,8 @@ class JpegStacker(private val context: Context) {
     private data class AcceptedProfileFrame(
         val frame: SessionFrame,
         val analysis: FrameAnalysis,
-        val registration: RegistrationResult
+        val registration: RegistrationResult,
+        val captureIndex: Int = 0
     )
 
     private fun decodeMedianFrame(
@@ -2094,7 +2283,8 @@ class JpegStacker(private val context: Context) {
         candidate: FrameAnalysis,
         targetWidth: Int,
         targetHeight: Int,
-        registrar: StarSimilarityRegistrar
+        registrar: StarSimilarityRegistrar,
+        forceTranslationOnly: Boolean
     ): RegistrationResult {
         if (!candidate.decodeValid) {
             return RegistrationResult.rejected(
@@ -2103,17 +2293,22 @@ class JpegStacker(private val context: Context) {
                 reason = "JPEG analysis failed"
             )
         }
-        val registration = registrar.register(
+        val registration = registrar.registerAutomatic(
             referenceStars = reference.stars,
             candidateStars = candidate.stars,
             imageWidth = reference.width,
-            imageHeight = reference.height
+            imageHeight = reference.height,
+            forceTranslationOnly = forceTranslationOnly
         )
         val scaleX = targetWidth.toFloat() / reference.width.coerceAtLeast(1)
         val scaleY = targetHeight.toFloat() / reference.height.coerceAtLeast(1)
         return registration.copy(
             dx = registration.dx * scaleX,
-            dy = registration.dy * scaleY
+            dy = registration.dy * scaleY,
+            scale = 1f,
+            scaleFixed = true,
+            rawDx = registration.rawDx * scaleX,
+            rawDy = registration.rawDy * scaleY
         )
     }
 
@@ -2125,7 +2320,20 @@ class JpegStacker(private val context: Context) {
                 "dx=${formatMetric(registration.dx)} dy=${formatMetric(registration.dy)} " +
                 "rotation=${formatMetric(registration.rotationRadians)} " +
                 "scale=${formatMetric(registration.scale)} " +
+                "model=${registration.registrationModel} scaleFixed=${registration.scaleFixed} " +
+                "rotationAllowed=${registration.rotationAllowed} " +
+                "rotationRejectionReason=${registration.rotationRejectionReason.orEmpty()} " +
+                "occupiedCells=${registration.occupiedDistributionCells} " +
+                "horizontalSpan=${formatMetric(registration.horizontalDistributionSpan)} " +
+                "verticalSpan=${formatMetric(registration.verticalDistributionSpan)} " +
+                "distributionScore=${formatMetric(registration.spatialDistributionScore)} " +
                 "residual=${formatMetric(registration.residualError)} " +
+                "rawDx=${formatMetric(registration.rawDx)} rawDy=${formatMetric(registration.rawDy)} " +
+                "rawRotation=${formatMetric(registration.rawRotationRadians)} " +
+                "sequenceScore=${formatMetric(registration.transformSequenceScore)} " +
+                "sequenceDeviation=${formatMetric(registration.transformSequenceDeviation)} " +
+                "neighborDelta=${formatMetric(registration.neighborTransformDelta)} " +
+                "retryUsed=${registration.transformRetryUsed} " +
                 "confidence=${formatMetric(registration.confidence)} " +
                 "accepted=${registration.isReliable} " +
                 "rejectionReason=${registration.rejectionReason.orEmpty()}"
@@ -3174,7 +3382,7 @@ class JpegStacker(private val context: Context) {
     }
 }
 
-private fun RegistrationResult.toReport(frameName: String): FrameRegistrationReport =
+internal fun RegistrationResult.toReport(frameName: String): FrameRegistrationReport =
     FrameRegistrationReport(
         frameName = frameName,
         accepted = isReliable,
@@ -3187,15 +3395,36 @@ private fun RegistrationResult.toReport(frameName: String): FrameRegistrationRep
         rotationRadians = rotationRadians,
         scale = scale,
         residualError = residualError,
-        confidence = confidence
+        confidence = confidence,
+        registrationModel = registrationModel,
+        scaleFixed = scaleFixed,
+        rotationAllowed = rotationAllowed,
+        rotationRejectionReason = rotationRejectionReason,
+        occupiedDistributionCells = occupiedDistributionCells,
+        horizontalDistributionSpan = horizontalDistributionSpan,
+        verticalDistributionSpan = verticalDistributionSpan,
+        spatialDistributionScore = spatialDistributionScore,
+        rawDx = rawDx,
+        rawDy = rawDy,
+        rawRotationRadians = rawRotationRadians,
+        transformSequenceScore = transformSequenceScore,
+        transformSequenceDeviation = transformSequenceDeviation,
+        neighborTransformDelta = neighborTransformDelta,
+        transformRetryUsed = transformRetryUsed
     )
 
-private fun qualityFallbackWarning(
+internal fun qualityFallbackWarning(
     selectedType: ResultCandidateType,
     reason: String
 ): String {
     val cause = when {
-        "star_" in reason || "points" in reason -> "ухудшилась передача звёзд"
+        "star_" in reason || "retention" in reason || "smear" in reason || "points" in reason ->
+            "звёзды стали менее резкими или заметными"
+        "coverage" in reason -> "покрытие неба оказалось неоднородным"
+        "line" in reason || "fan" in reason || "streak" in reason ->
+            "появились новые линейные артефакты"
+        "transform_sequence" in reason || "registered_frames" in reason ->
+            "движение кадров оказалось недостаточно надёжным"
         "noise" in reason || "mad" in reason -> "увеличился шум фона"
         "median" in reason || "gray" in reason -> "фон стал слишком ярким"
         "banding" in reason -> "усилился бандинг"
@@ -3211,7 +3440,12 @@ private fun qualityFallbackWarning(
     } else {
         "Сохранён выбранный опорный кадр."
     }
-    return "Preset-обработка отклонена: $cause. $saved"
+    val action = if (selectedType == ResultCandidateType.REFERENCE) {
+        "Стекинг отклонён: $cause."
+    } else {
+        "Preset-обработка отклонена: $cause."
+    }
+    return "$action $saved"
 }
 
 private fun resultCandidateTitle(type: String?): String = when (type) {
