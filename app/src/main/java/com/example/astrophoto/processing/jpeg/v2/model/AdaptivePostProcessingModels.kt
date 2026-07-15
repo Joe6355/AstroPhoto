@@ -114,7 +114,8 @@ data class AdaptiveProcessingDiagnostics(
     val chromaNoise: ChromaNoiseDiagnostics,
     val starEnhancement: StarEnhancementDiagnostics,
     val foregroundDifferenceOutsideMask: Int,
-    val processingDurationMillis: Long
+    val processingDurationMillis: Long,
+    val stageDurationsMillis: Map<String, Long> = emptyMap()
 )
 
 data class PresetProcessingResult(

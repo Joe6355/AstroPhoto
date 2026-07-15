@@ -74,6 +74,13 @@ import com.example.astrophoto.processing.jpeg.v2.analysis.JpegStarDetector
 import com.example.astrophoto.processing.jpeg.v2.analysis.ReferenceFrameSelector
 import com.example.astrophoto.processing.jpeg.v2.composition.MaskFeathering
 import com.example.astrophoto.processing.jpeg.v2.composition.SkyForegroundComposer
+import com.example.astrophoto.processing.jpeg.v2.diagnostics.FrameRegistrationReport
+import com.example.astrophoto.processing.jpeg.v2.diagnostics.FrameWeightReport
+import com.example.astrophoto.processing.jpeg.v2.diagnostics.IntegrationReport
+import com.example.astrophoto.processing.jpeg.v2.diagnostics.PipelineTimingCollector
+import com.example.astrophoto.processing.jpeg.v2.diagnostics.ProcessingReport
+import com.example.astrophoto.processing.jpeg.v2.diagnostics.ProcessingReportWriter
+import com.example.astrophoto.processing.jpeg.v2.diagnostics.ReportWriteOutcome
 import com.example.astrophoto.processing.jpeg.v2.integration.FrameWeightCalculator
 import com.example.astrophoto.processing.jpeg.v2.integration.FrameWeightInput
 import com.example.astrophoto.processing.jpeg.v2.integration.LinearWeightedIntegrator
@@ -87,10 +94,16 @@ import com.example.astrophoto.processing.jpeg.v2.model.DetectedStar as V2Detecte
 import com.example.astrophoto.processing.jpeg.v2.model.FrameAnalysis
 import com.example.astrophoto.processing.jpeg.v2.model.RegistrationResult
 import com.example.astrophoto.processing.jpeg.v2.model.RefinedSkyMask
+import com.example.astrophoto.processing.jpeg.v2.model.ResultCandidate
+import com.example.astrophoto.processing.jpeg.v2.model.ResultCandidateType
 import com.example.astrophoto.processing.jpeg.v2.model.SkyMask
 import com.example.astrophoto.processing.jpeg.v2.model.SkyMaskResult
 import com.example.astrophoto.processing.jpeg.v2.output.LosslessProcessedImageWriter
 import com.example.astrophoto.processing.jpeg.v2.postprocessing.AdaptivePresetProcessor
+import com.example.astrophoto.processing.jpeg.v2.profile.ExistingPresetParameterMapper
+import com.example.astrophoto.processing.jpeg.v2.quality.AstroResultQualityGate
+import com.example.astrophoto.processing.jpeg.v2.quality.ResultQualityAnalyzer
+import com.example.astrophoto.processing.jpeg.v2.quality.ResultSelectionPolicy
 import com.example.astrophoto.processing.jpeg.v2.registration.StarSimilarityRegistrar
 import com.example.astrophoto.processing.jpeg.v2.sampling.ArgbFrameDiskCache
 import com.example.astrophoto.processing.jpeg.v2.sampling.FileBackedArgbPixelSource
@@ -110,7 +123,11 @@ data class JpegStackResult(
     val astroStretchApplied: Boolean = false,
     val downscaled: Boolean = false,
     val profile: AstroProcessingProfile? = null,
+    val selectedResultType: String? = null,
+    val starsBefore: Int? = null,
     val starCount: Int? = null,
+    val fallbackUsed: Boolean = false,
+    val fallbackReason: String? = null,
     val warnings: List<String> = emptyList(),
     val additionalFiles: List<String> = emptyList()
 )
@@ -897,6 +914,7 @@ class JpegStacker(private val context: Context) {
             }
             currentStage = "Выбор рецепта"
             val recipe = profileRecipe(profile, frames.size)
+            val pipelineTiming = PipelineTimingCollector()
             Log.i(
                 PROFILE_REGISTRATION_TAG,
                 "selectedPreset=${profile.name} inputFrameCount=${frames.size}"
@@ -924,6 +942,7 @@ class JpegStacker(private val context: Context) {
             val analysisHeight = maxOf(1, (commonHeight * analysisScale).roundToInt())
             val skyMaskEstimator = SkyMaskEstimator()
             val frameAnalyzer = JpegFrameAnalyzer()
+            val frameAnalysisStarted = System.nanoTime()
             val analyzedFrames = cappedFrames.map { frame ->
                 val analyzed = runCatching {
                     val sample = decodeMedianFrame(frame, analysisWidth, analysisHeight)
@@ -967,7 +986,16 @@ class JpegStacker(private val context: Context) {
                 )
                 analyzed
             }
+            pipelineTiming.record(
+                "frame_analysis",
+                (System.nanoTime() - frameAnalysisStarted) / 1_000_000L
+            )
+            val referenceSelectionStarted = System.nanoTime()
             val referenceSelection = ReferenceFrameSelector().select(analyzedFrames.map { it.analysis })
+            pipelineTiming.record(
+                "reference_selection",
+                (System.nanoTime() - referenceSelectionStarted) / 1_000_000L
+            )
             val selectedReference = analyzedFrames.first {
                 it.analysis.id == referenceSelection.analysis.id
             }
@@ -1004,7 +1032,6 @@ class JpegStacker(private val context: Context) {
             )
             val warnings = mutableListOf<String>()
             var output: Bitmap? = null
-            var safeIntermediate: ArgbPixelImage? = null
             var integrationCacheDirectory: File? = null
             var refinedSkyMask: RefinedSkyMask? = null
             var compositionDiagnostics: CompositeDiagnostics? = null
@@ -1019,9 +1046,11 @@ class JpegStacker(private val context: Context) {
             var fallback = "none"
             var fallbackReason = ""
             val registrar = StarSimilarityRegistrar()
+            val registrationReports = mutableListOf<FrameRegistrationReport>()
 
             try {
                 currentStage = "Stage 1 registration"
+                val registrationStarted = System.nanoTime()
                 withContext(Dispatchers.Main.immediate) {
                     onProgress("Star alignment", 0, selectedFrames.size)
                 }
@@ -1042,6 +1071,9 @@ class JpegStacker(private val context: Context) {
                     isReliable = true,
                     rejectionReason = null,
                     referenceStars = referenceStars
+                )
+                registrationReports += referenceRegistration.toReport(
+                    selectedReference.frame.fileName
                 )
                 val acceptedProfileFrames = mutableListOf(
                     AcceptedProfileFrame(
@@ -1069,6 +1101,7 @@ class JpegStacker(private val context: Context) {
                         targetHeight = targetHeight,
                         registrar = registrar
                     )
+                    registrationReports += registration.toReport(frame.fileName)
                     logProfileRegistration(frame.fileName, registration)
                     if (registration.isReliable) {
                         acceptedProfileFrames += AcceptedProfileFrame(
@@ -1095,7 +1128,12 @@ class JpegStacker(private val context: Context) {
                     "selectedPreset=${profile.name} totalAccepted=$acceptedFrames " +
                         "totalRejected=$alignmentRejected"
                 )
+                pipelineTiming.record(
+                    "registration",
+                    (System.nanoTime() - registrationStarted) / 1_000_000L
+                )
                 currentStage = "Calculating frame weights"
+                val weightCalculationStarted = System.nanoTime()
                 withContext(Dispatchers.Main.immediate) {
                     onProgress("Calculating frame weights", 0, acceptedFrames)
                 }
@@ -1122,6 +1160,10 @@ class JpegStacker(private val context: Context) {
                             "normalizedWeight=${formatMetric(weight.normalizedWeight)}"
                     )
                 }
+                pipelineTiming.record(
+                    "weight_calculation",
+                    (System.nanoTime() - weightCalculationStarted) / 1_000_000L
+                )
                 currentStage = "Stacking full-resolution image"
                 withContext(Dispatchers.Main.immediate) {
                     onProgress("Stacking full-resolution image", 0, 1)
@@ -1221,6 +1263,7 @@ class JpegStacker(private val context: Context) {
                         }
                     }
                 )
+                pipelineTiming.record("integration", integrationDiagnostics.processingDurationMillis)
                 Log.i(
                     PROFILE_REGISTRATION_TAG,
                     "preset=${profile.name} reference=${selectedReference.frame.fileName} " +
@@ -1238,6 +1281,7 @@ class JpegStacker(private val context: Context) {
                         "resolutionChanged=${integrationDiagnostics.resolutionChanged}"
                 )
                 currentStage = "Refining sky mask"
+                val skyMaskingStarted = System.nanoTime()
                 withContext(Dispatchers.Main.immediate) {
                     onProgress("Refining sky mask", 0, 3)
                 }
@@ -1299,6 +1343,10 @@ class JpegStacker(private val context: Context) {
                         featherRadius = featherRadius
                     )
                 )
+                pipelineTiming.record(
+                    "sky_masking",
+                    (System.nanoTime() - skyMaskingStarted) / 1_000_000L
+                )
                 val validCoverageMask = AlphaMask(
                     targetWidth,
                     targetHeight,
@@ -1314,28 +1362,18 @@ class JpegStacker(private val context: Context) {
                 )
                 val effectiveSkyAlpha = baseComposite.effectiveSkyAlpha
                 compositionDiagnostics = baseComposite.diagnostics
+                pipelineTiming.record(
+                    "foreground_composition",
+                    baseComposite.diagnostics.compositionDurationMillis
+                )
                 output?.takeUnless(Bitmap::isRecycled)?.recycle()
                 output = null
-                fun restoreReferenceForeground(): CompositeDiagnostics {
-                    val composite = composer.compose(
-                        stackedSky = bitmapToArgbImage(checkNotNull(output)),
-                        reference = referenceImage,
-                        featheredSkyMask = effectiveSkyAlpha,
-                        validCoverage = effectiveSkyAlpha,
-                        precomputedEffectiveSkyAlpha = effectiveSkyAlpha
-                    )
-                    output?.takeUnless(Bitmap::isRecycled)?.recycle()
-                    output = bitmapFromArgbImage(composite.image)
-                    compositionDiagnostics = composite.diagnostics
-                    return composite.diagnostics
-                }
                 currentStage = "Combining sky and foreground"
                 withContext(Dispatchers.Main.immediate) {
                     onProgress("Combining sky and foreground", 2, 3)
                 }
-                safeIntermediate = baseComposite.image
                 val beforeMetrics = analyzeProfileImage(
-                    checkNotNull(safeIntermediate),
+                    baseComposite.image,
                     recipe.roi,
                     recipe.sensitivity
                 )
@@ -1367,9 +1405,8 @@ class JpegStacker(private val context: Context) {
                         }
                     }
                 )
-                output?.takeUnless(Bitmap::isRecycled)?.recycle()
-                output = bitmapFromArgbImage(adaptiveResult.image)
                 val adaptive = adaptiveResult.diagnostics
+                pipelineTiming.recordAll(adaptive.stageDurationsMillis)
                 Log.i(
                     ADAPTIVE_PROCESSING_TAG,
                     "preset=${adaptive.preset} " +
@@ -1412,58 +1449,80 @@ class JpegStacker(private val context: Context) {
                     profile,
                     source,
                     "adaptiveStage4",
-                    analyzeProfileBitmap(checkNotNull(output), recipe)
+                    analyzeProfileImage(adaptiveResult.image, recipe.roi, recipe.sensitivity)
                 )
 
-                currentStage = "Sanity check"
-                var afterMetrics = analyzeProfileBitmap(checkNotNull(output), recipe)
-                when (val sanity = evaluateProfileSanity(beforeMetrics, afterMetrics)) {
-                    is ProfileSanityResult.Passed -> sanityStatus = "passed"
-                    is ProfileSanityResult.Failed -> {
-                        sanityStatus = "failed"
-                        val aggressive = profile == AstroProcessingProfile.MAX_STARS ||
-                            profile == AstroProcessingProfile.URBAN_SKY_STRONG
-                        if (!aggressive) {
-                            Log.w(
-                                "AstroPhotoProcessing",
-                                "Profile ${profile.title} rejected at $currentStage: ${sanity.reason}"
-                            )
-                            return@withContext rejectedProfileSanityResult(sanity.reason)
-                        }
-                        when (val recovered = recoverStarsFromIntermediate(
-                            checkNotNull(safeIntermediate),
-                            recipe.roi,
-                            recipe.sensitivity,
-                            sanity.reason
-                        )) {
-                            is RecoveredStarsResult.Recovered -> {
-                                output?.recycle()
-                                output = bitmapFromArgbImage(recovered.image)
-                                restoreReferenceForeground()
-                                afterMetrics = analyzeProfileBitmap(checkNotNull(output), recipe)
-                                sanityStatus = "passed"
-                                fallback = "RecoveredStars"
-                                fallbackReason = sanity.reason
-                                warnings += "Использован RecoveredStars: ${sanity.reason}"
-                            }
-                            is RecoveredStarsResult.Failed -> {
-                                Log.w(
-                                    "AstroPhotoProcessing",
-                                    "Profile ${profile.title} recovery rejected at $currentStage: " +
-                                        recovered.reason
-                                )
-                                return@withContext rejectedProfileSanityResult(recovered.reason)
-                            }
-                        }
-                    }
-                }
-                finalStars = afterMetrics.stars
-                logProfileStage(
-                    profile,
-                    source,
-                    if (fallback == "RecoveredStars") "recoveredSanity" else "finalSanity",
-                    afterMetrics
+                currentStage = "Final quality analysis"
+                val qualityAnalysisStarted = System.nanoTime()
+                val qualityAnalyzer = ResultQualityAnalyzer()
+                val referenceCandidate = ResultCandidate(
+                    ResultCandidateType.REFERENCE,
+                    referenceImage,
+                    qualityAnalyzer.analyze(referenceImage, referenceImage, effectiveSkyAlpha)
                 )
+                val cleanStackCandidate = ResultCandidate(
+                    ResultCandidateType.CLEAN_STACK,
+                    baseComposite.image,
+                    qualityAnalyzer.analyze(baseComposite.image, referenceImage, effectiveSkyAlpha)
+                )
+                val processedCandidate = ResultCandidate(
+                    ResultCandidateType.PROCESSED,
+                    adaptiveResult.image,
+                    qualityAnalyzer.analyze(adaptiveResult.image, referenceImage, effectiveSkyAlpha)
+                )
+                val qualityGate = AstroResultQualityGate()
+                val cleanStackDecision = qualityGate.evaluateCleanStack(
+                    referenceCandidate,
+                    cleanStackCandidate,
+                    profile
+                )
+                val processedDecision = qualityGate.evaluateProcessed(
+                    referenceCandidate,
+                    cleanStackCandidate,
+                    processedCandidate,
+                    profile,
+                    acceptedFrames
+                )
+                val finalSelection = ResultSelectionPolicy().select(
+                    referenceCandidate,
+                    cleanStackCandidate,
+                    processedCandidate,
+                    processedDecision,
+                    cleanStackDecision
+                )
+                Log.i(
+                    "AstroPhotoJpegQuality",
+                    "preset=${profile.name} processedAccepted=${processedDecision.accepted} " +
+                        "processedScore=${formatMetric(processedDecision.score)} " +
+                        "processedHardFailures=${processedDecision.hardFailureReasons.joinToString("|")} " +
+                        "processedWarnings=${processedDecision.warningReasons.joinToString("|")} " +
+                        "cleanAccepted=${cleanStackDecision.accepted} " +
+                        "cleanScore=${formatMetric(cleanStackDecision.score)} " +
+                        "cleanHardFailures=${cleanStackDecision.hardFailureReasons.joinToString("|")} " +
+                        "selected=${finalSelection.selected.type.name}"
+                )
+                pipelineTiming.record(
+                    "quality_analysis",
+                    (System.nanoTime() - qualityAnalysisStarted) / 1_000_000L
+                )
+                output = bitmapFromArgbImage(finalSelection.selected.image)
+                val selectedProfileMetrics = analyzeProfileImage(
+                    finalSelection.selected.image,
+                    recipe.roi,
+                    recipe.sensitivity
+                )
+                finalStars = finalSelection.selected.metrics.reliableStarCount
+                sanityStatus = if (processedDecision.accepted) "passed" else "fallback"
+                fallback = finalSelection.internalFallbackLabel ?: "none"
+                fallbackReason = finalSelection.fallbackReason.orEmpty()
+                if (finalSelection.fallbackUsed) {
+                    warnings += qualityFallbackWarning(
+                        finalSelection.selected.type,
+                        fallbackReason
+                    )
+                }
+                logProfileStage(profile, source, "finalQualityGate", selectedProfileMetrics)
+
                 if (profile == AstroProcessingProfile.MAX_STARS) {
                     warnings += "Режим может усилить шум и артефакты"
                 }
@@ -1508,23 +1567,127 @@ class JpegStacker(private val context: Context) {
                 val now = System.currentTimeMillis()
                 val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
                     .format(Date(now))
-                val prefix = if (fallback == "RecoveredStars") "RecoveredStars" else profile.filePrefix
-                val requestedFileName = "${prefix}_$timestamp.png"
+                val requestedFileName = "${profile.filePrefix}_$timestamp.png"
+                val pngWritingStarted = System.nanoTime()
                 val saved = LosslessProcessedImageWriter(context).write(
                     session,
                     checkNotNull(output),
                     requestedFileName
                 )
+                pipelineTiming.record(
+                    "png_writing",
+                    (System.nanoTime() - pngWritingStarted) / 1_000_000L
+                )
                 val fileName = saved.fileName
+                pipelineTiming.record("report_writing", 0L)
+                val frameNameById = acceptedProfileFrames.associate {
+                    it.analysis.id to it.frame.fileName
+                }
+                val processingReport = ProcessingReport(
+                    timestampMillis = now,
+                    presetId = profile.name,
+                    presetDisplayName = profile.title,
+                    inputFrameCount = frames.size + framesRejected,
+                    eligibleFrameCount = selectedFrames.size,
+                    acceptedFrameCount = acceptedFrames,
+                    rejectedFrameCount = framesRejected +
+                        (frames.size - selectedFrames.size) + alignmentRejected,
+                    selectedReference = selectedReference.frame.fileName,
+                    skyMaskConfidence = finalMask.confidence,
+                    skyRatio = effectiveSkyAlpha.copyValues().count { it > 0f }.toFloat() /
+                        (targetWidth * targetHeight).coerceAtLeast(1),
+                    foregroundRatio = 1f - finalMask.binaryMask.retainedFraction(),
+                    registrations = registrationReports.toList(),
+                    frameWeights = frameWeights.map { weight ->
+                        FrameWeightReport(
+                            frameName = frameNameById[weight.frameId] ?: weight.frameId,
+                            registrationWeight = weight.registrationWeight,
+                            sharpnessWeight = weight.sharpnessWeight,
+                            trailWeight = weight.trailWeight,
+                            noiseWeight = weight.noiseWeight,
+                            exposureWeight = weight.exposureWeight,
+                            normalizedWeight = weight.normalizedWeight
+                        )
+                    },
+                    integration = IntegrationReport(
+                        mode = integrationDiagnostics.mode.name,
+                        robustMode = integrationDiagnostics.robustModeEnabled,
+                        inputWidth = commonWidth,
+                        inputHeight = commonHeight,
+                        outputWidth = integrationDiagnostics.outputWidth,
+                        outputHeight = integrationDiagnostics.outputHeight,
+                        tileWidth = integrationDiagnostics.tileWidth,
+                        tileHeight = integrationDiagnostics.tileHeight,
+                        resolutionChanged = integrationDiagnostics.resolutionChanged,
+                        validCoveragePercent = integrationDiagnostics.validCoveragePercent,
+                        estimatedWorkingMemoryBytes = integrationDiagnostics.estimatedPeakWorkingMemoryBytes,
+                        outputAllocationBytes = targetWidth.toLong() * targetHeight * Int.SIZE_BYTES,
+                        diskCacheBytes = requiredCacheBytes
+                    ),
+                    stage4Parameters = ExistingPresetParameterMapper.parametersFor(
+                        profile,
+                        acceptedFrames
+                    ),
+                    referenceMetrics = referenceCandidate.metrics,
+                    cleanStackMetrics = cleanStackCandidate.metrics,
+                    processedMetrics = processedCandidate.metrics,
+                    cleanStackDecision = cleanStackDecision,
+                    processedDecision = processedDecision,
+                    selectedCandidateType = finalSelection.selected.type.name,
+                    fallbackUsed = finalSelection.fallbackUsed,
+                    fallbackReason = finalSelection.fallbackReason,
+                    internalFallbackLabel = finalSelection.internalFallbackLabel,
+                    warnings = (
+                        warnings + cleanStackDecision.warningReasons +
+                            processedDecision.warningReasons
+                        ).distinct(),
+                    outputPngDisplayName = fileName,
+                    stageDurationsMillis = pipelineTiming.snapshot()
+                )
+                currentStage = "Writing processing report"
+                val reportOutcome = try {
+                    ReportWriteOutcome.Written(
+                        ProcessingReportWriter(context).write(
+                            session,
+                            fileName,
+                            processingReport.toJson()
+                        )
+                    )
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    ReportWriteOutcome.Failed(
+                        error.message ?: error::class.java.simpleName
+                    )
+                }
+                val additionalFiles = when (reportOutcome) {
+                    is ReportWriteOutcome.Written -> {
+                        pipelineTiming.record(
+                            "report_writing",
+                            reportOutcome.value.writeDurationMillis
+                        )
+                        listOf(reportOutcome.value.fileName)
+                    }
+                    is ReportWriteOutcome.Failed -> {
+                        warnings += "Processing report was not written: ${reportOutcome.reason}"
+                        emptyList()
+                    }
+                }
+                Log.i(
+                    "AstroPhotoJpegTiming",
+                    pipelineTiming.snapshot().entries.joinToString(" ") { (stage, duration) ->
+                        "$stage=${duration}ms"
+                    }
+                )
                 Log.i(
                     "AstroPhotoProfile",
                     "profile=${profile.name} source=${source.metadataValue} " +
                         "inputFrames=${selectedFrames.size} acceptedFrames=$acceptedFrames " +
                         "alignedFrames=$alignmentApplied " +
                         "alignmentFailures=$alignmentRejected stackingMethod=linearWeighted " +
-                        "starsBefore=${beforeMetrics.stars} starsAfter=${afterMetrics.stars} " +
+                        "starsBefore=${beforeMetrics.stars} starsAfter=${selectedProfileMetrics.stars} " +
                         "backgroundBefore=${beforeMetrics.background} " +
-                        "backgroundAfter=${afterMetrics.background} sanity=$sanityStatus " +
+                        "backgroundAfter=${selectedProfileMetrics.background} sanity=$sanityStatus " +
                         "fallback=$fallback fallbackReason=$fallbackReason outputName=$fileName"
                 )
                 val infoUpdated = runCatching {
@@ -1532,7 +1695,7 @@ class JpegStacker(private val context: Context) {
                         session = session,
                         fileName = fileName,
                         profile = profile,
-                        method = "Full-resolution linear weighted sky + adaptive sky-only Stage 4 + protected reference foreground",
+                        method = "Full-resolution JPEG v2 Stage 5 with final quality gate and safe candidate fallback",
                         framesUsed = acceptedFrames,
                         framesRejected = framesRejected + (frames.size - selectedFrames.size) +
                             alignmentRejected,
@@ -1564,9 +1727,13 @@ class JpegStacker(private val context: Context) {
                     astroStretchApplied = true,
                     downscaled = false,
                     profile = profile,
+                    selectedResultType = finalSelection.selected.type.name,
+                    starsBefore = cleanStackCandidate.metrics.reliableStarCount,
                     starCount = finalStars,
+                    fallbackUsed = finalSelection.fallbackUsed,
+                    fallbackReason = finalSelection.fallbackReason,
                     warnings = warnings.distinct(),
-                    additionalFiles = emptyList()
+                    additionalFiles = additionalFiles
                 )
             } catch (error: OutOfMemoryError) {
                 throw IllegalStateException(
@@ -3007,6 +3174,53 @@ class JpegStacker(private val context: Context) {
     }
 }
 
+private fun RegistrationResult.toReport(frameName: String): FrameRegistrationReport =
+    FrameRegistrationReport(
+        frameName = frameName,
+        accepted = isReliable,
+        rejectionReason = rejectionReason,
+        detectedStars = detectedStars,
+        matchedStars = matchedStars,
+        inlierStars = inlierStars,
+        dx = dx,
+        dy = dy,
+        rotationRadians = rotationRadians,
+        scale = scale,
+        residualError = residualError,
+        confidence = confidence
+    )
+
+private fun qualityFallbackWarning(
+    selectedType: ResultCandidateType,
+    reason: String
+): String {
+    val cause = when {
+        "star_" in reason || "points" in reason -> "ухудшилась передача звёзд"
+        "noise" in reason || "mad" in reason -> "увеличился шум фона"
+        "median" in reason || "gray" in reason -> "фон стал слишком ярким"
+        "banding" in reason -> "усилился бандинг"
+        "foreground" in reason || "wire" in reason || "edge" in reason ->
+            "изменился защищённый передний план"
+        "dimension" in reason || "aspect" in reason || "crop" in reason || "border" in reason ->
+            "нарушились размеры или границы изображения"
+        "confidence" in reason -> "статистика неба была недостаточно надёжной"
+        else -> "результат не прошёл финальную проверку качества"
+    }
+    val saved = if (selectedType == ResultCandidateType.CLEAN_STACK) {
+        "Сохранён чистый стек."
+    } else {
+        "Сохранён выбранный опорный кадр."
+    }
+    return "Preset-обработка отклонена: $cause. $saved"
+}
+
+private fun resultCandidateTitle(type: String?): String = when (type) {
+    ResultCandidateType.PROCESSED.name -> "обработанный"
+    ResultCandidateType.CLEAN_STACK.name -> "чистый стек"
+    ResultCandidateType.REFERENCE.name -> "опорный кадр"
+    else -> "неизвестно"
+}
+
 private enum class JpegStackingMode(val title: String) {
     AVERAGE("Average"),
     AVERAGE_DARK("Average + Dark"),
@@ -3477,6 +3691,10 @@ fun JpegStackingBlock(
                         profileResults = profileResults + created
                         status = buildString {
                             append("Готово: ${created.fileName}")
+                            append("\nПринято кадров: ${created.frameCount} / ${validSource.frames.size}")
+                            append("\nВыбран результат: ${resultCandidateTitle(created.selectedResultType)}")
+                            append("\nЗвёзды: ${created.starsBefore ?: 0} → ${created.starCount ?: 0}")
+                            append("\nFallback: ${if (created.fallbackUsed) "да" else "нет"}")
                             created.warnings.forEach { append("\n$it") }
                         }
                         onStackCompleted()

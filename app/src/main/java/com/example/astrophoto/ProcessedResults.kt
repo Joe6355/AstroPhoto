@@ -71,6 +71,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.example.astrophoto.processing.jpeg.v2.diagnostics.processingReportFileName
 import com.example.astrophoto.ui.AstroEmptyState
 import com.example.astrophoto.ui.AstroErrorState
 import com.example.astrophoto.ui.AstroExpandableSection
@@ -209,6 +210,15 @@ private class ProcessedResultsRepository(private val context: Context) {
                 } == true
             }
             require(deleted) { "Файл уже удалён или недоступен" }
+            runCatching {
+                deletePairedProcessingReport(session, result)
+            }.onFailure { error ->
+                Log.w(
+                    "AstroPhotoResults",
+                    "Processed image was deleted, but its processing report could not be deleted",
+                    error
+                )
+            }
             runCatching {
                 appendDeletedResultInfo(session, result.fileName)
             }.isSuccess
@@ -542,6 +552,44 @@ private class ProcessedResultsRepository(private val context: Context) {
         )?.use { cursor ->
             cursor.moveToFirst() && cursor.getString(0) == expected
         } == true
+    }
+
+    private fun deletePairedProcessingReport(
+        session: SessionSummary,
+        result: ProcessedResult
+    ) {
+        val reportName = processingReportFileName(result.fileName)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val collection = MediaStore.Files.getContentUri("external")
+            val expectedPath =
+                "${Environment.DIRECTORY_PICTURES}/AstroPhoto/" +
+                    "${session.folderName}/Processed/"
+            val reportUris = context.contentResolver.query(
+                collection,
+                arrayOf(MediaStore.Files.FileColumns._ID),
+                "${MediaStore.Files.FileColumns.RELATIVE_PATH}=? AND " +
+                    "${MediaStore.Files.FileColumns.DISPLAY_NAME}=?",
+                arrayOf(expectedPath, reportName),
+                null
+            )?.use { cursor ->
+                buildList {
+                    while (cursor.moveToNext()) {
+                        add(ContentUris.withAppendedId(collection, cursor.getLong(0)))
+                    }
+                }
+            }.orEmpty()
+            reportUris.forEach { uri ->
+                context.contentResolver.delete(uri, null, null)
+            }
+            return
+        }
+
+        val imageFile = result.filePath?.let(::File) ?: return
+        val reportFile = File(imageFile.parentFile ?: return, reportName)
+        require(legacyResultBelongsToSession(reportFile, session)) {
+            "Processing report does not belong to the current session"
+        }
+        if (reportFile.exists()) reportFile.delete()
     }
 
     @Suppress("DEPRECATION")

@@ -32,12 +32,17 @@ class AdaptivePresetProcessor(
         require(profile != AstroProcessingProfile.NORMAL)
         val started = System.nanoTime()
         val parameters = ExistingPresetParameterMapper.parametersFor(profile, frameCount)
+        val stageDurations = linkedMapOf<String, Long>()
+        fun elapsed(stageStarted: Long): Long = (System.nanoTime() - stageStarted) / 1_000_000L
 
         onProgress("Analyzing sky", 0, TOTAL_STAGES)
+        var stageStarted = System.nanoTime()
         val before = statistics.calculate(stackedSky, effectiveSkyAlpha, alignedStackStars)
+        stageDurations["sky_statistics"] = elapsed(stageStarted)
         var working = stackedSky
 
         onProgress("Removing light pollution", 1, TOTAL_STAGES)
+        stageStarted = System.nanoTime()
         val gradientDiagnostics = gradientRemoval.apply(
             working,
             effectiveSkyAlpha,
@@ -49,9 +54,11 @@ class AdaptivePresetProcessor(
             working = result.image
             result.diagnostics
         }
+        stageDurations["gradient_removal"] = elapsed(stageStarted)
         var currentStatistics = statistics.calculate(working, effectiveSkyAlpha, alignedStackStars)
 
         onProgress("Balancing sky color", 2, TOTAL_STAGES)
+        stageStarted = System.nanoTime()
         val neutralizationDiagnostics = neutralizer.apply(
             working,
             effectiveSkyAlpha,
@@ -63,9 +70,11 @@ class AdaptivePresetProcessor(
             working = result.image
             result.diagnostics
         }
+        stageDurations["background_neutralization"] = elapsed(stageStarted)
         currentStatistics = statistics.calculate(working, effectiveSkyAlpha, alignedStackStars)
 
         onProgress("Stretching faint stars", 3, TOTAL_STAGES)
+        stageStarted = System.nanoTime()
         val stretchDiagnostics = stretch.apply(
             working,
             effectiveSkyAlpha,
@@ -80,9 +89,11 @@ class AdaptivePresetProcessor(
             working = result.image
             result.diagnostics
         }
+        stageDurations["stretch"] = elapsed(stageStarted)
         currentStatistics = statistics.calculate(working, effectiveSkyAlpha, alignedStackStars)
 
         onProgress("Reducing color noise", 4, TOTAL_STAGES)
+        stageStarted = System.nanoTime()
         val chromaNoiseDiagnostics = chromaNoiseReducer.apply(
             working,
             effectiveSkyAlpha,
@@ -94,9 +105,11 @@ class AdaptivePresetProcessor(
             working = result.image
             result.diagnostics
         }
+        stageDurations["chroma_reduction"] = elapsed(stageStarted)
 
         onProgress("Enhancing stars", 5, TOTAL_STAGES)
         currentStatistics = statistics.calculate(working, effectiveSkyAlpha, alignedStackStars)
+        stageStarted = System.nanoTime()
         val starEnhancementDiagnostics = starEnhancer.apply(
             working,
             effectiveSkyAlpha,
@@ -109,6 +122,7 @@ class AdaptivePresetProcessor(
             working = result.image
             result.diagnostics
         }
+        stageDurations["star_enhancement"] = elapsed(stageStarted)
         var safeSky = working
         var after = statistics.calculate(safeSky, effectiveSkyAlpha, alignedStackStars)
         val safetyScale = finalSafetyScale(
@@ -121,6 +135,7 @@ class AdaptivePresetProcessor(
             safeSky = blendLinearSky(stackedSky, safeSky, effectiveSkyAlpha, safetyScale)
             after = statistics.calculate(safeSky, effectiveSkyAlpha, alignedStackStars)
         }
+        stageStarted = System.nanoTime()
         val composite = composer.compose(
             stackedSky = safeSky,
             reference = referenceForeground,
@@ -128,6 +143,7 @@ class AdaptivePresetProcessor(
             validCoverage = effectiveSkyAlpha,
             precomputedEffectiveSkyAlpha = effectiveSkyAlpha
         )
+        stageDurations["foreground_composition"] = elapsed(stageStarted)
         val diagnostics = AdaptiveProcessingDiagnostics(
             preset = profile.name,
             before = before,
@@ -140,7 +156,8 @@ class AdaptivePresetProcessor(
             chromaNoise = chromaNoiseDiagnostics,
             starEnhancement = starEnhancementDiagnostics,
             foregroundDifferenceOutsideMask = composite.diagnostics.maximumForegroundChannelDifference,
-            processingDurationMillis = (System.nanoTime() - started) / 1_000_000L
+            processingDurationMillis = (System.nanoTime() - started) / 1_000_000L,
+            stageDurationsMillis = stageDurations
         )
         return PresetProcessingResult(composite.image, diagnostics)
     }
