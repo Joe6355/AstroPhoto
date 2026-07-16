@@ -20,7 +20,14 @@ data class ProcessingRunRecord(
     val runtimeMaxHeapBytes: Long,
     val heapUsedAtStartBytes: Long,
     val safeWorkingBudgetBytes: Long,
-    val failureKind: String?
+    val failureKind: String?,
+    val artifactSessionId: String? = null,
+    val outputFileName: String? = null,
+    val outputContentUri: String? = null,
+    val outputFilePath: String? = null,
+    val reportFileName: String? = null,
+    val reportContentUri: String? = null,
+    val reportFilePath: String? = null
 )
 
 class ProcessingRunJournal private constructor(private val directory: File) {
@@ -64,6 +71,33 @@ class ProcessingRunJournal private constructor(private val directory: File) {
         val updated = checkNotNull(read(runId)) { "Processing journal was not found" }.copy(
             updatedAtMillis = nowMillis,
             lastCompletedStage = completedStage
+        )
+        writeAtomic(updated)
+        return updated
+    }
+
+    fun updatePublishedArtifacts(
+        runId: String,
+        artifactSessionId: String,
+        outputFileName: String,
+        outputContentUri: String?,
+        outputFilePath: String?,
+        reportFileName: String,
+        reportContentUri: String?,
+        reportFilePath: String?,
+        nowMillis: Long = System.currentTimeMillis()
+    ): ProcessingRunRecord {
+        require(artifactSessionId.isNotBlank() && outputFileName.isNotBlank() && reportFileName.isNotBlank())
+        val updated = checkNotNull(read(runId)) { "Processing journal was not found" }.copy(
+            updatedAtMillis = nowMillis,
+            lastCompletedStage = "report_published",
+            artifactSessionId = artifactSessionId,
+            outputFileName = outputFileName,
+            outputContentUri = outputContentUri,
+            outputFilePath = outputFilePath,
+            reportFileName = reportFileName,
+            reportContentUri = reportContentUri,
+            reportFilePath = reportFilePath
         )
         writeAtomic(updated)
         return updated
@@ -132,6 +166,13 @@ class ProcessingRunJournal private constructor(private val directory: File) {
             setProperty("heapUsedAtStartBytes", record.heapUsedAtStartBytes.toString())
             setProperty("safeWorkingBudgetBytes", record.safeWorkingBudgetBytes.toString())
             record.failureKind?.let { setProperty("failureKind", it) }
+            record.artifactSessionId?.let { setProperty("artifactSessionId", it) }
+            record.outputFileName?.let { setProperty("outputFileName", it) }
+            record.outputContentUri?.let { setProperty("outputContentUri", it) }
+            record.outputFilePath?.let { setProperty("outputFilePath", it) }
+            record.reportFileName?.let { setProperty("reportFileName", it) }
+            record.reportContentUri?.let { setProperty("reportContentUri", it) }
+            record.reportFilePath?.let { setProperty("reportFilePath", it) }
         }
         FileOutputStream(temporary, false).use { output ->
             properties.store(output, null)
@@ -165,7 +206,14 @@ class ProcessingRunJournal private constructor(private val directory: File) {
             runtimeMaxHeapBytes = properties.required("runtimeMaxHeapBytes").toLong(),
             heapUsedAtStartBytes = properties.required("heapUsedAtStartBytes").toLong(),
             safeWorkingBudgetBytes = properties.required("safeWorkingBudgetBytes").toLong(),
-            failureKind = properties.getProperty("failureKind")
+            failureKind = properties.getProperty("failureKind"),
+            artifactSessionId = properties.getProperty("artifactSessionId"),
+            outputFileName = properties.getProperty("outputFileName"),
+            outputContentUri = properties.getProperty("outputContentUri"),
+            outputFilePath = properties.getProperty("outputFilePath"),
+            reportFileName = properties.getProperty("reportFileName"),
+            reportContentUri = properties.getProperty("reportContentUri"),
+            reportFilePath = properties.getProperty("reportFilePath")
         )
     }.getOrNull()
 

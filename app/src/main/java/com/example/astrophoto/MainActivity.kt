@@ -88,6 +88,7 @@ import com.example.astrophoto.ui.theme.AstroPhotoTheme
 import com.example.astrophoto.ui.theme.AstroColors
 import com.example.astrophoto.processing.jpeg.v2.diagnostics.ProcessingFailureSummary
 import com.example.astrophoto.processing.jpeg.v2.diagnostics.PreviousProcessingFailureDetector
+import com.example.astrophoto.processing.jpeg.v2.diagnostics.PreviousRunClassification
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
@@ -401,7 +402,17 @@ private fun AstroPhotoApp(initialProcessingFailure: ProcessingFailureSummary? = 
                 PreviousProcessingFailureDetector(context.applicationContext).dismiss(failure)
                 processingFailure = null
             },
-            title = { Text("JPEG-обработка была остановлена") },
+            title = {
+                Text(
+                    if (failure.classification ==
+                        PreviousRunClassification.PROCESSING_COMPLETED_UI_FAILURE
+                    ) {
+                        "JPEG-результат сохранён"
+                    } else {
+                        "JPEG-обработка была остановлена"
+                    }
+                )
+            },
             text = { Text(failure.message) },
             confirmButton = {
                 TextButton(

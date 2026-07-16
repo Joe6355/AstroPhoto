@@ -134,7 +134,9 @@ data class ProcessingReport(
     val lastCompletedStage: String = "report_prepared",
     val reportPublicationMode: String = "PRIMARY_WITH_APP_FILES_FALLBACK",
     val reportFallbackUsed: Boolean = false,
-    val staleRunRecoveryInformation: String? = null
+    val staleRunRecoveryInformation: String? = null,
+    val processingRunId: String? = null,
+    val artifactSessionId: String? = null
 ) {
     fun toJson(): String = buildString {
         append("{\n")
@@ -205,6 +207,8 @@ data class ProcessingReport(
         property("reportPublicationMode", reportPublicationMode)
         property("reportFallbackUsed", reportFallbackUsed)
         nullableProperty("staleRunRecoveryInformation", staleRunRecoveryInformation)
+        nullableProperty("processingRunId", processingRunId)
+        nullableProperty("artifactSessionId", artifactSessionId)
         property("selectedCandidateType", selectedCandidateType)
         property("fallbackUsed", fallbackUsed)
         nullableProperty("fallbackReason", fallbackReason)

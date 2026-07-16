@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.util.Log
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -56,6 +57,7 @@ import com.example.astrophoto.ui.AstroSpacing
 import com.example.astrophoto.ui.AstroTopBar
 import com.example.astrophoto.ui.theme.AstroColors
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -723,29 +725,44 @@ fun SessionDetailsScreen(
 
     LaunchedEffect(checkRefreshKey) {
         checkInProgress = true
-        val updatedSessions = repository.loadSessions()
-        val refreshedSummary = updatedSessions
-            .firstOrNull { it.folderName == session.folderName }
-            ?: currentSummary
-        currentSummary = refreshedSummary
-        val frames = framesRepository.loadFrames(refreshedSummary)
-        val marks = marksStore.loadOrCreate(refreshedSummary)
-        val existingKeys = frames.mapTo(mutableSetOf()) { it.key }
-        val existingBadKeys = marks.bad.intersect(existingKeys)
-        val existingAutoBadKeys = marks.autoBad
-            .intersect(existingKeys)
-            .intersect(existingBadKeys)
-        badFrameCount = existingBadKeys.size
-        autoBadFrameCount = existingAutoBadKeys.size
-        manualBadFrameCount = existingBadKeys.size - existingAutoBadKeys.size
-        stackingFrameCount = frames.count {
-            it.category == SessionFrameCategory.LIGHTS_JPEG &&
-                it.key !in existingBadKeys
+        try {
+            Log.i("AstroPhotoPostCompletion", "post_completion.session.refresh.start")
+            val updatedSessions = repository.loadSessions()
+            val refreshedSummary = updatedSessions
+                .firstOrNull { it.folderName == session.folderName }
+                ?: currentSummary
+            currentSummary = refreshedSummary
+            val frames = framesRepository.loadFrames(refreshedSummary)
+            val marks = marksStore.loadOrCreate(refreshedSummary)
+            val existingKeys = frames.mapTo(mutableSetOf()) { it.key }
+            val existingBadKeys = marks.bad.intersect(existingKeys)
+            val existingAutoBadKeys = marks.autoBad
+                .intersect(existingKeys)
+                .intersect(existingBadKeys)
+            badFrameCount = existingBadKeys.size
+            autoBadFrameCount = existingAutoBadKeys.size
+            manualBadFrameCount = existingBadKeys.size - existingAutoBadKeys.size
+            stackingFrameCount = frames.count {
+                it.category == SessionFrameCategory.LIGHTS_JPEG &&
+                    it.key !in existingBadKeys
+            }
+            rawSupported = withContext(Dispatchers.IO) {
+                deviceSupportsRaw(context.applicationContext)
+            }
+            Log.i("AstroPhotoPostCompletion", "post_completion.session.refresh.done")
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            Log.e(
+                "AstroPhotoPostCompletion",
+                "post_completion.session.refresh.failed " +
+                    "exception=${error::class.java.simpleName} message=${error.message.orEmpty()}",
+                error
+            )
+            managementStatus = "Не удалось обновить данные сессии"
+        } finally {
+            checkInProgress = false
         }
-        rawSupported = withContext(Dispatchers.IO) {
-            deviceSupportsRaw(context.applicationContext)
-        }
-        checkInProgress = false
     }
 
     if (showingFrames) {

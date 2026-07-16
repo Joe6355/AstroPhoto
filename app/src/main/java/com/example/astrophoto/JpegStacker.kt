@@ -76,6 +76,10 @@ import com.example.astrophoto.processing.jpeg.v2.artifacts.StaticArtifactAnalyze
 import com.example.astrophoto.processing.jpeg.v2.artifacts.StaticArtifactMask
 import com.example.astrophoto.processing.jpeg.v2.composition.MaskFeathering
 import com.example.astrophoto.processing.jpeg.v2.composition.FileBackedSkyForegroundComposer
+import com.example.astrophoto.processing.jpeg.v2.completion.AutomaticProfileCompletionCoordinator
+import com.example.astrophoto.processing.jpeg.v2.completion.POST_COMPLETION_WARNING
+import com.example.astrophoto.processing.jpeg.v2.completion.PostCompletionEvent
+import com.example.astrophoto.processing.jpeg.v2.completion.appendUniqueResult
 import com.example.astrophoto.processing.jpeg.v2.diagnostics.FrameRegistrationReport
 import com.example.astrophoto.processing.jpeg.v2.diagnostics.FrameWeightReport
 import com.example.astrophoto.processing.jpeg.v2.diagnostics.IntegrationReport
@@ -85,6 +89,8 @@ import com.example.astrophoto.processing.jpeg.v2.diagnostics.ProcessingReportWri
 import com.example.astrophoto.processing.jpeg.v2.diagnostics.ReportWriteOutcome
 import com.example.astrophoto.processing.jpeg.v2.diagnostics.ProcessingRunJournal
 import com.example.astrophoto.processing.jpeg.v2.diagnostics.AppSpecificProcessingReportStore
+import com.example.astrophoto.processing.jpeg.v2.diagnostics.artifactSessionId
+import com.example.astrophoto.processing.jpeg.v2.diagnostics.completeJournalWithSingleRetry
 import com.example.astrophoto.processing.jpeg.v2.integration.FrameWeightCalculator
 import com.example.astrophoto.processing.jpeg.v2.integration.FrameWeightInput
 import com.example.astrophoto.processing.jpeg.v2.integration.LinearWeightedIntegrator
@@ -147,7 +153,8 @@ data class JpegStackResult(
     val fallbackUsed: Boolean = false,
     val fallbackReason: String? = null,
     val warnings: List<String> = emptyList(),
-    val additionalFiles: List<String> = emptyList()
+    val additionalFiles: List<String> = emptyList(),
+    val processingRunId: String? = null
 )
 
 class JpegStacker(private val context: Context) {
@@ -1815,7 +1822,9 @@ class JpegStacker(private val context: Context) {
                         "cleaned_$staleRunsRecovered"
                     } else {
                         null
-                    }
+                    },
+                    processingRunId = journalRunId,
+                    artifactSessionId = artifactSessionId(session.folderName)
                 )
                 var reportJson = processingReport.toJson()
                 temporaryFiles.atomicTextFile("final-report.json", reportJson)
@@ -1898,7 +1907,49 @@ class JpegStacker(private val context: Context) {
                         emptyList()
                     }
                 }
-                journalRunId?.let { runJournal.update(it, "report_published") }
+                val publishedReport = when (reportOutcome) {
+                    is ReportWriteOutcome.Written -> reportOutcome.value
+                    is ReportWriteOutcome.Failed -> null
+                }
+                journalRunId?.let { runId ->
+                    if (publishedReport != null) {
+                        runCatching {
+                            runJournal.updatePublishedArtifacts(
+                                runId = runId,
+                                artifactSessionId = artifactSessionId(session.folderName),
+                                outputFileName = fileName,
+                                outputContentUri = saved.contentUri,
+                                outputFilePath = saved.filePath,
+                                reportFileName = publishedReport.fileName,
+                                reportContentUri = publishedReport.contentUri,
+                                reportFilePath = publishedReport.filePath
+                            )
+                        }.onFailure { error ->
+                            warnings += "Processing journal artifact identity update failed"
+                            Log.e(
+                                POST_COMPLETION_JOURNAL_TAG,
+                                "artifact identity update failed run=${runId.take(8)} " +
+                                    "operation=report_published exception=${error::class.java.simpleName}",
+                                error
+                            )
+                        }
+                    } else {
+                        runCatching { runJournal.update(runId, "report_publication_failed") }
+                            .onFailure { error ->
+                                Log.e(
+                                    POST_COMPLETION_JOURNAL_TAG,
+                                    "report failure stage update failed run=${runId.take(8)} " +
+                                        "exception=${error::class.java.simpleName}",
+                                    error
+                                )
+                            }
+                    }
+                }
+                Log.i(
+                    POST_COMPLETION_TAG,
+                    "post_completion.report_published run=${journalRunId?.take(8).orEmpty()} " +
+                        "output=$fileName report=${publishedReport != null}"
+                )
                 Log.i(
                     "AstroPhotoJpegMemory",
                     "peakEstimated=${memoryTracker.peakEstimatedResidentBytes} " +
@@ -1923,6 +1974,10 @@ class JpegStacker(private val context: Context) {
                         "backgroundBefore=${beforeMetrics.background} " +
                         "backgroundAfter=${selectedProfileMetrics.background} sanity=$sanityStatus " +
                         "fallback=$fallback fallbackReason=$fallbackReason outputName=$fileName"
+                )
+                Log.i(
+                    POST_COMPLETION_TAG,
+                    "post_completion.session_info.start run=${journalRunId?.take(8).orEmpty()} output=$fileName"
                 )
                 val infoUpdated = runCatching {
                     appendProfileSessionInfo(
@@ -1949,7 +2004,20 @@ class JpegStacker(private val context: Context) {
                         warnings = warnings.distinct(),
                         processedAtMillis = now
                     )
+                }.onFailure { error ->
+                    Log.e(
+                        POST_COMPLETION_TAG,
+                        "post_completion.session_info.failed run=${journalRunId?.take(8).orEmpty()} " +
+                            "output=$fileName exception=${error::class.java.simpleName}",
+                        error
+                    )
                 }.isSuccess
+                if (infoUpdated) {
+                    Log.i(
+                        POST_COMPLETION_TAG,
+                        "post_completion.session_info.done run=${journalRunId?.take(8).orEmpty()} output=$fileName"
+                    )
+                }
                 JpegStackResult(
                     fileName = fileName,
                     displayPath = saved.displayPath,
@@ -1967,8 +2035,14 @@ class JpegStacker(private val context: Context) {
                     fallbackUsed = finalSelection.fallbackUsed,
                     fallbackReason = finalSelection.fallbackReason,
                     warnings = warnings.distinct(),
-                    additionalFiles = additionalFiles
-                )
+                    additionalFiles = additionalFiles,
+                    processingRunId = journalRunId
+                ).also {
+                    Log.i(
+                        POST_COMPLETION_TAG,
+                        "post_completion.result_created run=${journalRunId?.take(8).orEmpty()} output=$fileName"
+                    )
+                }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: OutOfMemoryError) {
@@ -1978,25 +2052,99 @@ class JpegStacker(private val context: Context) {
                 )
             }
         }
+        val outputFileName = stackResult.getOrNull()?.fileName.orEmpty()
+        Log.i(
+            POST_COMPLETION_TAG,
+            "post_completion.temp_cleanup.start run=${journalRunId?.take(8).orEmpty()} output=$outputFileName"
+        )
         runCatching { pipelineFiles?.close() }
+            .onSuccess {
+                Log.i(
+                    POST_COMPLETION_TAG,
+                    "post_completion.temp_cleanup.done run=${journalRunId?.take(8).orEmpty()} output=$outputFileName"
+                )
+            }
+            .onFailure { error ->
+                Log.e(
+                    POST_COMPLETION_TAG,
+                    "post_completion.temp_cleanup.failed run=${journalRunId?.take(8).orEmpty()} " +
+                        "output=$outputFileName exception=${error::class.java.simpleName}",
+                    error
+                )
+            }
+        var finalizedStackResult = stackResult
         journalRunId?.let { runId ->
             when {
-                stackResult.isSuccess -> runCatching {
-                    runJournal.markCompleted(runId, "completed")
-                }
-                stackResult.exceptionOrNull() is CancellationException -> runCatching {
-                    runJournal.markCompleted(runId, "cancelled")
-                }
-                else -> runCatching {
-                    runJournal.recordFailure(
-                        runId,
-                        currentStage,
-                        stackResult.exceptionOrNull()?.javaClass?.simpleName ?: "unknown"
+                stackResult.isSuccess -> {
+                    val previousStage = runCatching {
+                        runJournal.read(runId)?.lastCompletedStage
+                    }.getOrNull() ?: "missing"
+                    Log.i(
+                        POST_COMPLETION_TAG,
+                        "post_completion.journal_complete.start run=${runId.take(8)} " +
+                            "output=$outputFileName previous=$previousStage requested=completed"
                     )
+                    val completionFailure = completeJournalWithSingleRetry(
+                        markCompleted = { runJournal.markCompleted(runId, "completed") },
+                        onFailure = { attempt, error ->
+                            Log.e(
+                                POST_COMPLETION_JOURNAL_TAG,
+                                "markCompleted failed: run=${runId.take(8)} previous=$previousStage " +
+                                    "requested=completed attempt=$attempt " +
+                                    "exception=${error::class.java.simpleName} message=${error.message.orEmpty()}",
+                                error
+                            )
+                        }
+                    )
+                    if (completionFailure == null) {
+                        Log.i(
+                            POST_COMPLETION_TAG,
+                            "post_completion.journal_complete.done run=${runId.take(8)} output=$outputFileName"
+                        )
+                    } else {
+                        val created = checkNotNull(stackResult.getOrNull())
+                        finalizedStackResult = Result.success(
+                            created.copy(
+                                warnings = (
+                                    created.warnings +
+                                        "Result saved, but processing journal completion failed"
+                                    ).distinct()
+                            )
+                        )
+                    }
+                }
+                stackResult.exceptionOrNull() is CancellationException -> {
+                    completeJournalWithSingleRetry(
+                        markCompleted = { runJournal.markCompleted(runId, "cancelled") },
+                        onFailure = { attempt, error ->
+                            Log.e(
+                                POST_COMPLETION_JOURNAL_TAG,
+                                "cancellation journal completion failed run=${runId.take(8)} " +
+                                    "attempt=$attempt exception=${error::class.java.simpleName}",
+                                error
+                            )
+                        }
+                    )
+                }
+                else -> {
+                    runCatching {
+                        runJournal.recordFailure(
+                            runId,
+                            currentStage,
+                            stackResult.exceptionOrNull()?.javaClass?.simpleName ?: "unknown"
+                        )
+                    }.onFailure { error ->
+                        Log.e(
+                            POST_COMPLETION_JOURNAL_TAG,
+                            "failure journal update failed run=${runId.take(8)} " +
+                                "stage=$currentStage exception=${error::class.java.simpleName}",
+                            error
+                        )
+                    }
                 }
             }
         }
-        stackResult.exceptionOrNull()?.let { error ->
+        finalizedStackResult.exceptionOrNull()?.let { error ->
             if (error is CancellationException) throw error
             Log.i(
                 "AstroPhotoProfile",
@@ -2018,7 +2166,11 @@ class JpegStacker(private val context: Context) {
                 )
             )
         }
-        stackResult
+        Log.i(
+            POST_COMPLETION_TAG,
+            "post_completion.profile_returned run=${journalRunId?.take(8).orEmpty()} output=$outputFileName"
+        )
+        finalizedStackResult
     }
 
     private data class FileBackedMaskStageResult(
@@ -3571,6 +3723,8 @@ class JpegStacker(private val context: Context) {
         private const val PROFILE_ANALYSIS_MAX_DIMENSION = 960
         private const val PROFILE_REGISTRATION_TAG = "AstroPhotoJpegV2"
         private const val ADAPTIVE_PROCESSING_TAG = "AstroPhotoJpegStage4"
+        private const val POST_COMPLETION_TAG = "AstroPhotoPostCompletion"
+        private const val POST_COMPLETION_JOURNAL_TAG = "AstroPhotoProcessingJournal"
         private const val MIN_SKY_ALPHA_FOR_ADAPTIVE_STATISTICS = 0.98f
         private const val MIN_PROFILE_WORKING_MEMORY_BYTES = 64L * 1024L * 1024L
         private const val MAX_PROFILE_WORKING_MEMORY_BYTES = 256L * 1024L * 1024L
@@ -3661,6 +3815,19 @@ private fun resultCandidateTitle(type: String?): String = when (type) {
     ResultCandidateType.CLEAN_STACK.name -> "чистый стек"
     ResultCandidateType.REFERENCE.name -> "опорный кадр"
     else -> "неизвестно"
+}
+
+private fun logPostCompletionEvent(event: PostCompletionEvent) {
+    val message = "post_completion.${event.operation}.${event.phase} " +
+        "run=${event.runIdPrefix} output=${event.outputFileName}" +
+        (event.throwable?.let { error ->
+            " exception=${error::class.java.simpleName} message=${error.message.orEmpty()}"
+        } ?: "")
+    if (event.throwable == null) {
+        Log.i("AstroPhotoPostCompletion", message)
+    } else {
+        Log.e("AstroPhotoPostCompletion", message, event.throwable)
+    }
 }
 
 private enum class JpegStackingMode(val title: String) {
@@ -4113,6 +4280,7 @@ fun JpegStackingBlock(
         progressTotal = validSource.frames.size
         status = "Подготовка профиля ${profile.title}..."
         processingJob = coroutineScope.launch {
+            var successfulResult: JpegStackResult? = null
             try {
                 val profileResult = stacker.profileStack(
                     session = session,
@@ -4130,16 +4298,16 @@ fun JpegStackingBlock(
                 }
                 profileResult.fold(
                     onSuccess = { created ->
-                        profileResults = profileResults + created
-                        status = buildString {
-                            append("Готово: ${created.fileName}")
-                            append("\nПринято кадров: ${created.frameCount} / ${validSource.frames.size}")
-                            append("\nВыбран результат: ${resultCandidateTitle(created.selectedResultType)}")
-                            append("\nЗвёзды: ${created.starsBefore ?: 0} → ${created.starCount ?: 0}")
-                            append("\nFallback: ${if (created.fallbackUsed) "да" else "нет"}")
-                            created.warnings.forEach { append("\n$it") }
-                        }
-                        onStackCompleted()
+                        successfulResult = created
+                        AutomaticProfileCompletionCoordinator(::logPostCompletionEvent).complete(
+                            existingResults = profileResults,
+                            created = created,
+                            totalInputFrames = validSource.frames.size,
+                            selectedResultTitle = resultCandidateTitle(created.selectedResultType),
+                            updateResults = { updated -> profileResults = updated },
+                            updateStatus = { updated -> status = updated },
+                            onStackCompleted = onStackCompleted
+                        )
                     },
                     onFailure = { error ->
                         status = error.message ?: "Профильная обработка не удалась"
@@ -4148,6 +4316,22 @@ fun JpegStackingBlock(
             } catch (error: CancellationException) {
                 status = "Обработка остановлена"
                 throw error
+            } catch (error: Throwable) {
+                val created = successfulResult
+                Log.e(
+                    "AstroPhotoProcessing",
+                    "Automatic JPEG profile completion crashed " +
+                        "run=${created?.processingRunId?.take(8).orEmpty()} " +
+                        "output=${created?.fileName.orEmpty()} " +
+                        "exception=${error::class.java.simpleName}",
+                    error
+                )
+                if (created != null) {
+                    profileResults = appendUniqueResult(profileResults, created)
+                    status = "Готово: ${created.fileName}\n$POST_COMPLETION_WARNING"
+                } else {
+                    status = error.message ?: "Профильная обработка не удалась"
+                }
             } finally {
                 stacking = false
                 processingJob = null
