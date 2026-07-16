@@ -86,6 +86,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.example.astrophoto.ui.theme.AstroPhotoTheme
 import com.example.astrophoto.ui.theme.AstroColors
+import com.example.astrophoto.processing.jpeg.v2.diagnostics.ProcessingFailureSummary
+import com.example.astrophoto.processing.jpeg.v2.diagnostics.PreviousProcessingFailureDetector
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
@@ -101,17 +103,19 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        val previousProcessingFailure = PreviousProcessingFailureDetector(this).detect()
         setContent {
             AstroPhotoTheme(darkTheme = true, dynamicColor = false) {
-                AstroPhotoApp()
+                AstroPhotoApp(previousProcessingFailure)
             }
         }
     }
 }
 
 @Composable
-private fun AstroPhotoApp() {
+private fun AstroPhotoApp(initialProcessingFailure: ProcessingFailureSummary? = null) {
     var showSplash by remember { mutableStateOf(true) }
+    var processingFailure by remember { mutableStateOf(initialProcessingFailure) }
 
     LaunchedEffect(Unit) {
         delay(700L)
@@ -387,6 +391,26 @@ private fun AstroPhotoApp() {
             dismissButton = {
                 TextButton(onClick = { showExitDialog = false }) {
                     Text("Отмена")
+                }
+            }
+        )
+    }
+    processingFailure?.let { failure ->
+        AlertDialog(
+            onDismissRequest = {
+                PreviousProcessingFailureDetector(context.applicationContext).dismiss(failure)
+                processingFailure = null
+            },
+            title = { Text("JPEG-обработка была остановлена") },
+            text = { Text(failure.message) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        PreviousProcessingFailureDetector(context.applicationContext).dismiss(failure)
+                        processingFailure = null
+                    }
+                ) {
+                    Text("Понятно")
                 }
             }
         )

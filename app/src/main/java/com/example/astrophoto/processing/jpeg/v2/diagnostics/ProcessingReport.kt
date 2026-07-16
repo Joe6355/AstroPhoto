@@ -115,7 +115,26 @@ data class ProcessingReport(
     val fanPatternScore: Float = 0f,
     val transformSequenceScore: Float = 1f,
     val staticArtifactCandidates: Int = 0,
-    val staticArtifactMaskRatio: Float = 0f
+    val staticArtifactMaskRatio: Float = 0f,
+    val memorySchemaVersion: String = "astrophoto.jpeg.memory/1",
+    val runtimeMaxHeapBytes: Long = 0L,
+    val heapUsedAtRunStartBytes: Long = 0L,
+    val safeWorkingBudgetBytes: Long = 0L,
+    val peakEstimatedResidentBytes: Long = 0L,
+    val peakObservedHeapBytes: Long = 0L,
+    val maximumSimultaneousFullResolutionCandidates: Int = 0,
+    val candidateStorageMode: String = "FILE_BACKED_ARGB_8888",
+    val referenceCandidateBytesOnDisk: Long = 0L,
+    val cleanStackCandidateBytesOnDisk: Long = 0L,
+    val processedCandidateBytesOnDisk: Long = 0L,
+    val tileSizePerStage: Map<String, String> = emptyMap(),
+    val haloSizePerStage: Map<String, Int> = emptyMap(),
+    val memoryPressureRetries: Int = 0,
+    val finalBitmapAllocationBytes: Long = 0L,
+    val lastCompletedStage: String = "report_prepared",
+    val reportPublicationMode: String = "PRIMARY_WITH_APP_FILES_FALLBACK",
+    val reportFallbackUsed: Boolean = false,
+    val staleRunRecoveryInformation: String? = null
 ) {
     fun toJson(): String = buildString {
         append("{\n")
@@ -164,6 +183,28 @@ data class ProcessingReport(
         property("transformSequenceScore", transformSequenceScore)
         property("staticArtifactCandidates", staticArtifactCandidates)
         property("staticArtifactMaskRatio", staticArtifactMaskRatio)
+        property("memorySchemaVersion", memorySchemaVersion)
+        property("runtimeMaxHeapBytes", runtimeMaxHeapBytes)
+        property("heapUsedAtRunStartBytes", heapUsedAtRunStartBytes)
+        property("safeWorkingBudgetBytes", safeWorkingBudgetBytes)
+        property("peakEstimatedResidentBytes", peakEstimatedResidentBytes)
+        property("peakObservedHeapBytes", peakObservedHeapBytes)
+        property(
+            "maximumSimultaneousFullResolutionCandidates",
+            maximumSimultaneousFullResolutionCandidates
+        )
+        property("candidateStorageMode", candidateStorageMode)
+        property("referenceCandidateBytesOnDisk", referenceCandidateBytesOnDisk)
+        property("cleanStackCandidateBytesOnDisk", cleanStackCandidateBytesOnDisk)
+        property("processedCandidateBytesOnDisk", processedCandidateBytesOnDisk)
+        append("  \"tileSizePerStage\": ${stringMapJson(tileSizePerStage)},\n")
+        append("  \"haloSizePerStage\": ${intMapJson(haloSizePerStage)},\n")
+        property("memoryPressureRetries", memoryPressureRetries)
+        property("finalBitmapAllocationBytes", finalBitmapAllocationBytes)
+        property("lastCompletedStage", lastCompletedStage)
+        property("reportPublicationMode", reportPublicationMode)
+        property("reportFallbackUsed", reportFallbackUsed)
+        nullableProperty("staleRunRecoveryInformation", staleRunRecoveryInformation)
         property("selectedCandidateType", selectedCandidateType)
         property("fallbackUsed", fallbackUsed)
         nullableProperty("fallbackReason", fallbackReason)
@@ -303,6 +344,14 @@ data class ProcessingReport(
         private fun longMapJson(values: Map<String, Long>): String = values.entries.joinToString(
             prefix = "{", postfix = "}"
         ) { "\"${escape(it.key)}\":${it.value.coerceAtLeast(0L)}" }
+
+        private fun intMapJson(values: Map<String, Int>): String = values.entries.joinToString(
+            prefix = "{", postfix = "}"
+        ) { "\"${escape(it.key)}\":${it.value.coerceAtLeast(0)}" }
+
+        private fun stringMapJson(values: Map<String, String>): String = values.entries.joinToString(
+            prefix = "{", postfix = "}"
+        ) { "\"${escape(it.key)}\":\"${escape(it.value)}\"" }
 
         private fun stringArray(values: List<String>): String = values.joinToString(
             prefix = "[", postfix = "]"

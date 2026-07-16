@@ -1,6 +1,7 @@
 package com.example.astrophoto.processing.jpeg.v2.model
 
 import com.example.astrophoto.ArgbPixelImage
+import com.example.astrophoto.processing.jpeg.v2.storage.FileBackedImage
 
 enum class ResultCandidateType {
     REFERENCE,
@@ -68,6 +69,19 @@ data class ResultCandidate(
     }
 }
 
+data class StoredResultCandidate(
+    val type: ResultCandidateType,
+    val image: FileBackedImage,
+    val metrics: ResultQualityMetrics
+) {
+    val width: Int get() = image.width
+    val height: Int get() = image.height
+
+    init {
+        require(metrics.width == image.width && metrics.height == image.height)
+    }
+}
+
 data class QualityComparison(
     val hardFailureReasons: List<String> = emptyList(),
     val warningReasons: List<String> = emptyList()
@@ -83,6 +97,16 @@ data class QualityGateDecision(
 
 data class FinalResultSelection(
     val selected: ResultCandidate,
+    val processedDecision: QualityGateDecision,
+    val cleanStackDecision: QualityGateDecision,
+    val fallbackUsed: Boolean,
+    val fallbackReason: String?,
+    val rejectionReasons: List<String>,
+    val internalFallbackLabel: String?
+)
+
+data class StoredFinalResultSelection(
+    val selected: StoredResultCandidate,
     val processedDecision: QualityGateDecision,
     val cleanStackDecision: QualityGateDecision,
     val fallbackUsed: Boolean,

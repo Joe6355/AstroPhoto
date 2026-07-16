@@ -3,6 +3,13 @@ package com.example.astrophoto.processing.jpeg.v2.quality
 import com.example.astrophoto.ArgbPixelImage
 import com.example.astrophoto.pixelLuminance
 import com.example.astrophoto.processing.jpeg.v2.model.AlphaMask
+import com.example.astrophoto.processing.jpeg.v2.sampling.ArgbPixelSource
+import com.example.astrophoto.processing.jpeg.v2.sampling.IntArrayPixelSource
+import com.example.astrophoto.processing.jpeg.v2.storage.AlphaPixelSource
+import com.example.astrophoto.processing.jpeg.v2.storage.FileBackedFloatPlane
+import com.example.astrophoto.processing.jpeg.v2.storage.FileBackedFloatPlaneReader
+import com.example.astrophoto.processing.jpeg.v2.storage.FileBackedImage
+import com.example.astrophoto.processing.jpeg.v2.storage.FileBackedImageReader
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
@@ -29,6 +36,32 @@ class LineArtifactDetector {
         reference: ArgbPixelImage,
         cleanStack: ArgbPixelImage,
         effectiveSky: AlphaMask
+    ): LineArtifactResult = compareSources(
+        IntArrayPixelSource(reference.width, reference.height, reference.pixels),
+        IntArrayPixelSource(cleanStack.width, cleanStack.height, cleanStack.pixels),
+        object : AlphaPixelSource {
+            override val width = effectiveSky.width
+            override val height = effectiveSky.height
+            override fun alphaAt(x: Int, y: Int) = effectiveSky.alphaAt(x, y)
+        }
+    )
+
+    fun compare(
+        reference: FileBackedImage,
+        cleanStack: FileBackedImage,
+        effectiveSky: FileBackedFloatPlane
+    ): LineArtifactResult = FileBackedImageReader(reference, cachedRows = 5).use { first ->
+        FileBackedImageReader(cleanStack, cachedRows = 5).use { second ->
+            FileBackedFloatPlaneReader(effectiveSky, cachedRows = 5).use { alpha ->
+                compareSources(first, second, alpha)
+            }
+        }
+    }
+
+    private fun compareSources(
+        reference: ArgbPixelSource,
+        cleanStack: ArgbPixelSource,
+        effectiveSky: AlphaPixelSource
     ): LineArtifactResult {
         if (
             reference.width != cleanStack.width || reference.height != cleanStack.height ||
@@ -102,9 +135,9 @@ class LineArtifactDetector {
 
     private data class Gradient(val magnitude: Float, val angle: Double)
 
-    private fun gradient(image: ArgbPixelImage, x: Int, y: Int): Gradient {
-        val gx = pixelLuminance(image.pixelAt(x + 1, y)) - pixelLuminance(image.pixelAt(x - 1, y))
-        val gy = pixelLuminance(image.pixelAt(x, y + 1)) - pixelLuminance(image.pixelAt(x, y - 1))
+    private fun gradient(image: ArgbPixelSource, x: Int, y: Int): Gradient {
+        val gx = pixelLuminance(image.argbAt(x + 1, y)) - pixelLuminance(image.argbAt(x - 1, y))
+        val gy = pixelLuminance(image.argbAt(x, y + 1)) - pixelLuminance(image.argbAt(x, y - 1))
         return Gradient(hypot(gx.toFloat(), gy.toFloat()), atan2(gy.toDouble(), gx.toDouble()))
     }
 

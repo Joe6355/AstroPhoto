@@ -8,6 +8,7 @@ import android.os.Environment
 import android.provider.MediaStore
 import com.example.astrophoto.SessionSummary
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
 import java.io.File
 import java.io.FileOutputStream
@@ -18,7 +19,10 @@ data class SavedProcessingReport(
     val displayPath: String,
     val contentUri: String?,
     val filePath: String?,
-    val writeDurationMillis: Long
+    val writeDurationMillis: Long,
+    val publicationMode: String = "PUBLIC_MEDIASTORE",
+    val fallbackUsed: Boolean = false,
+    val publicationFailureReason: String? = null
 )
 
 sealed interface ReportWriteOutcome<out T> {
@@ -41,6 +45,33 @@ internal fun processingReportMatchesImage(reportFileName: String, imageFileName:
 
 internal class ProcessingReportWriter(private val context: Context) {
     suspend fun write(
+        session: SessionSummary,
+        imageFileName: String,
+        json: String
+    ): SavedProcessingReport = try {
+        writePrimary(session, imageFileName, json)
+    } catch (error: CancellationException) {
+        throw error
+    } catch (error: Exception) {
+        val started = System.nanoTime()
+        val fallback = AppSpecificProcessingReportStore(context).write(
+            session.folderName,
+            imageFileName,
+            json
+        )
+        SavedProcessingReport(
+            fileName = fallback.reportFileName,
+            displayPath = "Internal reports/${fallback.reportFileName}",
+            contentUri = null,
+            filePath = fallback.file.absolutePath,
+            writeDurationMillis = (System.nanoTime() - started) / 1_000_000L,
+            publicationMode = "APP_SPECIFIC_FILES",
+            fallbackUsed = true,
+            publicationFailureReason = error.message ?: error::class.java.simpleName
+        )
+    }
+
+    private suspend fun writePrimary(
         session: SessionSummary,
         imageFileName: String,
         json: String
@@ -81,7 +112,8 @@ internal class ProcessingReportWriter(private val context: Context) {
                     displayPath = "$relativePath$reportName",
                     contentUri = uri.toString(),
                     filePath = null,
-                    writeDurationMillis = (System.nanoTime() - started) / 1_000_000L
+                    writeDurationMillis = (System.nanoTime() - started) / 1_000_000L,
+                    publicationMode = "MEDIASTORE_FILES"
                 )
             } catch (error: Throwable) {
                 resolver.delete(uri, null, null)
@@ -113,7 +145,8 @@ internal class ProcessingReportWriter(private val context: Context) {
                 displayPath = target.absolutePath,
                 contentUri = null,
                 filePath = target.absolutePath,
-                writeDurationMillis = (System.nanoTime() - started) / 1_000_000L
+                writeDurationMillis = (System.nanoTime() - started) / 1_000_000L,
+                publicationMode = "LEGACY_PUBLIC_FILE"
             )
         } catch (error: Throwable) {
             temporary.delete()

@@ -129,11 +129,16 @@ internal class LosslessProcessedImageWriter(private val context: Context) {
         session: SessionSummary,
         bitmap: Bitmap,
         requestedFileName: String
+    ): SavedProcessedImage = write(session, BitmapPngSource(bitmap), requestedFileName)
+
+    suspend fun write(
+        session: SessionSummary,
+        source: PngImageSource,
+        requestedFileName: String
     ): SavedProcessedImage {
         require(requestedFileName.endsWith(".png", ignoreCase = true))
         val coroutineContext = currentCoroutineContext()
         coroutineContext.ensureActive()
-        val source = BitmapPngSource(bitmap)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val resolver = context.contentResolver
             val destination = processedImageDestination(session.folderName, "image/png")

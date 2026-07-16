@@ -1,6 +1,9 @@
 package com.example.astrophoto.processing.jpeg.v2.quality
 
 import com.example.astrophoto.processing.jpeg.v2.model.AlphaMask
+import com.example.astrophoto.processing.jpeg.v2.storage.AlphaPixelSource
+import com.example.astrophoto.processing.jpeg.v2.storage.FileBackedFloatPlane
+import com.example.astrophoto.processing.jpeg.v2.storage.FileBackedFloatPlaneReader
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
@@ -29,6 +32,23 @@ class CoverageUniformityValidator {
     fun validate(
         coverage: AlphaMask,
         effectiveSky: AlphaMask
+    ): CoverageUniformityResult = validateSources(
+        alphaSource(coverage),
+        alphaSource(effectiveSky)
+    )
+
+    fun validate(
+        coverage: FileBackedFloatPlane,
+        effectiveSky: FileBackedFloatPlane
+    ): CoverageUniformityResult = FileBackedFloatPlaneReader(coverage).use { coverageReader ->
+        FileBackedFloatPlaneReader(effectiveSky).use { effectiveReader ->
+            validateSources(coverageReader, effectiveReader)
+        }
+    }
+
+    private fun validateSources(
+        coverage: AlphaPixelSource,
+        effectiveSky: AlphaPixelSource
     ): CoverageUniformityResult {
         require(coverage.width == effectiveSky.width && coverage.height == effectiveSky.height)
         val columns = minOf(GRID_SIZE, coverage.width)
@@ -145,6 +165,12 @@ class CoverageUniformityValidator {
             if (wedgeScore > WARNING_WEDGE_DISCONTINUITY_SCORE) add("coverage_wedge_score_is_elevated")
         }
         return CoverageUniformityResult(hard.isEmpty(), metrics, hard.distinct(), warnings.distinct())
+    }
+
+    private fun alphaSource(mask: AlphaMask): AlphaPixelSource = object : AlphaPixelSource {
+        override val width = mask.width
+        override val height = mask.height
+        override fun alphaAt(x: Int, y: Int): Float = mask.alphaAt(x, y)
     }
 
     private fun compare(first: Float, second: Float, median: Float): Boolean? {

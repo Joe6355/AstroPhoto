@@ -72,6 +72,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import com.example.astrophoto.processing.jpeg.v2.diagnostics.processingReportFileName
+import com.example.astrophoto.processing.jpeg.v2.diagnostics.AppSpecificProcessingReportStore
 import com.example.astrophoto.ui.AstroEmptyState
 import com.example.astrophoto.ui.AstroErrorState
 import com.example.astrophoto.ui.AstroExpandableSection
@@ -558,6 +559,7 @@ private class ProcessedResultsRepository(private val context: Context) {
         session: SessionSummary,
         result: ProcessedResult
     ) {
+        AppSpecificProcessingReportStore(context).delete(session.folderName, result.fileName)
         val reportName = processingReportFileName(result.fileName)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val collection = MediaStore.Files.getContentUri("external")

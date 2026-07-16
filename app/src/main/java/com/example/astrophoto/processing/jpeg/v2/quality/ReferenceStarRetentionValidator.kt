@@ -3,6 +3,10 @@ package com.example.astrophoto.processing.jpeg.v2.quality
 import com.example.astrophoto.ArgbPixelImage
 import com.example.astrophoto.pixelLuminance
 import com.example.astrophoto.processing.jpeg.v2.model.DetectedStar
+import com.example.astrophoto.processing.jpeg.v2.sampling.ArgbPixelSource
+import com.example.astrophoto.processing.jpeg.v2.sampling.IntArrayPixelSource
+import com.example.astrophoto.processing.jpeg.v2.storage.FileBackedImage
+import com.example.astrophoto.processing.jpeg.v2.storage.FileBackedImageReader
 import kotlin.math.ceil
 import kotlin.math.hypot
 import kotlin.math.sqrt
@@ -33,6 +37,26 @@ class ReferenceStarRetentionValidator {
     fun validate(
         reference: ArgbPixelImage,
         cleanStack: ArgbPixelImage,
+        referenceStars: List<DetectedStar>
+    ): ReferenceStarRetentionResult = validateSources(
+        IntArrayPixelSource(reference.width, reference.height, reference.pixels),
+        IntArrayPixelSource(cleanStack.width, cleanStack.height, cleanStack.pixels),
+        referenceStars
+    )
+
+    fun validate(
+        reference: FileBackedImage,
+        cleanStack: FileBackedImage,
+        referenceStars: List<DetectedStar>
+    ): ReferenceStarRetentionResult = FileBackedImageReader(reference, cachedRows = 20).use { first ->
+        FileBackedImageReader(cleanStack, cachedRows = 20).use { second ->
+            validateSources(first, second, referenceStars)
+        }
+    }
+
+    private fun validateSources(
+        reference: ArgbPixelSource,
+        cleanStack: ArgbPixelSource,
         referenceStars: List<DetectedStar>
     ): ReferenceStarRetentionResult {
         if (reference.width != cleanStack.width || reference.height != cleanStack.height) {
@@ -113,7 +137,7 @@ class ReferenceStarRetentionValidator {
     }
 
     private fun measure(
-        image: ArgbPixelImage,
+        image: ArgbPixelSource,
         expectedX: Float,
         expectedY: Float,
         expectedWidth: Float
@@ -130,7 +154,7 @@ class ReferenceStarRetentionValidator {
         for (dy in -outerRadius..outerRadius) for (dx in -outerRadius..outerRadius) {
             val radiusSquared = dx * dx + dy * dy
             if (radiusSquared > coreRadius * coreRadius && radiusSquared <= outerRadius * outerRadius) {
-                annulus += pixelLuminance(image.pixelAt(centerX + dx, centerY + dy))
+                annulus += pixelLuminance(image.argbAt(centerX + dx, centerY + dy))
             }
         }
         annulus.sort()
@@ -141,7 +165,7 @@ class ReferenceStarRetentionValidator {
         var weightedY = 0f
         for (dy in -coreRadius..coreRadius) for (dx in -coreRadius..coreRadius) {
             if (dx * dx + dy * dy > coreRadius * coreRadius) continue
-            val luminance = pixelLuminance(image.pixelAt(centerX + dx, centerY + dy)).toFloat()
+            val luminance = pixelLuminance(image.argbAt(centerX + dx, centerY + dy)).toFloat()
             peak = maxOf(peak, luminance)
             val signal = (luminance - background).coerceAtLeast(0f)
             flux += signal
@@ -157,7 +181,7 @@ class ReferenceStarRetentionValidator {
         for (dy in -coreRadius..coreRadius) for (dx in -coreRadius..coreRadius) {
             if (dx * dx + dy * dy > coreRadius * coreRadius) continue
             val signal = (
-                pixelLuminance(image.pixelAt(centerX + dx, centerY + dy)) - background
+                pixelLuminance(image.argbAt(centerX + dx, centerY + dy)) - background
                 ).coerceAtLeast(0f)
             val offsetX = centerX + dx - centroidX
             val offsetY = centerY + dy - centroidY

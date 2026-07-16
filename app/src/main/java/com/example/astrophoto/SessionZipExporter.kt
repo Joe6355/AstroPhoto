@@ -21,6 +21,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import com.example.astrophoto.processing.jpeg.v2.diagnostics.AppSpecificProcessingReportStore
 
 data class SessionZipExportResult(
     val fileName: String,
@@ -323,6 +324,7 @@ class SessionZipExporter(private val context: Context) {
             }
         }
         appendRawSidecars(sources, session)
+        appendFallbackProcessingReports(sources, session)
         if (sources.none {
                 it.relativePath.equals("session_info.txt", ignoreCase = true)
             }
@@ -360,6 +362,7 @@ class SessionZipExporter(private val context: Context) {
             mutableListOf()
         }
         appendRawSidecars(sources, session)
+        appendFallbackProcessingReports(sources, session)
         if (sources.none {
                 it.relativePath.equals("session_info.txt", ignoreCase = true)
             }
@@ -388,6 +391,25 @@ class SessionZipExporter(private val context: Context) {
                     relativePath = relativePath,
                     sizeBytes = sidecar.file.length(),
                     open = { sidecar.file.inputStream() }
+                )
+            }
+        }
+    }
+
+    private fun appendFallbackProcessingReports(
+        sources: MutableList<ZipSource>,
+        session: SessionSummary
+    ) {
+        val existing = sources.mapTo(mutableSetOf()) {
+            it.relativePath.replace('\\', '/').lowercase(Locale.US)
+        }
+        AppSpecificProcessingReportStore(context).listForSession(session.folderName).forEach { report ->
+            val relativePath = sanitizeEntryPath("Processed/${report.reportFileName}")
+            if (existing.add(relativePath.lowercase(Locale.US))) {
+                sources += ZipSource(
+                    relativePath = relativePath,
+                    sizeBytes = report.file.length(),
+                    open = { report.file.inputStream() }
                 )
             }
         }
