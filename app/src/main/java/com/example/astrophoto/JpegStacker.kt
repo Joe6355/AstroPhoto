@@ -117,9 +117,13 @@ import com.example.astrophoto.processing.jpeg.v2.quality.LineArtifactDetector
 import com.example.astrophoto.processing.jpeg.v2.quality.ReferenceStarRetentionValidator
 import com.example.astrophoto.processing.jpeg.v2.quality.FileBackedResultQualityAnalyzer
 import com.example.astrophoto.processing.jpeg.v2.quality.ResultSelectionPolicy
-import com.example.astrophoto.processing.jpeg.v2.registration.StarSimilarityRegistrar
 import com.example.astrophoto.processing.jpeg.v2.registration.OrderedRegistration
+import com.example.astrophoto.processing.jpeg.v2.registration.ExpectedSequenceMotionModel
+import com.example.astrophoto.processing.jpeg.v2.registration.SequenceAwareRegistrationDiagnostics
+import com.example.astrophoto.processing.jpeg.v2.registration.SequenceAwareRegistrationEngine
+import com.example.astrophoto.processing.jpeg.v2.registration.TemporalFeatureFrame
 import com.example.astrophoto.processing.jpeg.v2.registration.TransformSequenceValidator
+import com.example.astrophoto.processing.jpeg.v2.registration.scaledTranslation
 import com.example.astrophoto.processing.jpeg.v2.sampling.ArgbFrameDiskCache
 import com.example.astrophoto.processing.jpeg.v2.sampling.FileBackedArgbPixelSource
 import com.example.astrophoto.processing.jpeg.v2.memory.ImageAllocationEstimate
@@ -1122,7 +1126,9 @@ class JpegStacker(private val context: Context) {
             var fallback = "none"
             var fallbackReason = ""
             var transformSequenceScore = 0f
-            val registrar = StarSimilarityRegistrar()
+            var sequenceSmoothnessScore = 0f
+            var sequencePriorAgreementScore = 0f
+            var sequenceDiagnostics: SequenceAwareRegistrationDiagnostics? = null
             val registrationReports = mutableListOf<FrameRegistrationReport>()
 
             try {
@@ -1135,66 +1141,39 @@ class JpegStacker(private val context: Context) {
                 if (referenceStars < 4) {
                     warnings += "Звёзд найдено мало: $referenceStars"
                 }
-                val referenceRegistration = RegistrationResult(
-                    dx = 0f,
-                    dy = 0f,
-                    rotationRadians = 0f,
-                    scale = 1f,
-                    detectedStars = referenceStars,
-                    matchedStars = referenceStars,
-                    inlierStars = referenceStars,
-                    residualError = 0f,
-                    confidence = 1f,
-                    isReliable = true,
-                    rejectionReason = null,
-                    referenceStars = referenceStars,
-                    registrationModel = "REFERENCE_IDENTITY",
-                    scaleFixed = true,
-                    rotationAllowed = false,
-                    rotationRejectionReason = "reference_identity"
+                val analysisRegistration = SequenceAwareRegistrationEngine().register(
+                    frames = selectedFrames.map { frame ->
+                        val analyzed = checkNotNull(analysisByFrameKey[frame.key])
+                        TemporalFeatureFrame(
+                            frameId = frame.key,
+                            captureIndex = cappedFrames.indexOfFirst { it.key == frame.key },
+                            stars = analyzed.analysis.stars
+                        )
+                    },
+                    referenceFrameId = selectedReference.frame.key,
+                    imageWidth = selectedReference.analysis.width,
+                    imageHeight = selectedReference.analysis.height
                 )
-                val allRegistrationsByKey = mutableMapOf(
-                    selectedReference.frame.key to referenceRegistration
-                )
-                val acceptedProfileFrames = mutableListOf(
+                sequenceDiagnostics = analysisRegistration
+                val scaleX = targetWidth.toFloat() /
+                    selectedReference.analysis.width.coerceAtLeast(1)
+                val scaleY = targetHeight.toFloat() /
+                    selectedReference.analysis.height.coerceAtLeast(1)
+                val allRegistrationsByKey = analysisRegistration.registrations
+                    .mapValuesTo(mutableMapOf()) { (_, registration) ->
+                        registration.scaledTranslation(scaleX, scaleY)
+                    }
+                val acceptedProfileFrames = selectedFrames.mapNotNull { frame ->
+                    val registration = checkNotNull(allRegistrationsByKey[frame.key])
+                    if (!registration.isReliable) return@mapNotNull null
                     AcceptedProfileFrame(
-                        selectedReference.frame,
-                        selectedReference.analysis,
-                        referenceRegistration,
-                        cappedFrames.indexOfFirst { it.key == selectedReference.frame.key }
+                        frame = frame,
+                        analysis = checkNotNull(analysisByFrameKey[frame.key]).analysis,
+                        registration = registration,
+                        captureIndex = cappedFrames.indexOfFirst { it.key == frame.key }
                     )
-                )
-                selectedFrames.drop(1).forEachIndexed { index, frame ->
-                    currentCoroutineContext().ensureActive()
-                    val frameNumber = index + 2
-                    currentStage = "Star alignment: кадр $frameNumber из ${selectedFrames.size}"
-                    withContext(Dispatchers.Main.immediate) {
-                        onProgress(
-                            "Star alignment кадра $frameNumber из ${selectedFrames.size}",
-                            frameNumber,
-                            selectedFrames.size
-                        )
-                    }
-                    val analyzed = checkNotNull(analysisByFrameKey[frame.key])
-                    val registration = registerProfileFrame(
-                        reference = selectedReference.analysis,
-                        candidate = analyzed.analysis,
-                        targetWidth = targetWidth,
-                        targetHeight = targetHeight,
-                        registrar = registrar,
-                        forceTranslationOnly = false
-                    )
-                    allRegistrationsByKey[frame.key] = registration
-                    logProfileRegistration(frame.fileName, registration)
-                    if (registration.isReliable) {
-                        acceptedProfileFrames += AcceptedProfileFrame(
-                            frame,
-                            analyzed.analysis,
-                            registration,
-                            cappedFrames.indexOfFirst { it.key == frame.key }
-                        )
-                    }
-                }
+                }.toMutableList()
+                val fullVelocityScale = (scaleX + scaleY) * 0.5f
                 val sequenceValidation = TransformSequenceValidator().validate(
                     acceptedProfileFrames.map { accepted ->
                         OrderedRegistration(
@@ -1204,22 +1183,18 @@ class JpegStacker(private val context: Context) {
                             registration = accepted.registration
                         )
                     },
-                    retryTranslationOnly = { ordered ->
-                        val accepted = acceptedProfileFrames.firstOrNull {
-                            it.frame.key == ordered.frameId
-                        } ?: return@validate null
-                        if (accepted.frame.key == selectedReference.frame.key) return@validate null
-                        registerProfileFrame(
-                            reference = selectedReference.analysis,
-                            candidate = accepted.analysis,
-                            targetWidth = targetWidth,
-                            targetHeight = targetHeight,
-                            registrar = registrar,
-                            forceTranslationOnly = true
-                        )
-                    }
+                    expectedMotionModel = ExpectedSequenceMotionModel(
+                        velocityX = analysisRegistration.model.velocityX * scaleX,
+                        velocityY = analysisRegistration.model.velocityY * scaleY,
+                        referenceIndex = analysisRegistration.model.referenceIndex,
+                        residual = analysisRegistration.model.residual * fullVelocityScale,
+                        motionObservable = analysisRegistration.model.motionObservable,
+                        verificationScore = analysisRegistration.verification.selectedModel.score
+                    )
                 )
                 transformSequenceScore = sequenceValidation.score
+                sequenceSmoothnessScore = sequenceValidation.smoothnessScore
+                sequencePriorAgreementScore = sequenceValidation.motionModelAgreementScore
                 val validatedByKey = sequenceValidation.registrations.associate {
                     it.frameId to it.registration
                 }
@@ -1237,6 +1212,25 @@ class JpegStacker(private val context: Context) {
                     val registration = checkNotNull(allRegistrationsByKey[frame.key])
                     registrationReports += registration.toReport(frame.fileName)
                     logProfileRegistration(frame.fileName, registration)
+                    val captureIndex = cappedFrames.indexOfFirst { it.key == frame.key }
+                    val predicted = analysisRegistration.model.predicted(captureIndex)
+                    val selectedHypothesis = analysisRegistration.model
+                        .acceptedFrameHypotheses[frame.key]
+                    Log.i(
+                        PROFILE_REGISTRATION_TAG,
+                        "frame=${frame.fileName} " +
+                            "predictedDx=${formatMetric(predicted.first * scaleX)} " +
+                            "predictedDy=${formatMetric(predicted.second * scaleY)} " +
+                            "selectedDx=${formatMetric(registration.dx)} " +
+                            "selectedDy=${formatMetric(registration.dy)} " +
+                            "hypothesisRank=${analysisRegistration.selectedHypothesisRankPerFrame[frame.key] ?: -1} " +
+                            "movingSupport=${selectedHypothesis?.movingTrackSupport ?: 0} " +
+                            "stationarySupport=${selectedHypothesis?.stationaryTrackSupport ?: 0} " +
+                            "sequenceAgreement=${formatMetric(registration.transformSequenceScore)} " +
+                            "verificationRetention=${formatMetric(analysisRegistration.verification.selectedModel.referenceRetention)} " +
+                            "verificationSmear=${formatMetric(analysisRegistration.verification.selectedModel.smearRate)} " +
+                            "accepted=${registration.isReliable}"
+                    )
                     if (!registration.isReliable) {
                         warnings += "Кадр ${frame.fileName} отклонён: " +
                             (registration.rejectionReason ?: "registration failed")
@@ -1716,6 +1710,9 @@ class JpegStacker(private val context: Context) {
                 val frameNameById = acceptedProfileFrames.associate {
                     it.analysis.id to it.frame.fileName
                 }
+                val frameNameByKey = selectedFrames.associate { it.key to it.fileName }
+                val registrationDiagnostics = checkNotNull(sequenceDiagnostics)
+                val selectedHypotheses = registrationDiagnostics.model.acceptedFrameHypotheses
                 var processingReport = ProcessingReport(
                     timestampMillis = now,
                     presetId = profile.name,
@@ -1795,6 +1792,48 @@ class JpegStacker(private val context: Context) {
                     lineArtifactScore = lineArtifactValidation.metrics.lineArtifactScore,
                     fanPatternScore = lineArtifactValidation.metrics.fanPatternScore,
                     transformSequenceScore = transformSequenceScore,
+                    temporalTrackCount = registrationDiagnostics.trackAnalysis.tracks.size,
+                    stationaryTrackCount = registrationDiagnostics.trackAnalysis.stationaryTrackCount,
+                    movingTrackCount = registrationDiagnostics.trackAnalysis.movingTrackCount,
+                    unknownTrackCount = registrationDiagnostics.trackAnalysis.unknownTrackCount,
+                    motionObservable = registrationDiagnostics.model.motionObservable,
+                    estimatedVelocityXAnalysisPxPerFrame = registrationDiagnostics.model.velocityX,
+                    estimatedVelocityYAnalysisPxPerFrame = registrationDiagnostics.model.velocityY,
+                    estimatedVelocityXFullPxPerFrame = registrationDiagnostics.model.velocityX * scaleX,
+                    estimatedVelocityYFullPxPerFrame = registrationDiagnostics.model.velocityY * scaleY,
+                    sequenceModelScore = registrationDiagnostics.model.score,
+                    sequenceModelResidual = registrationDiagnostics.model.residual,
+                    zeroModelScore = registrationDiagnostics.model.competingZeroModelScore,
+                    nonZeroModelScore = registrationDiagnostics.model.nonZeroModelScore,
+                    selectedMotionModel = registrationDiagnostics.model.selectedMotionModel,
+                    candidateHypothesisCountPerFrame = registrationDiagnostics
+                        .hypothesisCountPerFrame.mapKeys { frameNameByKey[it.key] ?: it.key },
+                    selectedHypothesisRankPerFrame = registrationDiagnostics
+                        .selectedHypothesisRankPerFrame.mapKeys { frameNameByKey[it.key] ?: it.key },
+                    movingTrackSupportPerFrame = selectedHypotheses.mapKeys {
+                        frameNameByKey[it.key] ?: it.key
+                    }.mapValues { it.value.movingTrackSupport },
+                    stationaryTrackSupportPerFrame = selectedHypotheses.mapKeys {
+                        frameNameByKey[it.key] ?: it.key
+                    }.mapValues { it.value.stationaryTrackSupport },
+                    spatialSectorSupportPerFrame = selectedHypotheses.mapKeys {
+                        frameNameByKey[it.key] ?: it.key
+                    }.mapValues { it.value.occupiedSectors },
+                    verificationReferenceRetention = registrationDiagnostics.verification
+                        .selectedModel.referenceRetention,
+                    verificationContrastRatio = registrationDiagnostics.verification
+                        .selectedModel.contrastRatio,
+                    verificationWidthGrowth = registrationDiagnostics.verification
+                        .selectedModel.widthGrowth,
+                    verificationSmearRate = registrationDiagnostics.verification.selectedModel.smearRate,
+                    verificationIdentityScore = registrationDiagnostics.verification.identity.score,
+                    verificationZeroModelScore = registrationDiagnostics.verification.zeroModel.score,
+                    verificationSelectedModelScore = registrationDiagnostics.verification.selectedModel.score,
+                    sequenceSmoothnessScore = sequenceSmoothnessScore,
+                    sequencePriorAgreementScore = sequencePriorAgreementScore,
+                    registrationRejectedReasons = registrationReports
+                        .filterNot { it.accepted }
+                        .associate { it.frameName to (it.rejectionReason ?: "registration_failed") },
                     staticArtifactCandidates = staticArtifactMask.regions.size,
                     staticArtifactMaskRatio = staticArtifactMask.maskRatio,
                     runtimeMaxHeapBytes = memoryBudget.snapshot.maxHeapBytes,
@@ -2636,40 +2675,6 @@ class JpegStacker(private val context: Context) {
         } finally {
             if (thumbnail !== bitmap) thumbnail.recycle()
         }
-    }
-
-    private fun registerProfileFrame(
-        reference: FrameAnalysis,
-        candidate: FrameAnalysis,
-        targetWidth: Int,
-        targetHeight: Int,
-        registrar: StarSimilarityRegistrar,
-        forceTranslationOnly: Boolean
-    ): RegistrationResult {
-        if (!candidate.decodeValid) {
-            return RegistrationResult.rejected(
-                referenceStars = reference.reliableStarCount,
-                detectedStars = 0,
-                reason = "JPEG analysis failed"
-            )
-        }
-        val registration = registrar.registerAutomatic(
-            referenceStars = reference.stars,
-            candidateStars = candidate.stars,
-            imageWidth = reference.width,
-            imageHeight = reference.height,
-            forceTranslationOnly = forceTranslationOnly
-        )
-        val scaleX = targetWidth.toFloat() / reference.width.coerceAtLeast(1)
-        val scaleY = targetHeight.toFloat() / reference.height.coerceAtLeast(1)
-        return registration.copy(
-            dx = registration.dx * scaleX,
-            dy = registration.dy * scaleY,
-            scale = 1f,
-            scaleFixed = true,
-            rawDx = registration.rawDx * scaleX,
-            rawDy = registration.rawDy * scaleY
-        )
     }
 
     private fun logProfileRegistration(fileName: String, registration: RegistrationResult) {

@@ -15,30 +15,56 @@ data class TransformSequenceValidation(
     val registrations: List<OrderedRegistration>,
     val score: Float,
     val rejectedFrameIds: List<String>,
-    val retryFrameIds: List<String>
+    val retryFrameIds: List<String>,
+    val smoothnessScore: Float = score,
+    val motionModelAgreementScore: Float = 1f,
+    val verificationScore: Float = 1f
 )
 
 class TransformSequenceValidator {
     fun validate(
         values: List<OrderedRegistration>,
+        expectedMotionModel: ExpectedSequenceMotionModel? = null,
         retryTranslationOnly: (OrderedRegistration) -> RegistrationResult? = { null }
     ): TransformSequenceValidation {
         if (values.isEmpty()) return TransformSequenceValidation(emptyList(), 0f, emptyList(), emptyList())
         val ordered = values.sortedBy { it.captureIndex }.toMutableList()
         val reliable = ordered.filter { it.registration.isReliable }
         if (reliable.size < 3) {
-            return TransformSequenceValidation(
-                ordered.mapIndexed { index, entry ->
-                    entry.copy(
-                        registration = entry.registration.copy(
-                            transformSequenceScore = if (entry.registration.isReliable) 1f else 0f,
-                            neighborTransformDelta = neighborDelta(entry, ordered.getOrNull(index - 1))
-                        )
+            val priorLimit = motionPriorLimit(expectedMotionModel)
+            val validated = ordered.mapIndexed { index, entry ->
+                val priorDeviation = motionPriorDeviation(entry, expectedMotionModel)
+                val disagreesWithPrior =
+                    entry.registration.isReliable &&
+                        !entry.isReference &&
+                        expectedMotionModel?.motionObservable == true &&
+                        priorDeviation > priorLimit
+                entry.copy(
+                    registration = entry.registration.copy(
+                        isReliable = entry.registration.isReliable && !disagreesWithPrior,
+                        rejectionReason = if (disagreesWithPrior) {
+                            "transform_sequence_motion_prior_disagreement"
+                        } else {
+                            entry.registration.rejectionReason
+                        },
+                        transformSequenceScore = if (
+                            entry.registration.isReliable && !disagreesWithPrior
+                        ) 1f else 0f,
+                        transformSequenceDeviation = priorDeviation,
+                        neighborTransformDelta = neighborDelta(entry, ordered.getOrNull(index - 1))
                     )
-                },
-                if (reliable.size >= 2) 1f else 0f,
-                ordered.filterNot { it.registration.isReliable }.map { it.frameId },
-                emptyList()
+                )
+            }
+            val smoothness = if (reliable.size >= 2) 1f else 0f
+            val priorAgreement = priorAgreementScore(ordered, expectedMotionModel)
+            return TransformSequenceValidation(
+                validated,
+                minOf(smoothness, priorAgreement),
+                validated.filterNot { it.registration.isReliable }.map { it.frameId },
+                emptyList(),
+                smoothnessScore = smoothness,
+                motionModelAgreementScore = priorAgreement,
+                verificationScore = expectedMotionModel?.verificationScore ?: 1f
             )
         }
 
@@ -65,6 +91,8 @@ class TransformSequenceValidator {
         val retryIds = mutableListOf<String>()
         val rejectedIds = mutableListOf<String>()
         var totalDeviation = 0f
+        var totalPriorDeviation = 0f
+        var priorComparisons = 0
 
         reliable.forEach { entry ->
             if (entry.isReference) return@forEach
@@ -87,8 +115,16 @@ class TransformSequenceValidator {
                 medianStepDx,
                 medianStepDy
             )
+            val priorDeviation = motionPriorDeviation(entry, expectedMotionModel)
+            val priorLimit = motionPriorLimit(expectedMotionModel)
+            if (expectedMotionModel?.motionObservable == true) {
+                totalPriorDeviation += priorDeviation
+                priorComparisons++
+            }
             totalDeviation += (deviation / translationLimit.coerceAtLeast(0.001f)).coerceAtMost(4f)
             var invalidReason = when {
+                expectedMotionModel?.motionObservable == true && priorDeviation > priorLimit ->
+                    "transform_sequence_motion_prior_disagreement"
                 deviation > translationLimit -> "transform_sequence_translation_jump"
                 rotationDeviation > rotationLimit -> "transform_sequence_rotation_jump"
                 directionReversal -> "transform_sequence_direction_reversal"
@@ -118,7 +154,12 @@ class TransformSequenceValidator {
                     medianStepDy
                 )
                 val retryRotationDeviation = localRotationDeviation(retryEntry, previous, next, medianRotationStep)
-                if (retryDeviation <= translationLimit && retryRotationDeviation <= rotationLimit) {
+                val retryPriorDeviation = motionPriorDeviation(retryEntry, expectedMotionModel)
+                if (
+                    retryDeviation <= translationLimit &&
+                    retryRotationDeviation <= rotationLimit &&
+                    (expectedMotionModel?.motionObservable != true || retryPriorDeviation <= priorLimit)
+                ) {
                     retryIds += entry.frameId
                     replace(
                         ordered,
@@ -155,7 +196,49 @@ class TransformSequenceValidator {
         val denominator = (reliable.size - 1).coerceAtLeast(1)
         val score = (1f - totalDeviation / denominator * 0.25f -
             rejectedIds.size.toFloat() / denominator * 0.5f).coerceIn(0f, 1f)
-        return TransformSequenceValidation(ordered, score, rejectedIds, retryIds)
+        val priorAgreement = if (priorComparisons == 0) 1f else
+            (1f - totalPriorDeviation / priorComparisons /
+                motionPriorLimit(expectedMotionModel).coerceAtLeast(0.001f)).coerceIn(0f, 1f)
+        return TransformSequenceValidation(
+            ordered,
+            minOf(score, priorAgreement),
+            rejectedIds,
+            retryIds,
+            smoothnessScore = score,
+            motionModelAgreementScore = priorAgreement,
+            verificationScore = expectedMotionModel?.verificationScore ?: 1f
+        )
+    }
+
+    private fun motionPriorDeviation(
+        value: OrderedRegistration,
+        prior: ExpectedSequenceMotionModel?
+    ): Float {
+        if (prior == null) return 0f
+        val predicted = prior.predicted(value.captureIndex)
+        return hypot(
+            value.registration.dx - predicted.first,
+            value.registration.dy - predicted.second
+        )
+    }
+
+    private fun motionPriorLimit(prior: ExpectedSequenceMotionModel?): Float =
+        if (prior?.motionObservable == true) {
+            maxOf(MIN_PRIOR_DEVIATION_PX, prior.residual * 3f + PRIOR_RESIDUAL_FLOOR)
+        } else {
+            Float.POSITIVE_INFINITY
+        }
+
+    private fun priorAgreementScore(
+        values: List<OrderedRegistration>,
+        prior: ExpectedSequenceMotionModel?
+    ): Float {
+        if (prior?.motionObservable != true) return 1f
+        val comparable = values.filter { it.registration.isReliable && !it.isReference }
+        if (comparable.isEmpty()) return 0f
+        val limit = motionPriorLimit(prior)
+        return (1f - comparable.map { motionPriorDeviation(it, prior) }.average().toFloat() /
+            limit.coerceAtLeast(0.001f)).coerceIn(0f, 1f)
     }
 
     private fun localTranslationDeviation(
@@ -273,5 +356,7 @@ class TransformSequenceValidator {
         private const val MIN_TRANSLATION_DEVIATION_PX = 1.25f
         private val MIN_ROTATION_DEVIATION_RADIANS = Math.toRadians(0.15).toFloat()
         private const val MIN_DIRECTION_STEP_PX = 0.75f
+        private const val MIN_PRIOR_DEVIATION_PX = 1.5f
+        private const val PRIOR_RESIDUAL_FLOOR = 0.75f
     }
 }

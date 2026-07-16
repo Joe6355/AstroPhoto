@@ -114,6 +114,36 @@ data class ProcessingReport(
     val lineArtifactScore: Float = 0f,
     val fanPatternScore: Float = 0f,
     val transformSequenceScore: Float = 1f,
+    val registrationSchemaVersion: String = "astrophoto.jpeg.registration/2",
+    val temporalTrackCount: Int = 0,
+    val stationaryTrackCount: Int = 0,
+    val movingTrackCount: Int = 0,
+    val unknownTrackCount: Int = 0,
+    val motionObservable: Boolean = false,
+    val estimatedVelocityXAnalysisPxPerFrame: Float = 0f,
+    val estimatedVelocityYAnalysisPxPerFrame: Float = 0f,
+    val estimatedVelocityXFullPxPerFrame: Float = 0f,
+    val estimatedVelocityYFullPxPerFrame: Float = 0f,
+    val sequenceModelScore: Float = 0f,
+    val sequenceModelResidual: Float = 0f,
+    val zeroModelScore: Float = 0f,
+    val nonZeroModelScore: Float = 0f,
+    val selectedMotionModel: String = "UNAVAILABLE",
+    val candidateHypothesisCountPerFrame: Map<String, Int> = emptyMap(),
+    val selectedHypothesisRankPerFrame: Map<String, Int> = emptyMap(),
+    val movingTrackSupportPerFrame: Map<String, Int> = emptyMap(),
+    val stationaryTrackSupportPerFrame: Map<String, Int> = emptyMap(),
+    val spatialSectorSupportPerFrame: Map<String, Int> = emptyMap(),
+    val verificationReferenceRetention: Float = 0f,
+    val verificationContrastRatio: Float = 0f,
+    val verificationWidthGrowth: Float = 0f,
+    val verificationSmearRate: Float = 0f,
+    val verificationIdentityScore: Float = 0f,
+    val verificationZeroModelScore: Float = 0f,
+    val verificationSelectedModelScore: Float = 0f,
+    val sequenceSmoothnessScore: Float = 0f,
+    val sequencePriorAgreementScore: Float = 0f,
+    val registrationRejectedReasons: Map<String, String> = emptyMap(),
     val staticArtifactCandidates: Int = 0,
     val staticArtifactMaskRatio: Float = 0f,
     val memorySchemaVersion: String = "astrophoto.jpeg.memory/1",
@@ -183,6 +213,36 @@ data class ProcessingReport(
         property("lineArtifactScore", lineArtifactScore)
         property("fanPatternScore", fanPatternScore)
         property("transformSequenceScore", transformSequenceScore)
+        property("registrationSchemaVersion", registrationSchemaVersion)
+        property("temporalTrackCount", temporalTrackCount)
+        property("stationaryTrackCount", stationaryTrackCount)
+        property("movingTrackCount", movingTrackCount)
+        property("unknownTrackCount", unknownTrackCount)
+        property("motionObservable", motionObservable)
+        property("estimatedVelocityXAnalysisPxPerFrame", estimatedVelocityXAnalysisPxPerFrame)
+        property("estimatedVelocityYAnalysisPxPerFrame", estimatedVelocityYAnalysisPxPerFrame)
+        property("estimatedVelocityXFullPxPerFrame", estimatedVelocityXFullPxPerFrame)
+        property("estimatedVelocityYFullPxPerFrame", estimatedVelocityYFullPxPerFrame)
+        property("sequenceModelScore", sequenceModelScore)
+        property("sequenceModelResidual", sequenceModelResidual)
+        property("zeroModelScore", zeroModelScore)
+        property("nonZeroModelScore", nonZeroModelScore)
+        property("selectedMotionModel", selectedMotionModel)
+        append("  \"candidateHypothesisCountPerFrame\": ${intMapJson(candidateHypothesisCountPerFrame)},\n")
+        append("  \"selectedHypothesisRankPerFrame\": ${intMapJson(selectedHypothesisRankPerFrame)},\n")
+        append("  \"movingTrackSupportPerFrame\": ${intMapJson(movingTrackSupportPerFrame)},\n")
+        append("  \"stationaryTrackSupportPerFrame\": ${intMapJson(stationaryTrackSupportPerFrame)},\n")
+        append("  \"spatialSectorSupportPerFrame\": ${intMapJson(spatialSectorSupportPerFrame)},\n")
+        property("verificationReferenceRetention", verificationReferenceRetention)
+        property("verificationContrastRatio", verificationContrastRatio)
+        property("verificationWidthGrowth", verificationWidthGrowth)
+        property("verificationSmearRate", verificationSmearRate)
+        property("verificationIdentityScore", verificationIdentityScore)
+        property("verificationZeroModelScore", verificationZeroModelScore)
+        property("verificationSelectedModelScore", verificationSelectedModelScore)
+        property("sequenceSmoothnessScore", sequenceSmoothnessScore)
+        property("sequencePriorAgreementScore", sequencePriorAgreementScore)
+        append("  \"registrationRejectedReasons\": ${stringMapJson(registrationRejectedReasons)},\n")
         property("staticArtifactCandidates", staticArtifactCandidates)
         property("staticArtifactMaskRatio", staticArtifactMaskRatio)
         property("memorySchemaVersion", memorySchemaVersion)

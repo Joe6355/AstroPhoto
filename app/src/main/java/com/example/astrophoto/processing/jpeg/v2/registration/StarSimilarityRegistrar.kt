@@ -239,6 +239,88 @@ class StarSimilarityRegistrar(
         )
     }
 
+    /** Refines a translation already selected from independent temporal and verification evidence. */
+    fun registerAutomaticWithPrior(
+        referenceStars: List<DetectedStar>,
+        candidateStars: List<DetectedStar>,
+        imageWidth: Int,
+        imageHeight: Int,
+        prior: TranslationHypothesis,
+        sequenceAgreement: Float,
+        verificationScore: Float
+    ): RegistrationResult {
+        require(imageWidth > 0 && imageHeight > 0)
+        val allReferences = ranked(referenceStars)
+        val allCandidates = ranked(candidateStars)
+        if (allReferences.size < MIN_DETECTED_STARS || allCandidates.size < MIN_DETECTED_STARS) {
+            return RegistrationResult.rejected(
+                allReferences.size,
+                allCandidates.size,
+                "Insufficient detected stars"
+            ).copy(registrationModel = "SEQUENCE_TRANSLATION", scaleFixed = true)
+        }
+        val references = allReferences.take(MAX_AUTOMATIC_EVALUATION_STARS)
+        val candidates = allCandidates.take(MAX_AUTOMATIC_EVALUATION_STARS)
+        val initial = evaluate(
+            Transform(prior.dx, prior.dy, 0f, 1f),
+            references,
+            candidates,
+            AUTOMATIC_TRANSLATION_INLIER_TOLERANCE,
+            AUTOMATIC_TRANSLATION_MATCH_TOLERANCE
+        )
+        val refined = refineTranslation(initial.inlierPairs)?.let {
+            evaluate(
+                it,
+                references,
+                candidates,
+                AUTOMATIC_TRANSLATION_INLIER_TOLERANCE,
+                AUTOMATIC_TRANSLATION_MATCH_TOLERANCE
+            )
+        }
+        val selected = if (refined != null && refined.isBetterThan(initial)) refined else initial
+        val local = automaticResult(
+            evaluation = selected,
+            allReferenceCount = allReferences.size,
+            allCandidateCount = allCandidates.size,
+            imageWidth = imageWidth,
+            imageHeight = imageHeight,
+            model = "SEQUENCE_TRANSLATION",
+            rotationAllowed = false,
+            rotationRejectionReason = "sequence_translation_default",
+            distribution = null
+        )
+        val priorDeviation = hypot(selected.transform.dx - prior.dx, selected.transform.dy - prior.dy)
+        val temporalCoverageIsStrong =
+            prior.movingTrackSupport >= MIN_SEQUENCE_MOVING_SUPPORT &&
+                prior.occupiedSectors >= MIN_SEQUENCE_SECTORS &&
+                selected.inliers >= MIN_INLIER_STARS &&
+                selected.residual <= MAX_TRANSLATION_RESIDUAL
+        val rejection = when {
+            prior.occupiedSectors < MIN_SEQUENCE_SECTORS -> "Insufficient spatial-sector support"
+            priorDeviation > MAX_SEQUENCE_PRIOR_DEVIATION -> "Local transform disagrees with sequence prior"
+            sequenceAgreement < MIN_SEQUENCE_AGREEMENT -> "Sequence-model agreement is too low"
+            verificationScore < MIN_SEQUENCE_VERIFICATION -> "Star-preservation verification is too low"
+            local.rejectionReason == "Star match coverage is too low" && temporalCoverageIsStrong -> null
+            else -> local.rejectionReason
+        }
+        return local.copy(
+            confidence = (
+                local.confidence * 0.50f +
+                    sequenceAgreement.coerceIn(0f, 1f) * 0.25f +
+                    verificationScore.coerceIn(0f, 1f) * 0.25f
+                ).coerceIn(0f, 1f),
+            isReliable = rejection == null,
+            rejectionReason = rejection,
+            occupiedDistributionCells = prior.occupiedSectors,
+            spatialDistributionScore = (prior.occupiedSectors / 6f).coerceIn(0f, 1f),
+            transformSequenceScore = sequenceAgreement,
+            transformSequenceDeviation = priorDeviation,
+            rawDx = prior.dx,
+            rawDy = prior.dy,
+            rawRotationRadians = 0f
+        )
+    }
+
     private fun bestTranslation(
         references: List<DetectedStar>,
         candidates: List<DetectedStar>,
@@ -628,5 +710,10 @@ class StarSimilarityRegistrar(
         private val MAX_SEQUENCE_ROTATION_DISAGREEMENT = Math.toRadians(0.20).toFloat()
         private const val MAX_AUTOMATIC_TRANSLATION_FRACTION = 0.18f
         private const val MIN_AUTOMATIC_CONFIDENCE = 0.48f
+        private const val MIN_SEQUENCE_SECTORS = 2
+        private const val MIN_SEQUENCE_MOVING_SUPPORT = 4
+        private const val MAX_SEQUENCE_PRIOR_DEVIATION = 1.5f
+        private const val MIN_SEQUENCE_AGREEMENT = 0.35f
+        private const val MIN_SEQUENCE_VERIFICATION = 0.45f
     }
 }
