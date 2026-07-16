@@ -1,6 +1,7 @@
 package com.example.astrophoto.processing.jpeg.v2.registration
 
 import com.example.astrophoto.processing.jpeg.v2.model.DetectedStar
+import com.example.astrophoto.processing.jpeg.v2.model.ReferenceToSourceTransform
 import com.example.astrophoto.processing.jpeg.v2.model.RegistrationResult
 
 data class TemporalFeatureFrame(
@@ -71,7 +72,10 @@ data class TranslationHypothesis(
     val occupiedSectors: Int,
     val movingTrackSupport: Int,
     val stationaryTrackSupport: Int
-)
+) {
+    fun referenceToSourceTransform(): ReferenceToSourceTransform =
+        ReferenceToSourceTransform(dx, dy)
+}
 
 data class SequenceRegistrationCandidate(
     val frameId: String,
@@ -95,9 +99,15 @@ data class StellarSequenceMotionModel(
     val zeroFrameHypotheses: Map<String, TranslationHypothesis> = emptyMap(),
     val nonZeroFrameHypotheses: Map<String, TranslationHypothesis> = emptyMap()
 ) {
-    fun predicted(captureIndex: Int): Pair<Float, Float> {
+    fun predictedTransform(captureIndex: Int): ReferenceToSourceTransform {
         val delta = captureIndex - referenceIndex
-        return velocityX * delta to velocityY * delta
+        if (delta == 0) return ReferenceToSourceTransform.Identity
+        return ReferenceToSourceTransform(velocityX * delta, velocityY * delta)
+    }
+
+    fun predicted(captureIndex: Int): Pair<Float, Float> {
+        val transform = predictedTransform(captureIndex)
+        return transform.dx to transform.dy
     }
 }
 
@@ -116,7 +126,11 @@ data class RegistrationSequenceVerification(
     val identity: RegistrationVerificationMetrics,
     val zeroModel: RegistrationVerificationMetrics,
     val selectedModel: RegistrationVerificationMetrics,
-    val selectedModelAccepted: Boolean
+    val selectedModelAccepted: Boolean,
+    val inverseModel: RegistrationVerificationMetrics = identity,
+    val doubleAppliedModel: RegistrationVerificationMetrics = identity,
+    val perFrame: Map<String, RegistrationVerificationMetrics> = emptyMap(),
+    val perFrameAccepted: Map<String, Boolean> = emptyMap()
 )
 
 data class SequenceAwareRegistrationDiagnostics(
@@ -128,7 +142,10 @@ data class SequenceAwareRegistrationDiagnostics(
     val selectedHypothesisRankPerFrame: Map<String, Int>,
     val rejectedReasons: Map<String, String>,
     val sequenceSmoothnessScore: Float,
-    val sequencePriorAgreementScore: Float
+    val sequencePriorAgreementScore: Float,
+    val referenceCaptureIndex: Int,
+    val analysisWidth: Int,
+    val analysisHeight: Int
 )
 
 data class ExpectedSequenceMotionModel(
@@ -139,8 +156,14 @@ data class ExpectedSequenceMotionModel(
     val motionObservable: Boolean,
     val verificationScore: Float
 ) {
-    fun predicted(captureIndex: Int): Pair<Float, Float> {
+    fun predictedTransform(captureIndex: Int): ReferenceToSourceTransform {
         val delta = captureIndex - referenceIndex
-        return velocityX * delta to velocityY * delta
+        if (delta == 0) return ReferenceToSourceTransform.Identity
+        return ReferenceToSourceTransform(velocityX * delta, velocityY * delta)
+    }
+
+    fun predicted(captureIndex: Int): Pair<Float, Float> {
+        val transform = predictedTransform(captureIndex)
+        return transform.dx to transform.dy
     }
 }

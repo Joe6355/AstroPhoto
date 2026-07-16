@@ -119,11 +119,13 @@ import com.example.astrophoto.processing.jpeg.v2.quality.FileBackedResultQuality
 import com.example.astrophoto.processing.jpeg.v2.quality.ResultSelectionPolicy
 import com.example.astrophoto.processing.jpeg.v2.registration.OrderedRegistration
 import com.example.astrophoto.processing.jpeg.v2.registration.ExpectedSequenceMotionModel
+import com.example.astrophoto.processing.jpeg.v2.registration.CaptureSequenceFrame
+import com.example.astrophoto.processing.jpeg.v2.registration.CaptureSequenceIndexResolver
 import com.example.astrophoto.processing.jpeg.v2.registration.SequenceAwareRegistrationDiagnostics
 import com.example.astrophoto.processing.jpeg.v2.registration.SequenceAwareRegistrationEngine
 import com.example.astrophoto.processing.jpeg.v2.registration.TemporalFeatureFrame
 import com.example.astrophoto.processing.jpeg.v2.registration.TransformSequenceValidator
-import com.example.astrophoto.processing.jpeg.v2.registration.scaledTranslation
+import com.example.astrophoto.processing.jpeg.v2.registration.scaledToFullResolution
 import com.example.astrophoto.processing.jpeg.v2.sampling.ArgbFrameDiskCache
 import com.example.astrophoto.processing.jpeg.v2.sampling.FileBackedArgbPixelSource
 import com.example.astrophoto.processing.jpeg.v2.memory.ImageAllocationEstimate
@@ -976,6 +978,7 @@ class JpegStacker(private val context: Context) {
                 "selectedPreset=${profile.name} inputFrameCount=${frames.size}"
             )
             val cappedFrames = frames.take(MAX_PROFILE_FRAMES)
+            val captureIndexByFrameKey = profileCaptureIndices(cappedFrames)
             currentStage = "Чтение размеров кадров"
             val dimensionsByFrameKey = cappedFrames.associate { frame ->
                 frame.key to (readDimensions(frame)
@@ -1146,7 +1149,7 @@ class JpegStacker(private val context: Context) {
                         val analyzed = checkNotNull(analysisByFrameKey[frame.key])
                         TemporalFeatureFrame(
                             frameId = frame.key,
-                            captureIndex = cappedFrames.indexOfFirst { it.key == frame.key },
+                            captureIndex = captureIndexByFrameKey.getValue(frame.key),
                             stars = analyzed.analysis.stars
                         )
                     },
@@ -1161,7 +1164,7 @@ class JpegStacker(private val context: Context) {
                     selectedReference.analysis.height.coerceAtLeast(1)
                 val allRegistrationsByKey = analysisRegistration.registrations
                     .mapValuesTo(mutableMapOf()) { (_, registration) ->
-                        registration.scaledTranslation(scaleX, scaleY)
+                        registration.scaledToFullResolution(scaleX, scaleY)
                     }
                 val acceptedProfileFrames = selectedFrames.mapNotNull { frame ->
                     val registration = checkNotNull(allRegistrationsByKey[frame.key])
@@ -1170,7 +1173,7 @@ class JpegStacker(private val context: Context) {
                         frame = frame,
                         analysis = checkNotNull(analysisByFrameKey[frame.key]).analysis,
                         registration = registration,
-                        captureIndex = cappedFrames.indexOfFirst { it.key == frame.key }
+                        captureIndex = captureIndexByFrameKey.getValue(frame.key)
                     )
                 }.toMutableList()
                 val fullVelocityScale = (scaleX + scaleY) * 0.5f
@@ -1212,23 +1215,29 @@ class JpegStacker(private val context: Context) {
                     val registration = checkNotNull(allRegistrationsByKey[frame.key])
                     registrationReports += registration.toReport(frame.fileName)
                     logProfileRegistration(frame.fileName, registration)
-                    val captureIndex = cappedFrames.indexOfFirst { it.key == frame.key }
+                    val captureIndex = captureIndexByFrameKey.getValue(frame.key)
                     val predicted = analysisRegistration.model.predicted(captureIndex)
                     val selectedHypothesis = analysisRegistration.model
                         .acceptedFrameHypotheses[frame.key]
+                    val frameVerification = analysisRegistration.verification.perFrame[frame.key]
                     Log.i(
                         PROFILE_REGISTRATION_TAG,
                         "frame=${frame.fileName} " +
                             "predictedDx=${formatMetric(predicted.first * scaleX)} " +
                             "predictedDy=${formatMetric(predicted.second * scaleY)} " +
+                            "predictionDifferenceDx=${formatMetric(registration.dx - predicted.first * scaleX)} " +
+                            "predictionDifferenceDy=${formatMetric(registration.dy - predicted.second * scaleY)} " +
+                            "rawHypothesisDx=${formatMetric((selectedHypothesis?.dx ?: 0f) * scaleX)} " +
+                            "rawHypothesisDy=${formatMetric((selectedHypothesis?.dy ?: 0f) * scaleY)} " +
                             "selectedDx=${formatMetric(registration.dx)} " +
                             "selectedDy=${formatMetric(registration.dy)} " +
                             "hypothesisRank=${analysisRegistration.selectedHypothesisRankPerFrame[frame.key] ?: -1} " +
                             "movingSupport=${selectedHypothesis?.movingTrackSupport ?: 0} " +
                             "stationarySupport=${selectedHypothesis?.stationaryTrackSupport ?: 0} " +
                             "sequenceAgreement=${formatMetric(registration.transformSequenceScore)} " +
-                            "verificationRetention=${formatMetric(analysisRegistration.verification.selectedModel.referenceRetention)} " +
-                            "verificationSmear=${formatMetric(analysisRegistration.verification.selectedModel.smearRate)} " +
+                            "verificationRetention=${formatMetric(frameVerification?.referenceRetention ?: 0f)} " +
+                            "verificationContrast=${formatMetric(frameVerification?.contrastRatio ?: 0f)} " +
+                            "verificationSmear=${formatMetric(frameVerification?.smearRate ?: 1f)} " +
                             "accepted=${registration.isReliable}"
                     )
                     if (!registration.isReliable) {
@@ -1834,6 +1843,48 @@ class JpegStacker(private val context: Context) {
                     registrationRejectedReasons = registrationReports
                         .filterNot { it.accepted }
                         .associate { it.frameName to (it.rejectionReason ?: "registration_failed") },
+                    referenceCaptureIndex = registrationDiagnostics.referenceCaptureIndex,
+                    analysisWidth = registrationDiagnostics.analysisWidth,
+                    analysisHeight = registrationDiagnostics.analysisHeight,
+                    fullWidth = targetWidth,
+                    fullHeight = targetHeight,
+                    analysisToFullScaleX = scaleX,
+                    analysisToFullScaleY = scaleY,
+                    referenceIdentityVerified = allRegistrationsByKey
+                        .getValue(selectedReference.frame.key)
+                        .let { it.dx == 0f && it.dy == 0f && it.rotationRadians == 0f && it.scale == 1f },
+                    inverseTransformVerificationScore = registrationDiagnostics.verification
+                        .inverseModel.score,
+                    canonicalTransformVerificationScore = registrationDiagnostics.verification
+                        .selectedModel.score,
+                    identityTransformVerificationScore = registrationDiagnostics.verification.identity.score,
+                    doubleTransformVerificationScore = registrationDiagnostics.verification
+                        .doubleAppliedModel.score,
+                    perFramePredictedDx = selectedFrames.associate { frame ->
+                        val captureIndex = captureIndexByFrameKey.getValue(frame.key)
+                        frame.fileName to registrationDiagnostics.model
+                            .predictedTransform(captureIndex).dx * scaleX
+                    },
+                    perFramePredictedDy = selectedFrames.associate { frame ->
+                        val captureIndex = captureIndexByFrameKey.getValue(frame.key)
+                        frame.fileName to registrationDiagnostics.model
+                            .predictedTransform(captureIndex).dy * scaleY
+                    },
+                    perFrameSelectedDx = selectedFrames.associate { frame ->
+                        frame.fileName to allRegistrationsByKey.getValue(frame.key).dx
+                    },
+                    perFrameSelectedDy = selectedFrames.associate { frame ->
+                        frame.fileName to allRegistrationsByKey.getValue(frame.key).dy
+                    },
+                    perFrameVerificationRetention = registrationDiagnostics.verification.perFrame
+                        .mapKeys { frameNameByKey[it.key] ?: it.key }
+                        .mapValues { it.value.referenceRetention },
+                    perFrameVerificationContrastRatio = registrationDiagnostics.verification.perFrame
+                        .mapKeys { frameNameByKey[it.key] ?: it.key }
+                        .mapValues { it.value.contrastRatio },
+                    perFrameVerificationSmearRate = registrationDiagnostics.verification.perFrame
+                        .mapKeys { frameNameByKey[it.key] ?: it.key }
+                        .mapValues { it.value.smearRate },
                     staticArtifactCandidates = staticArtifactMask.regions.size,
                     staticArtifactMaskRatio = staticArtifactMask.maskRatio,
                     runtimeMaxHeapBytes = memoryBudget.snapshot.maxHeapBytes,
@@ -2409,6 +2460,12 @@ class JpegStacker(private val context: Context) {
         val registration: RegistrationResult,
         val captureIndex: Int = 0
     )
+
+    private fun profileCaptureIndices(frames: List<SessionFrame>): Map<String, Int> {
+        return CaptureSequenceIndexResolver.resolve(frames.map { frame ->
+            CaptureSequenceFrame(frame.key, frame.fileName, frame.createdAtMillis)
+        })
+    }
 
     private fun decodeMedianFrame(
         frame: SessionFrame,

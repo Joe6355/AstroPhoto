@@ -1,8 +1,5 @@
 package com.example.astrophoto.processing.jpeg.v2.model
 
-import kotlin.math.cos
-import kotlin.math.sin
-
 data class RegistrationResult(
     val dx: Float,
     val dy: Float,
@@ -32,15 +29,22 @@ data class RegistrationResult(
     val rawDy: Float = dy,
     val rawRotationRadians: Float = rotationRadians
 ) {
-    fun transform(x: Float, y: Float): Pair<Float, Float> {
-        val cosine = cos(rotationRadians)
-        val sine = sin(rotationRadians)
-        return (
-            scale * (cosine * x - sine * y) + dx
-            ) to (
-            scale * (sine * x + cosine * y) + dy
-            )
-    }
+    fun referenceToSourceTransform(): ReferenceToSourceTransform = ReferenceToSourceTransform(
+        dx = dx,
+        dy = dy,
+        rotationRadians = rotationRadians,
+        scale = scale
+    )
+
+    fun transform(x: Float, y: Float): Pair<Float, Float> =
+        referenceToSourceTransform().mapOutputToSource(x, y).let { it.x to it.y }
+
+    fun withTransform(transform: ReferenceToSourceTransform): RegistrationResult = copy(
+        dx = transform.dx,
+        dy = transform.dy,
+        rotationRadians = transform.rotationRadians,
+        scale = transform.scale
+    )
 
     companion object {
         fun rejected(

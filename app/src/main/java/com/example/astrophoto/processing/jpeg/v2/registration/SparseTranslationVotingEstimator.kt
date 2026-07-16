@@ -1,6 +1,7 @@
 package com.example.astrophoto.processing.jpeg.v2.registration
 
 import com.example.astrophoto.processing.jpeg.v2.model.DetectedStar
+import com.example.astrophoto.processing.jpeg.v2.model.ReferenceToSourceTransform
 import kotlin.math.hypot
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
@@ -23,8 +24,9 @@ class SparseTranslationVotingEstimator {
         val bins = mutableMapOf<Long, VoteBin>()
         references.forEach { referenceStar ->
             candidates.forEach { candidateStar ->
-                val dx = candidateStar.x - referenceStar.x
-                val dy = candidateStar.y - referenceStar.y
+                val canonical = canonicalHypothesis(referenceStar, candidateStar)
+                val dx = canonical.dx
+                val dy = canonical.dy
                 if (hypot(dx, dy) > maximumTranslation) return@forEach
                 val keyX = (dx / BIN_SIZE).roundToInt()
                 val keyY = (dy / BIN_SIZE).roundToInt()
@@ -194,6 +196,14 @@ class SparseTranslationVotingEstimator {
     ): Float = detectionWeight(reference) * detectionWeight(candidate) * membershipWeight(
         tracks.clusterAt(referenceFrameId, reference),
         tracks.clusterAt(candidateFrameId, candidate)
+    )
+
+    internal fun canonicalHypothesis(
+        reference: DetectedStar,
+        candidate: DetectedStar
+    ): ReferenceToSourceTransform = ReferenceToSourceTransform(
+        dx = candidate.x - reference.x,
+        dy = candidate.y - reference.y
     )
 
     private fun membershipWeight(

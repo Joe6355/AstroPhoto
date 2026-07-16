@@ -215,10 +215,10 @@ class TransformSequenceValidator {
         prior: ExpectedSequenceMotionModel?
     ): Float {
         if (prior == null) return 0f
-        val predicted = prior.predicted(value.captureIndex)
+        val predicted = prior.predictedTransform(value.captureIndex)
         return hypot(
-            value.registration.dx - predicted.first,
-            value.registration.dy - predicted.second
+            value.registration.dx - predicted.dx,
+            value.registration.dy - predicted.dy
         )
     }
 

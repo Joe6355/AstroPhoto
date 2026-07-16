@@ -144,6 +144,31 @@ data class ProcessingReport(
     val sequenceSmoothnessScore: Float = 0f,
     val sequencePriorAgreementScore: Float = 0f,
     val registrationRejectedReasons: Map<String, String> = emptyMap(),
+    val transformContractVersion: String = "astrophoto.jpeg.transform/reference-to-source-v1",
+    val transformDirection: String = "OUTPUT_REFERENCE_TO_CANDIDATE_SOURCE",
+    val referenceCaptureIndex: Int = 0,
+    val analysisWidth: Int = 0,
+    val analysisHeight: Int = 0,
+    val fullWidth: Int = 0,
+    val fullHeight: Int = 0,
+    val analysisToFullScaleX: Float = 1f,
+    val analysisToFullScaleY: Float = 1f,
+    val velocityCoordinateSpace: String = "ANALYSIS_PX_PER_CAPTURE_INDEX",
+    val registrationCoordinateSpace: String = "FULL_RESOLUTION_PX",
+    val verificationCoordinateSpace: String = "ANALYSIS_THUMBNAIL_PX",
+    val samplerCoordinateSpace: String = "OUTPUT_REFERENCE_TO_FULL_SOURCE_PX",
+    val referenceIdentityVerified: Boolean = false,
+    val inverseTransformVerificationScore: Float = 0f,
+    val canonicalTransformVerificationScore: Float = 0f,
+    val identityTransformVerificationScore: Float = 0f,
+    val doubleTransformVerificationScore: Float = 0f,
+    val perFramePredictedDx: Map<String, Float> = emptyMap(),
+    val perFramePredictedDy: Map<String, Float> = emptyMap(),
+    val perFrameSelectedDx: Map<String, Float> = emptyMap(),
+    val perFrameSelectedDy: Map<String, Float> = emptyMap(),
+    val perFrameVerificationRetention: Map<String, Float> = emptyMap(),
+    val perFrameVerificationContrastRatio: Map<String, Float> = emptyMap(),
+    val perFrameVerificationSmearRate: Map<String, Float> = emptyMap(),
     val staticArtifactCandidates: Int = 0,
     val staticArtifactMaskRatio: Float = 0f,
     val memorySchemaVersion: String = "astrophoto.jpeg.memory/1",
@@ -243,6 +268,31 @@ data class ProcessingReport(
         property("sequenceSmoothnessScore", sequenceSmoothnessScore)
         property("sequencePriorAgreementScore", sequencePriorAgreementScore)
         append("  \"registrationRejectedReasons\": ${stringMapJson(registrationRejectedReasons)},\n")
+        property("transformContractVersion", transformContractVersion)
+        property("transformDirection", transformDirection)
+        property("referenceCaptureIndex", referenceCaptureIndex)
+        property("analysisWidth", analysisWidth)
+        property("analysisHeight", analysisHeight)
+        property("fullWidth", fullWidth)
+        property("fullHeight", fullHeight)
+        property("analysisToFullScaleX", analysisToFullScaleX)
+        property("analysisToFullScaleY", analysisToFullScaleY)
+        property("velocityCoordinateSpace", velocityCoordinateSpace)
+        property("registrationCoordinateSpace", registrationCoordinateSpace)
+        property("verificationCoordinateSpace", verificationCoordinateSpace)
+        property("samplerCoordinateSpace", samplerCoordinateSpace)
+        property("referenceIdentityVerified", referenceIdentityVerified)
+        property("inverseTransformVerificationScore", inverseTransformVerificationScore)
+        property("canonicalTransformVerificationScore", canonicalTransformVerificationScore)
+        property("identityTransformVerificationScore", identityTransformVerificationScore)
+        property("doubleTransformVerificationScore", doubleTransformVerificationScore)
+        append("  \"perFramePredictedDx\": ${floatMapJson(perFramePredictedDx)},\n")
+        append("  \"perFramePredictedDy\": ${floatMapJson(perFramePredictedDy)},\n")
+        append("  \"perFrameSelectedDx\": ${floatMapJson(perFrameSelectedDx)},\n")
+        append("  \"perFrameSelectedDy\": ${floatMapJson(perFrameSelectedDy)},\n")
+        append("  \"perFrameVerificationRetention\": ${floatMapJson(perFrameVerificationRetention)},\n")
+        append("  \"perFrameVerificationContrastRatio\": ${floatMapJson(perFrameVerificationContrastRatio)},\n")
+        append("  \"perFrameVerificationSmearRate\": ${floatMapJson(perFrameVerificationSmearRate)},\n")
         property("staticArtifactCandidates", staticArtifactCandidates)
         property("staticArtifactMaskRatio", staticArtifactMaskRatio)
         property("memorySchemaVersion", memorySchemaVersion)
@@ -416,6 +466,10 @@ data class ProcessingReport(
         private fun stringMapJson(values: Map<String, String>): String = values.entries.joinToString(
             prefix = "{", postfix = "}"
         ) { "\"${escape(it.key)}\":\"${escape(it.value)}\"" }
+
+        private fun floatMapJson(values: Map<String, Float>): String = values.entries.joinToString(
+            prefix = "{", postfix = "}"
+        ) { "\"${escape(it.key)}\":${number(it.value)}" }
 
         private fun stringArray(values: List<String>): String = values.joinToString(
             prefix = "[", postfix = "]"

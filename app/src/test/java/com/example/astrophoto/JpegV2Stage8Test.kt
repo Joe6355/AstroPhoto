@@ -19,7 +19,7 @@ import com.example.astrophoto.processing.jpeg.v2.registration.TemporalMotionClus
 import com.example.astrophoto.processing.jpeg.v2.registration.TemporalTrackAnalysis
 import com.example.astrophoto.processing.jpeg.v2.registration.TransformSequenceValidator
 import com.example.astrophoto.processing.jpeg.v2.registration.TranslationHypothesis
-import com.example.astrophoto.processing.jpeg.v2.registration.scaledTranslation
+import com.example.astrophoto.processing.jpeg.v2.registration.scaledToFullResolution
 import com.example.astrophoto.processing.jpeg.v2.sampling.IntArrayPixelSource
 import com.example.astrophoto.processing.jpeg.v2.sampling.TransformedBitmapSampler
 import com.example.astrophoto.processing.jpeg.v2.quality.ReferenceStarRetentionValidator
@@ -216,6 +216,28 @@ class JpegV2Stage8Test {
         })
     }
 
+    @Test fun oneBadFrameDoesNotGloballyRejectTheOtherwiseReliableSequence() {
+        val corrupted = sequence.map { frame ->
+            if (frame.frameId == "f5") {
+                frame.copy(stars = frame.stars.map { it.copy(x = it.x + 22f, y = it.y - 19f) })
+            } else {
+                frame
+            }
+        }
+        val result = SequenceAwareRegistrationEngine().register(
+            corrupted,
+            referenceFrameId = "f$REFERENCE_INDEX",
+            imageWidth = WIDTH,
+            imageHeight = HEIGHT
+        )
+        assertTrue(result.registrations.getValue("f$REFERENCE_INDEX").isReliable)
+        assertFalse(result.registrations.getValue("f5").isReliable)
+        assertTrue(result.registrations.filterKeys { it != "f5" }.count { it.value.isReliable } >= 5)
+        assertTrue(result.registrations.filterValues { !it.isReliable }.values.none {
+            it.registrationModel == "REFERENCE_IDENTITY"
+        })
+    }
+
     @Test fun regressionReplayClearsTheFourRegistrationStarLossSignals() {
         val result = SequenceAwareRegistrationEngine().register(
             sequence,
@@ -237,7 +259,7 @@ class JpegV2Stage8Test {
     }
 
     @Test fun analysisTranslationScalesToFullResolutionWithoutDirectionChange() {
-        val scaled = registration(-4.25f, 5.0f).scaledTranslation(2f, 2f)
+        val scaled = registration(-4.25f, 5.0f).scaledToFullResolution(2f, 2f)
         assertEquals(-8.5f, scaled.dx, 0f)
         assertEquals(10f, scaled.dy, 0f)
         assertEquals(-8.5f, scaled.rawDx, 0f)
@@ -316,7 +338,7 @@ class JpegV2Stage8Test {
                 val mask = skyMaskEstimator.estimate(image)
                 val fileName = path.fileName.toString()
                 val captureIndex = Regex("_(\\d{3})\\.jpe?g", RegexOption.IGNORE_CASE)
-                    .find(fileName)?.groupValues?.get(1)?.toIntOrNull()?.minus(1) ?: order
+                    .find(fileName)?.groupValues?.get(1)?.toIntOrNull() ?: order + 1
                 captureIndex to analyzer.analyze(fileName, fileName, image, mask)
             }.sortedBy { it.first }
             val artifactAnalyzer = StaticArtifactAnalyzer()
@@ -330,6 +352,9 @@ class JpegV2Stage8Test {
             val frames = rawFrames.map { (captureIndex, analysis) ->
                 val filtered = artifactAnalyzer.excludeFrom(analysis, artifactMask)
                 TemporalFeatureFrame(filtered.id, captureIndex, filtered.stars)
+            }
+            val fullResolution = checkNotNull(ImageIO.read(jpegPaths.first().toFile())).let { image ->
+                (image.width to image.height).also { image.flush() }
             }
             val reference = frames.firstOrNull { it.frameId == reportReference }
                 ?: frames.firstOrNull { it.frameId.contains("_009.", ignoreCase = true) }
@@ -346,12 +371,34 @@ class JpegV2Stage8Test {
             assertTrue(result.toString(), result.verification.selectedModelAccepted)
             assertTrue(result.toString(), result.registrations.count { it.value.isReliable } >= 2)
             println(
-                "Stage8 registration replay: reference=${reference.frameId} " +
+                "Stage9 registration replay: reference=${reference.frameId} " +
+                    "referenceCaptureIndex=${reference.captureIndex} " +
+                    "analysis=${rawFrames.first().second.width}x${rawFrames.first().second.height} " +
+                    "full=${fullResolution.first}x${fullResolution.second} " +
+                    "scale=(${fullResolution.first.toFloat() / rawFrames.first().second.width}," +
+                    "${fullResolution.second.toFloat() / rawFrames.first().second.height}) " +
                     "model=${result.model.selectedMotionModel} " +
                     "velocity=(${result.model.velocityX},${result.model.velocityY}) " +
                     "accepted=${result.registrations.count { it.value.isReliable }} " +
+                    "canonical=${result.verification.selectedModel.score} " +
+                    "inverse=${result.verification.inverseModel.score} " +
+                    "identity=${result.verification.identity.score} " +
+                    "double=${result.verification.doubleAppliedModel.score} " +
                     "hypotheses=${result.hypothesisCountPerFrame.values.joinToString(",")}"
             )
+            frames.forEach { frame ->
+                val predicted = result.model.predictedTransform(frame.captureIndex)
+                val selected = result.registrations.getValue(frame.frameId)
+                val metrics = result.verification.perFrame[frame.frameId]
+                println(
+                    "Stage9 frame=${frame.frameId} capture=${frame.captureIndex} " +
+                        "predicted=(${predicted.dx},${predicted.dy}) " +
+                        "selected=(${selected.dx},${selected.dy}) " +
+                        "difference=(${selected.dx - predicted.dx},${selected.dy - predicted.dy}) " +
+                        "retention=${metrics?.referenceRetention} contrast=${metrics?.contrastRatio} " +
+                        "smear=${metrics?.smearRate} accepted=${selected.isReliable}"
+                )
+            }
         } finally {
             extracted.toFile().deleteRecursively()
         }

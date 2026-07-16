@@ -1,6 +1,7 @@
 package com.example.astrophoto.processing.jpeg.v2.registration
 
 import com.example.astrophoto.processing.jpeg.v2.model.DetectedStar
+import com.example.astrophoto.processing.jpeg.v2.model.ReferenceToSourceTransform
 import com.example.astrophoto.processing.jpeg.v2.model.RegistrationResult
 import kotlin.math.PI
 import kotlin.math.abs
@@ -508,10 +509,9 @@ class StarSimilarityRegistrar(
         val scale: Float
     ) {
         fun apply(star: DetectedStar): Pair<Float, Float> {
-            val cosine = cos(rotation)
-            val sine = sin(rotation)
-            return (scale * (cosine * star.x - sine * star.y) + dx) to
-                (scale * (sine * star.x + cosine * star.y) + dy)
+            val mapped = ReferenceToSourceTransform(dx, dy, rotation, scale)
+                .mapOutputToSource(star.x, star.y)
+            return mapped.x to mapped.y
         }
 
         fun key() = TransformKey(

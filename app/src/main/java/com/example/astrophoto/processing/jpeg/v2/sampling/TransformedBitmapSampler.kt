@@ -36,8 +36,9 @@ class TransformedBitmapSampler {
         outputX: Float,
         outputY: Float
     ): SampledSrgb? {
-        val sourcePoint = transform.transform(outputX, outputY)
-        return sampleAt(source, sourcePoint.first, sourcePoint.second)
+        val sourcePoint = transform.referenceToSourceTransform()
+            .mapOutputToSource(outputX, outputY)
+        return sampleAt(source, sourcePoint.x, sourcePoint.y)
     }
 
     fun sampleAt(source: ArgbPixelSource, sourceX: Float, sourceY: Float): SampledSrgb? {

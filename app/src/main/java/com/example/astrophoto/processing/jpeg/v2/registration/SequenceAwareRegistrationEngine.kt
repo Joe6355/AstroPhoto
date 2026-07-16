@@ -66,9 +66,11 @@ class SequenceAwareRegistrationEngine(
                 ranks[frame.frameId] = -1
                 return@forEach
             }
-            val predicted = fitted.predicted(frame.captureIndex)
-            val deviation = hypot(selected.dx - predicted.first, selected.dy - predicted.second)
+            val predicted = fitted.predictedTransform(frame.captureIndex)
+            val deviation = hypot(selected.dx - predicted.dx, selected.dy - predicted.dy)
             val agreement = (1f - deviation / MAX_SEQUENCE_DEVIATION).coerceIn(0f, 1f)
+            val frameVerification = verification.perFrame[frame.frameId]
+            val frameVerificationAccepted = verification.perFrameAccepted[frame.frameId] == true
             val result = registrar.registerAutomaticWithPrior(
                 referenceStars = reference.stars,
                 candidateStars = frame.stars,
@@ -76,12 +78,12 @@ class SequenceAwareRegistrationEngine(
                 imageHeight = imageHeight,
                 prior = selected,
                 sequenceAgreement = agreement,
-                verificationScore = verification.selectedModel.score
+                verificationScore = frameVerification?.score ?: 0f
             ).let { local ->
-                if (tracks.motionObservable && !verification.selectedModelAccepted) {
+                if (!frameVerificationAccepted) {
                     local.copy(
                         isReliable = false,
-                        rejectionReason = "Selected motion failed star-preservation verification"
+                        rejectionReason = "Frame transform failed star-preservation verification"
                     )
                 } else {
                     local
@@ -105,7 +107,10 @@ class SequenceAwareRegistrationEngine(
             selectedHypothesisRankPerFrame = ranks,
             rejectedReasons = rejectedReasons,
             sequenceSmoothnessScore = smoothness,
-            sequencePriorAgreementScore = priorAgreement
+            sequencePriorAgreementScore = priorAgreement,
+            referenceCaptureIndex = reference.captureIndex,
+            analysisWidth = imageWidth,
+            analysisHeight = imageHeight
         )
     }
 
@@ -144,13 +149,23 @@ class SequenceAwareRegistrationEngine(
     }
 }
 
-fun RegistrationResult.scaledTranslation(scaleX: Float, scaleY: Float): RegistrationResult = copy(
-    dx = dx * scaleX,
-    dy = dy * scaleY,
-    scale = 1f,
-    scaleFixed = true,
-    rawDx = rawDx * scaleX,
-    rawDy = rawDy * scaleY,
-    transformSequenceDeviation = transformSequenceDeviation * ((scaleX + scaleY) * 0.5f),
-    neighborTransformDelta = neighborTransformDelta * ((scaleX + scaleY) * 0.5f)
-)
+fun RegistrationResult.scaledToFullResolution(scaleX: Float, scaleY: Float): RegistrationResult {
+    val scaled = referenceToSourceTransform().scaledToFullResolution(scaleX, scaleY)
+    return withTransform(scaled).copy(
+        scaleFixed = true,
+        rawDx = rawDx * scaleX,
+        rawDy = rawDy * scaleY,
+        transformSequenceDeviation = transformSequenceDeviation * ((scaleX + scaleY) * 0.5f),
+        neighborTransformDelta = neighborTransformDelta * ((scaleX + scaleY) * 0.5f)
+    )
+}
+
+fun RegistrationResult.scaledToAnalysisResolution(scaleX: Float, scaleY: Float): RegistrationResult {
+    val scaled = referenceToSourceTransform().scaledToAnalysisResolution(scaleX, scaleY)
+    return withTransform(scaled).copy(
+        rawDx = rawDx / scaleX,
+        rawDy = rawDy / scaleY,
+        transformSequenceDeviation = transformSequenceDeviation / ((scaleX + scaleY) * 0.5f),
+        neighborTransformDelta = neighborTransformDelta / ((scaleX + scaleY) * 0.5f)
+    )
+}
