@@ -57,7 +57,9 @@ data class AdaptiveProcessingParameters(
     val maximumNeutralizationCorrection: Float,
     val maximumStarDetailGain: Float,
     val maximumChromaRadius: Int,
-    val maximumStarWidthGrowth: Float
+    val maximumStarWidthGrowth: Float,
+    val targetDisplaySkyMedian: Float = 0f,
+    val minimumStarContrastGain: Float = 0f
 ) {
     init {
         require(gradientStrength in 0f..1f && neutralizationStrength in 0f..1f)
@@ -69,6 +71,8 @@ data class AdaptiveProcessingParameters(
         require(maximumGradientCorrection >= 0f && maximumNeutralizationCorrection >= 0f)
         require(maximumStarDetailGain >= 1f && maximumChromaRadius in 0..4)
         require(maximumStarWidthGrowth >= 0f)
+        require(targetDisplaySkyMedian in 0f..1f)
+        require(minimumStarContrastGain in 0f..1f)
     }
 }
 

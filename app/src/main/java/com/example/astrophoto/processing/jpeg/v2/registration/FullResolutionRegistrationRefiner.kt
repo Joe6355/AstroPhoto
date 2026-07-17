@@ -42,7 +42,8 @@ data class FullResolutionRefinementResult(
 class FullResolutionRegistrationRefiner(
     private val matcher: FullResolutionStarPatchMatcher = FullResolutionStarPatchMatcher(),
     private val verifier: FullResolutionFrameVerification = FullResolutionFrameVerification(matcher),
-    private val policy: FullResolutionRefinementPolicy = FullResolutionRefinementPolicy()
+    private val policy: FullResolutionRefinementPolicy = FullResolutionRefinementPolicy(),
+    private val selector: FullResolutionStarPatchSelector = FullResolutionStarPatchSelector()
 ) {
     fun refine(
         frameId: String,
@@ -67,8 +68,20 @@ class FullResolutionRegistrationRefiner(
             sequenceResidual,
             stage10Confidence
         )
-        val selection = selectPatches(patches)
-        val diagnostics = selection.rejected.toMutableList()
+        val selection = selector.select(patches)
+        val diagnostics = selection.rejected.map { rejected ->
+            FullResolutionPatchDiagnostic(
+                rejected.patch.x,
+                rejected.patch.y,
+                rejected.patch.sector,
+                0f,
+                0f,
+                0f,
+                0f,
+                false,
+                rejected.reason
+            )
+        }.toMutableList()
         val matched = selection.selected.map { patch ->
             cancellationCheck()
             val match = matcher.match(
@@ -149,45 +162,6 @@ class FullResolutionRegistrationRefiner(
             rejectionReason = decision.rejectionReason,
             patchDiagnostics = diagnostics.sortedWith(compareBy({ it.y }, { it.x }, { it.rejectionReason.orEmpty() }))
         )
-    }
-
-    private fun selectPatches(patches: List<FullResolutionStarPatch>): PatchSelection {
-        val rejected = mutableListOf<FullResolutionPatchDiagnostic>()
-        val eligible = patches.filter { patch ->
-            val reason = when {
-                patch.motionCluster == TemporalMotionCluster.STATIONARY_CAMERA_SPACE -> "stationary_camera_patch"
-                patch.skyCoverage < MIN_SKY_COVERAGE -> "sky_foreground_boundary_patch"
-                patch.confidence < MIN_STAR_CONFIDENCE -> "low_confidence_star_patch"
-                patch.localContrast <= 0f -> "low_contrast_star_patch"
-                patch.ellipticity > MAX_STAR_ELLIPTICITY -> "line_or_building_edge_patch"
-                else -> null
-            }
-            if (reason != null) rejected += FullResolutionPatchDiagnostic(
-                patch.x, patch.y, patch.sector, 0f, 0f, 0f, 0f, false, reason
-            )
-            reason == null
-        }
-        val bySector = eligible.groupBy { it.sector }.toSortedMap().mapValues { (_, values) ->
-            values.sortedWith(
-                compareByDescending<FullResolutionStarPatch> {
-                    if (it.motionCluster == TemporalMotionCluster.COHERENT_MOVING_SKY) 1 else 0
-                }.thenByDescending { it.confidence * (1f + it.localContrast.coerceAtLeast(0f)) }
-                    .thenBy { it.y }.thenBy { it.x }
-            ).toMutableList()
-        }
-        val selected = mutableListOf<FullResolutionStarPatch>()
-        while (selected.size < MAX_PATCHES && bySector.values.any { it.isNotEmpty() }) {
-            bySector.values.forEach { sector ->
-                if (selected.size < MAX_PATCHES && sector.isNotEmpty()) selected += sector.removeAt(0)
-            }
-        }
-        val selectedKeys = selected.map(::patchKey).toSet()
-        eligible.filter { patchKey(it) !in selectedKeys }.forEach { patch ->
-            rejected += FullResolutionPatchDiagnostic(
-                patch.x, patch.y, patch.sector, 0f, 0f, 0f, 0f, false, "patch_budget_exceeded"
-            )
-        }
-        return PatchSelection(selected, rejected)
     }
 
     private fun aggregate(patches: List<WeightedPatch>): Aggregation {
@@ -306,11 +280,6 @@ class FullResolutionRegistrationRefiner(
         val weight: Float
     )
 
-    private data class PatchSelection(
-        val selected: List<FullResolutionStarPatch>,
-        val rejected: List<FullResolutionPatchDiagnostic>
-    )
-
     private data class Aggregation(
         val dx: Float,
         val dy: Float,
@@ -321,10 +290,6 @@ class FullResolutionRegistrationRefiner(
     )
 
     companion object {
-        private const val MAX_PATCHES = 24
-        private const val MIN_SKY_COVERAGE = 0.92f
-        private const val MIN_STAR_CONFIDENCE = 0.25f
-        private const val MAX_STAR_ELLIPTICITY = 0.80f
         private const val MIN_OUTLIER_DISTANCE = 0.22f
         private const val MAD_MULTIPLIER = 3f
         private const val MIN_HUBER_SCALE = 0.06f

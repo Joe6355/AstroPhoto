@@ -158,6 +158,22 @@ class SequenceAwareRegistrationEngine(
                         sequenceAgreement = agreement,
                         verificationConfidence = frameVerification.confidence
                     )
+                is FrameAcceptanceDecision.ProvisionalFullResolution ->
+                    sequenceSupportedRegistration(
+                        referenceStars = reference.stars.size,
+                        detectedStars = frame.stars.size,
+                        local = effectiveLocal,
+                        sequenceAgreement = agreement,
+                        verificationConfidence = frameVerification.confidence
+                    ).copy(
+                        registrationModel = "MODEL_SUPPORTED_PROVISIONAL",
+                        confidence = maxOf(
+                            MIN_PROVISIONAL_CONFIDENCE,
+                            effectiveLocal.confidence * 0.35f +
+                                agreement * 0.45f +
+                                fitted.score * 0.20f
+                        ).coerceIn(0f, 1f)
+                    )
                 is FrameAcceptanceDecision.Rejected -> legacy.withTransform(selectedTransform).copy(
                     isReliable = false,
                     rejectionReason = decision.reason,
@@ -312,6 +328,7 @@ class SequenceAwareRegistrationEngine(
         private const val MAX_SEQUENCE_DEVIATION = 2.4f
         private const val MIN_MODEL_GUIDED_STARS = 2
         private const val MAX_LEGACY_LOCAL_REFINEMENT = 1.25f
+        private const val MIN_PROVISIONAL_CONFIDENCE = 0.35f
     }
 }
 

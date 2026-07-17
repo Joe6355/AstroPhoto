@@ -231,7 +231,7 @@ class JpegV2Stage8Test {
             imageHeight = HEIGHT
         )
         assertTrue(result.registrations.getValue("f$REFERENCE_INDEX").isReliable)
-        assertFalse(result.registrations.getValue("f5").isReliable)
+        assertFalse(result.toString(), result.registrations.getValue("f5").isReliable)
         assertTrue(result.registrations.filterKeys { it != "f5" }.count { it.value.isReliable } >= 5)
         assertTrue(result.registrations.filterValues { !it.isReliable }.values.none {
             it.registrationModel == "REFERENCE_IDENTITY"
@@ -317,6 +317,7 @@ class JpegV2Stage8Test {
             val jpegPaths = Files.walk(extracted).use { paths ->
                 paths.filter { path ->
                     Files.isRegularFile(path) &&
+                        path.toString().replace('\\', '/').contains("/Lights/JPEG/", ignoreCase = true) &&
                         path.fileName.toString().lowercase().matches(Regex(".*_\\d{3}\\.jpe?g"))
                 }.sorted().toList()
             }

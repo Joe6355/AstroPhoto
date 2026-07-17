@@ -84,7 +84,8 @@ class AdaptivePresetProcessor(
             parameters.asinhStrength,
             parameters.highlightProtection,
             parameters.maximumSkyMedianFactor,
-            parameters.minimumBlackWhiteSeparation
+            parameters.minimumBlackWhiteSeparation,
+            parameters.targetDisplaySkyMedian
         ).let { result ->
             working = result.image
             result.diagnostics
@@ -117,7 +118,8 @@ class AdaptivePresetProcessor(
             currentStatistics,
             parameters.starContrastStrength,
             parameters.maximumStarDetailGain,
-            parameters.maximumStarWidthGrowth
+            parameters.maximumStarWidthGrowth,
+            parameters.minimumStarContrastGain
         ).let { result ->
             working = result.image
             result.diagnostics
@@ -129,6 +131,7 @@ class AdaptivePresetProcessor(
             before,
             after,
             parameters.maximumSkyMedianFactor,
+            parameters.targetDisplaySkyMedian,
             parameters.maximumChannelClippingPercent
         )
         if (safetyScale < 0.999f) {
@@ -166,10 +169,14 @@ class AdaptivePresetProcessor(
         before: com.example.astrophoto.processing.jpeg.v2.model.SkyStatisticsResult,
         after: com.example.astrophoto.processing.jpeg.v2.model.SkyStatisticsResult,
         maximumMedianFactor: Float,
+        targetDisplaySkyMedian: Float,
         maximumClippingPercent: Float
     ): Float {
         if (before.skyPixelCount == 0 || after.skyPixelCount == 0) return 0f
         val allowedMedian = maxOf(
+            com.example.astrophoto.processing.jpeg.v2.color.SrgbTransfer.srgbToLinear(
+                targetDisplaySkyMedian
+            ),
             before.luminanceMedian * maximumMedianFactor,
             before.luminanceMedian + maxOf(before.luminanceMad * 2f, MIN_MEDIAN_HEADROOM)
         )

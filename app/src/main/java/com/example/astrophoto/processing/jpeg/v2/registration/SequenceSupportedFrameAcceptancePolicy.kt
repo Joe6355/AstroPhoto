@@ -18,6 +18,12 @@ sealed interface FrameAcceptanceDecision {
         override val path: String = PATH_SEQUENCE_SUPPORTED
     }
 
+    data class ProvisionalFullResolution(
+        override val reason: String = "sequence_model_supports_full_resolution_verification"
+    ) : FrameAcceptanceDecision {
+        override val path: String = PATH_MODEL_SUPPORTED_PROVISIONAL
+    }
+
     data class Rejected(override val reason: String) : FrameAcceptanceDecision {
         override val path: String = PATH_REJECTED
     }
@@ -26,6 +32,7 @@ sealed interface FrameAcceptanceDecision {
         const val PATH_REFERENCE = "REFERENCE_IDENTITY"
         const val PATH_STRONG_SPARSE = "STRONG_SPARSE"
         const val PATH_SEQUENCE_SUPPORTED = "SEQUENCE_SUPPORTED"
+        const val PATH_MODEL_SUPPORTED_PROVISIONAL = "MODEL_SUPPORTED_PROVISIONAL"
         const val PATH_REJECTED = "REJECTED"
     }
 }
@@ -73,12 +80,23 @@ class SequenceSupportedFrameAcceptancePolicy {
                 "frame_verification_confidence_too_low"
             else -> null
         }
-        return if (rejection == null) {
-            FrameAcceptanceDecision.AcceptedSequenceSupported()
-        } else {
-            FrameAcceptanceDecision.Rejected(rejection)
+        return when {
+            rejection == null -> FrameAcceptanceDecision.AcceptedSequenceSupported()
+            supportsFullResolutionVerification(evidence) ->
+                FrameAcceptanceDecision.ProvisionalFullResolution(rejection)
+            else -> FrameAcceptanceDecision.Rejected(rejection)
         }
     }
+
+    private fun supportsFullResolutionVerification(evidence: FrameAcceptanceEvidence): Boolean =
+        evidence.motionObservable &&
+            evidence.sequenceModelScore >= MIN_SEQUENCE_MODEL_SCORE &&
+            evidence.sequenceAgreement >= MIN_SEQUENCE_AGREEMENT &&
+            evidence.verification.reliableStarCount >= MIN_PROVISIONAL_VERIFICATION_STARS &&
+            evidence.legacyRegistration.referenceStars >= MIN_ANALYSIS_STARS &&
+            evidence.legacyRegistration.detectedStars >= MIN_ANALYSIS_STARS &&
+            evidence.local.transform.dx.isFinite() &&
+            evidence.local.transform.dy.isFinite()
 
     fun strongVerificationAccepted(metrics: RegistrationVerificationMetrics): Boolean =
         metrics.reliableStarCount >= MIN_STRONG_VERIFICATION_STARS &&
@@ -106,5 +124,7 @@ class SequenceSupportedFrameAcceptancePolicy {
         const val MAX_SEQUENCE_WIDTH_GROWTH = 0.65f
         const val MAX_SEQUENCE_SMEAR_RATE = 0.10f
         const val MIN_SEQUENCE_VERIFICATION_CONFIDENCE = 0.70f
+        const val MIN_PROVISIONAL_VERIFICATION_STARS = 1
+        const val MIN_ANALYSIS_STARS = 1
     }
 }

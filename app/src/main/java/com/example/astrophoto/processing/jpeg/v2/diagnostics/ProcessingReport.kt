@@ -96,6 +96,9 @@ data class ProcessingReport(
     val outputPngDisplayName: String,
     val stageDurationsMillis: Map<String, Long>,
     val stage4Executed: Boolean = true,
+    val processingOutcome: String = "PROCESSED",
+    val actualSkyBrightnessGain: Float = 1f,
+    val actualStarContrastGain: Float = 1f,
     val cleanStackAccepted: Boolean = cleanStackDecision.accepted,
     val cleanStackRejectionReasons: List<String> = cleanStackDecision.hardFailureReasons,
     val referenceReliableStarCount: Int = referenceMetrics.reliableStarCount,
@@ -213,6 +216,36 @@ data class ProcessingReport(
     val fullResolutionPatchCentroidResidualPerFrame: Map<String, Float> = emptyMap(),
     val fullResolutionPatchWidthGrowthPerFrame: Map<String, Float> = emptyMap(),
     val fullResolutionPatchSmearPerFrame: Map<String, Float> = emptyMap(),
+    val stellarCentroidRefinementEnabled: Boolean = false,
+    val stellarCentroidSchemaVersion: String = "astrophoto.jpeg.stellar-centroid/1",
+    val centroidPrimaryUsedPerFrame: Map<String, Boolean> = emptyMap(),
+    val znccSecondaryUsedPerFrame: Map<String, Boolean> = emptyMap(),
+    val znccFallbackUsedPerFrame: Map<String, Boolean> = emptyMap(),
+    val referenceCentroidCount: Int = 0,
+    val referenceCentroidAcceptedCount: Int = 0,
+    val referenceCentroidRejectedCount: Int = 0,
+    val centroidAttemptedStarCountPerFrame: Map<String, Int> = emptyMap(),
+    val centroidAcceptedStarCountPerFrame: Map<String, Int> = emptyMap(),
+    val centroidRejectedStarCountPerFrame: Map<String, Int> = emptyMap(),
+    val centroidSpatialSectorCountPerFrame: Map<String, Int> = emptyMap(),
+    val centroidInitialDxPerFrame: Map<String, Float> = emptyMap(),
+    val centroidInitialDyPerFrame: Map<String, Float> = emptyMap(),
+    val centroidRefinedDxPerFrame: Map<String, Float> = emptyMap(),
+    val centroidRefinedDyPerFrame: Map<String, Float> = emptyMap(),
+    val centroidCorrectionDxPerFrame: Map<String, Float> = emptyMap(),
+    val centroidCorrectionDyPerFrame: Map<String, Float> = emptyMap(),
+    val centroidMedianResidualPerFrame: Map<String, Float> = emptyMap(),
+    val centroidP90ResidualPerFrame: Map<String, Float> = emptyMap(),
+    val centroidMedianSnrPerFrame: Map<String, Float> = emptyMap(),
+    val centroidMedianFitResidualPerFrame: Map<String, Float> = emptyMap(),
+    val centroidConfidencePerFrame: Map<String, Float> = emptyMap(),
+    val centroidRefinementAcceptedPerFrame: Map<String, Boolean> = emptyMap(),
+    val centroidRefinementReasonPerFrame: Map<String, String> = emptyMap(),
+    val centroidRetentionPerFrame: Map<String, Float> = emptyMap(),
+    val centroidContrastRatioPerFrame: Map<String, Float> = emptyMap(),
+    val centroidWidthGrowthPerFrame: Map<String, Float> = emptyMap(),
+    val centroidEllipticityGrowthPerFrame: Map<String, Float> = emptyMap(),
+    val centroidSmearPerFrame: Map<String, Float> = emptyMap(),
     val samplingKernel: String = "BILINEAR",
     val samplingIdentityContrastRatio: Float = 0f,
     val samplingProductionContrastRatio: Float = 0f,
@@ -268,6 +301,9 @@ data class ProcessingReport(
         append("\n  \"processedDecision\": ${decisionJson(processedDecision)},")
         append("\n")
         property("stage4Executed", stage4Executed)
+        property("processingOutcome", processingOutcome)
+        property("actualSkyBrightnessGain", actualSkyBrightnessGain)
+        property("actualStarContrastGain", actualStarContrastGain)
         property("cleanStackAccepted", cleanStackAccepted)
         append("  \"cleanStackRejectionReasons\": ${stringArray(cleanStackRejectionReasons)},\n")
         property("referenceReliableStarCount", referenceReliableStarCount)
@@ -385,6 +421,36 @@ data class ProcessingReport(
         append("  \"fullResolutionPatchCentroidResidualPerFrame\": ${floatMapJson(fullResolutionPatchCentroidResidualPerFrame)},\n")
         append("  \"fullResolutionPatchWidthGrowthPerFrame\": ${floatMapJson(fullResolutionPatchWidthGrowthPerFrame)},\n")
         append("  \"fullResolutionPatchSmearPerFrame\": ${floatMapJson(fullResolutionPatchSmearPerFrame)},\n")
+        property("stellarCentroidRefinementEnabled", stellarCentroidRefinementEnabled)
+        property("stellarCentroidSchemaVersion", stellarCentroidSchemaVersion)
+        append("  \"centroidPrimaryUsedPerFrame\": ${booleanMapJson(centroidPrimaryUsedPerFrame)},\n")
+        append("  \"znccSecondaryUsedPerFrame\": ${booleanMapJson(znccSecondaryUsedPerFrame)},\n")
+        append("  \"znccFallbackUsedPerFrame\": ${booleanMapJson(znccFallbackUsedPerFrame)},\n")
+        property("referenceCentroidCount", referenceCentroidCount)
+        property("referenceCentroidAcceptedCount", referenceCentroidAcceptedCount)
+        property("referenceCentroidRejectedCount", referenceCentroidRejectedCount)
+        append("  \"centroidAttemptedStarCountPerFrame\": ${intMapJson(centroidAttemptedStarCountPerFrame)},\n")
+        append("  \"centroidAcceptedStarCountPerFrame\": ${intMapJson(centroidAcceptedStarCountPerFrame)},\n")
+        append("  \"centroidRejectedStarCountPerFrame\": ${intMapJson(centroidRejectedStarCountPerFrame)},\n")
+        append("  \"centroidSpatialSectorCountPerFrame\": ${intMapJson(centroidSpatialSectorCountPerFrame)},\n")
+        append("  \"centroidInitialDxPerFrame\": ${floatMapJson(centroidInitialDxPerFrame)},\n")
+        append("  \"centroidInitialDyPerFrame\": ${floatMapJson(centroidInitialDyPerFrame)},\n")
+        append("  \"centroidRefinedDxPerFrame\": ${floatMapJson(centroidRefinedDxPerFrame)},\n")
+        append("  \"centroidRefinedDyPerFrame\": ${floatMapJson(centroidRefinedDyPerFrame)},\n")
+        append("  \"centroidCorrectionDxPerFrame\": ${floatMapJson(centroidCorrectionDxPerFrame)},\n")
+        append("  \"centroidCorrectionDyPerFrame\": ${floatMapJson(centroidCorrectionDyPerFrame)},\n")
+        append("  \"centroidMedianResidualPerFrame\": ${floatMapJson(centroidMedianResidualPerFrame)},\n")
+        append("  \"centroidP90ResidualPerFrame\": ${floatMapJson(centroidP90ResidualPerFrame)},\n")
+        append("  \"centroidMedianSnrPerFrame\": ${floatMapJson(centroidMedianSnrPerFrame)},\n")
+        append("  \"centroidMedianFitResidualPerFrame\": ${floatMapJson(centroidMedianFitResidualPerFrame)},\n")
+        append("  \"centroidConfidencePerFrame\": ${floatMapJson(centroidConfidencePerFrame)},\n")
+        append("  \"centroidRefinementAcceptedPerFrame\": ${booleanMapJson(centroidRefinementAcceptedPerFrame)},\n")
+        append("  \"centroidRefinementReasonPerFrame\": ${stringMapJson(centroidRefinementReasonPerFrame)},\n")
+        append("  \"centroidRetentionPerFrame\": ${floatMapJson(centroidRetentionPerFrame)},\n")
+        append("  \"centroidContrastRatioPerFrame\": ${floatMapJson(centroidContrastRatioPerFrame)},\n")
+        append("  \"centroidWidthGrowthPerFrame\": ${floatMapJson(centroidWidthGrowthPerFrame)},\n")
+        append("  \"centroidEllipticityGrowthPerFrame\": ${floatMapJson(centroidEllipticityGrowthPerFrame)},\n")
+        append("  \"centroidSmearPerFrame\": ${floatMapJson(centroidSmearPerFrame)},\n")
         property("samplingKernel", samplingKernel)
         property("samplingIdentityContrastRatio", samplingIdentityContrastRatio)
         property("samplingProductionContrastRatio", samplingProductionContrastRatio)
@@ -455,7 +521,7 @@ data class ProcessingReport(
     }
 
     companion object {
-        const val SCHEMA_VERSION = "astrophoto.jpeg.processing/1"
+        const val SCHEMA_VERSION = "astrophoto.jpeg.processing/2"
 
         private fun registrationJson(value: FrameRegistrationReport): String = """{
             "frameName":"${escape(value.frameName)}","accepted":${value.accepted},
@@ -511,7 +577,9 @@ data class ProcessingReport(
             "maximumNeutralizationCorrection":${number(value.maximumNeutralizationCorrection)},
             "maximumStarDetailGain":${number(value.maximumStarDetailGain)},
             "maximumChromaRadius":${value.maximumChromaRadius},
-            "maximumStarWidthGrowth":${number(value.maximumStarWidthGrowth)}
+            "maximumStarWidthGrowth":${number(value.maximumStarWidthGrowth)},
+            "targetDisplaySkyMedian":${number(value.targetDisplaySkyMedian)},
+            "minimumStarContrastGain":${number(value.minimumStarContrastGain)}
         }""".trimIndent().replace("\n", "")
 
         private fun metricsJson(value: ResultQualityMetrics): String = """{

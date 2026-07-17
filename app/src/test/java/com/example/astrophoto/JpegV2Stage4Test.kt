@@ -310,6 +310,23 @@ class JpegV2Stage4Test {
         assertTrue(strong.gradientStrength > city.gradientStrength)
         assertTrue(strong.stretchBlend > city.stretchBlend)
         assertTrue(strong.chromaNoiseStrength > city.chromaNoiseStrength)
+        assertTrue(strong.targetDisplaySkyMedian > city.targetDisplaySkyMedian)
+        assertTrue(strong.minimumStarContrastGain > city.minimumStarContrastGain)
+    }
+
+    @Test fun automaticPresetsExposeRequestedBackgroundAndStarTargets() {
+        val deep = ExistingPresetParameterMapper.parametersFor(AstroProcessingProfile.DEEP_SKY, 20)
+        val urban = ExistingPresetParameterMapper.parametersFor(AstroProcessingProfile.URBAN_SKY, 20)
+        val strong = ExistingPresetParameterMapper.parametersFor(AstroProcessingProfile.URBAN_SKY_STRONG, 20)
+        val maximum = ExistingPresetParameterMapper.parametersFor(AstroProcessingProfile.MAX_STARS, 20)
+        assertEquals(18f / 255f, deep.targetDisplaySkyMedian, 0f)
+        assertEquals(20f / 255f, urban.targetDisplaySkyMedian, 0f)
+        assertEquals(24f / 255f, strong.targetDisplaySkyMedian, 0f)
+        assertEquals(26f / 255f, maximum.targetDisplaySkyMedian, 0f)
+        assertEquals(0.15f, deep.minimumStarContrastGain, 0f)
+        assertEquals(0.20f, urban.minimumStarContrastGain, 0f)
+        assertEquals(0.35f, strong.minimumStarContrastGain, 0f)
+        assertEquals(0.50f, maximum.minimumStarContrastGain, 0f)
     }
 
     @Test fun cityWindowStrongIsNotNumericallyEquivalent() {

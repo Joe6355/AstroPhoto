@@ -21,7 +21,8 @@ class LocalStarContrastEnhancer {
         statistics: SkyStatisticsResult,
         strength: Float,
         maximumDetailGain: Float,
-        maximumWidthGrowth: Float
+        maximumWidthGrowth: Float,
+        minimumContrastGain: Float = 0f
     ): LocalStarEnhancementResult {
         require(image.width == effectiveSkyAlpha.width && image.height == effectiveSkyAlpha.height)
         if (strength <= 0f || maximumDetailGain <= 1f || stars.isEmpty()) {
@@ -77,8 +78,12 @@ class LocalStarContrastEnhancer {
                 maxOf(statistics.brightStarCorePercentile, statistics.estimatedSafeWhitePoint),
                 centerLuminance
             )
-            val detailMultiplier = 1f + (maximumDetailGain - 1f) * strength.coerceIn(0f, 1f) *
-                star.confidence.coerceIn(0f, 1f) * brightProtection
+            val requestedGain = maxOf(
+                minimumContrastGain,
+                (maximumDetailGain - 1f) * strength.coerceIn(0f, 1f) *
+                    star.confidence.coerceIn(0f, 1f)
+            )
+            val detailMultiplier = 1f + requestedGain * brightProtection
             if (detailMultiplier <= 1.001f) {
                 rejected++
                 return@forEach

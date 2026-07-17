@@ -266,7 +266,7 @@ class JpegV2Stage11Test {
         assertTrue(profile.contains("val cachedFrames = fullResolutionPreparation.cachedFrames"))
         assertTrue(profile.contains("transform = accepted.registration"))
         assertFalse(profile.substring(refinement, integration).contains("scaledToFullResolution("))
-        assertTrue(source.contains("cached.copy(\n                    referenceToSourceTransform = result.refinedTransform"))
+        assertTrue(source.contains("cached.copy(\n                    referenceToSourceTransform = centroidResult.refinedTransform"))
     }
 
     @Test fun productionRefinementUsesOriginalResolutionCacheNotUpscaledThumbnail() {

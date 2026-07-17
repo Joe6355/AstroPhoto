@@ -99,6 +99,7 @@ import com.example.astrophoto.processing.jpeg.v2.masking.ForegroundProtectionMas
 import com.example.astrophoto.processing.jpeg.v2.masking.SkyMaskEstimator
 import com.example.astrophoto.processing.jpeg.v2.masking.SkyMaskRefiner
 import com.example.astrophoto.processing.jpeg.v2.model.DetectedStar as V2DetectedStar
+import com.example.astrophoto.processing.jpeg.v2.model.AdaptiveProcessingDiagnostics
 import com.example.astrophoto.processing.jpeg.v2.model.FrameAnalysis
 import com.example.astrophoto.processing.jpeg.v2.model.QualityGateDecision
 import com.example.astrophoto.processing.jpeg.v2.model.RegistrationResult
@@ -122,6 +123,8 @@ import com.example.astrophoto.processing.jpeg.v2.registration.ExpectedSequenceMo
 import com.example.astrophoto.processing.jpeg.v2.registration.FullResolutionRefinementResult
 import com.example.astrophoto.processing.jpeg.v2.registration.FullResolutionRegistrationRefiner
 import com.example.astrophoto.processing.jpeg.v2.registration.FullResolutionStarPatch
+import com.example.astrophoto.processing.jpeg.v2.registration.StellarCentroidFrameRefiner
+import com.example.astrophoto.processing.jpeg.v2.registration.StellarCentroidRefinementResult
 import com.example.astrophoto.processing.jpeg.v2.registration.CaptureSequenceFrame
 import com.example.astrophoto.processing.jpeg.v2.registration.CaptureSequenceIndexResolver
 import com.example.astrophoto.processing.jpeg.v2.registration.SequenceAwareRegistrationDiagnostics
@@ -145,6 +148,58 @@ import com.example.astrophoto.processing.jpeg.v2.storage.FileBackedImageReader
 import com.example.astrophoto.processing.jpeg.v2.storage.ResultCandidateStore
 import com.example.astrophoto.processing.jpeg.v2.storage.TemporaryPipelineFiles
 
+enum class JpegProfileProcessingOutcome {
+    PROCESSED,
+    CLEAN_FALLBACK,
+    FAILED_REGISTRATION
+}
+
+class JpegProfileProcessingException(
+    val outcome: JpegProfileProcessingOutcome,
+    message: String
+) : IllegalStateException(message)
+
+internal data class JpegProfileOutputPlan(
+    val outcome: JpegProfileProcessingOutcome,
+    val filePrefix: String
+)
+
+internal fun requireMinimumRegisteredFrames(
+    acceptedFrames: Int,
+    totalFrames: Int,
+    profile: AstroProcessingProfile
+) {
+    if (acceptedFrames < profile.minimumFrames) {
+        throw JpegProfileProcessingException(
+            JpegProfileProcessingOutcome.FAILED_REGISTRATION,
+            "Регистрация не удалась: использовано $acceptedFrames/$totalFrames, " +
+                "минимум для ${profile.title} — ${profile.minimumFrames}. Файл профиля не создан."
+        )
+    }
+}
+
+internal fun jpegProfileOutputPlan(
+    profile: AstroProcessingProfile,
+    selectedType: ResultCandidateType,
+    acceptedFrames: Int,
+    totalFrames: Int,
+    failureReason: String?
+): JpegProfileOutputPlan = when (selectedType) {
+    ResultCandidateType.PROCESSED -> JpegProfileOutputPlan(
+        JpegProfileProcessingOutcome.PROCESSED,
+        profile.filePrefix
+    )
+    ResultCandidateType.CLEAN_STACK -> JpegProfileOutputPlan(
+        JpegProfileProcessingOutcome.CLEAN_FALLBACK,
+        ResultSelectionPolicy.INTERNAL_FALLBACK_LABEL
+    )
+    ResultCandidateType.REFERENCE -> throw JpegProfileProcessingException(
+        JpegProfileProcessingOutcome.FAILED_REGISTRATION,
+        "Стек отклонён проверкой качества: использовано $acceptedFrames/$totalFrames; " +
+            "${failureReason ?: "reference-only result"}. Файл профиля не создан."
+    )
+}
+
 data class JpegStackResult(
     val fileName: String,
     val displayPath: String,
@@ -167,7 +222,9 @@ data class JpegStackResult(
     val fallbackReason: String? = null,
     val warnings: List<String> = emptyList(),
     val additionalFiles: List<String> = emptyList(),
-    val processingRunId: String? = null
+    val processingRunId: String? = null,
+    val processingOutcome: JpegProfileProcessingOutcome? = null,
+    val postProcessingExecuted: Boolean = false
 )
 
 class JpegStacker(private val context: Context) {
@@ -1301,6 +1358,7 @@ class JpegStacker(private val context: Context) {
                     onProgress = onProgress
                 )
                 val refinementResultsByKey = fullResolutionPreparation.refinementResultsByKey
+                val centroidResultsByKey = fullResolutionPreparation.centroidResultsByKey
                 val samplingFidelity = fullResolutionPreparation.samplingFidelity
                 fullResolutionPreparation.finalRegistrationsByKey.forEach { (key, registration) ->
                     allRegistrationsByKey[key] = registration
@@ -1318,12 +1376,7 @@ class JpegStacker(private val context: Context) {
                 selectedFrames.forEach { frame ->
                     registrationReports += allRegistrationsByKey.getValue(frame.key).toReport(frame.fileName)
                 }
-                if (acceptedFrames < 2) {
-                    warnings += "Надёжно зарегистрирован только опорный кадр; будет сохранён лучший оригинал"
-                }
-                if (acceptedFrames < profile.minimumFrames) {
-                    warnings += "После full-resolution регистрации принято $acceptedFrames из ${selectedFrames.size} кадров"
-                }
+                requireMinimumRegisteredFrames(acceptedFrames, selectedFrames.size, profile)
                 pipelineTiming.record(
                     "full_resolution_refinement",
                     (System.nanoTime() - refinementStarted) / 1_000_000L
@@ -1507,6 +1560,13 @@ class JpegStacker(private val context: Context) {
                     memoryBudget = memoryBudget,
                     memoryTracker = memoryTracker
                 )
+                val starPreservedStackedSky = preserveConfirmedStarSignal(
+                    stackedSky,
+                    maskStage.referenceCandidate,
+                    fullResolutionStars,
+                    candidateStore
+                )
+                candidateStore.deleteTemporary(stackedSky)
                 pipelineTiming.record(
                     "sky_masking",
                     (System.nanoTime() - skyMaskingStarted) / 1_000_000L
@@ -1530,7 +1590,7 @@ class JpegStacker(private val context: Context) {
                 val composite = FileBackedFloatPlaneReader(maskStage.featheredSkyMask).use { feathered ->
                     FileBackedFloatPlaneReader(validCoverage).use { coverage ->
                         FileBackedSkyForegroundComposer().compose(
-                            stackedSky = stackedSky,
+                            stackedSky = starPreservedStackedSky,
                             reference = maskStage.referenceCandidate,
                             featheredSkyMask = feathered,
                             validCoverage = coverage,
@@ -1636,14 +1696,15 @@ class JpegStacker(private val context: Context) {
                     .shouldExecuteStage4(cleanStackDecision)
                 val processedCandidate: StoredResultCandidate?
                 val processedDecision: QualityGateDecision
+                var adaptiveDiagnostics: AdaptiveProcessingDiagnostics? = null
                 if (stage4Executed) {
                     currentStage = "File-backed adaptive processing"
                     val alignedStackStars = qualityAnalyzer.detectStars(
-                        stackedSky,
+                        starPreservedStackedSky,
                         effectiveSkyAlpha
                     )
                     val adaptiveResult = FileBackedAdaptivePresetProcessor().process(
-                        stackedSky = stackedSky,
+                        stackedSky = starPreservedStackedSky,
                         referenceForeground = maskStage.referenceCandidate,
                         effectiveSkyAlpha = effectiveSkyAlpha,
                         profile = profile,
@@ -1660,6 +1721,7 @@ class JpegStacker(private val context: Context) {
                         }
                     )
                     pipelineTiming.recordAll(adaptiveResult.diagnostics.stageDurationsMillis)
+                    adaptiveDiagnostics = adaptiveResult.diagnostics
                     processedCandidate = StoredResultCandidate(
                         ResultCandidateType.PROCESSED,
                         adaptiveResult.image,
@@ -1709,6 +1771,14 @@ class JpegStacker(private val context: Context) {
                     processedDecision,
                     cleanStackDecision
                 )
+                val outputPlan = jpegProfileOutputPlan(
+                    profile,
+                    finalSelection.selected.type,
+                    acceptedFrames,
+                    selectedFrames.size,
+                    finalSelection.fallbackReason
+                )
+                val processingOutcome = outputPlan.outcome
                 pipelineTiming.record(
                     "quality_analysis",
                     (System.nanoTime() - qualityAnalysisStarted) / 1_000_000L
@@ -1748,7 +1818,7 @@ class JpegStacker(private val context: Context) {
 
                 val now = System.currentTimeMillis()
                 val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(now))
-                val requestedFileName = "${profile.filePrefix}_$timestamp.png"
+                val requestedFileName = "${outputPlan.filePrefix}_$timestamp.png"
                 val frameNameById = acceptedProfileFrames.associate {
                     it.analysis.id to it.frame.fileName
                 }
@@ -1823,6 +1893,15 @@ class JpegStacker(private val context: Context) {
                     outputPngDisplayName = requestedFileName,
                     stageDurationsMillis = pipelineTiming.snapshot(),
                     stage4Executed = stage4Executed,
+                    processingOutcome = processingOutcome.name,
+                    actualSkyBrightnessGain = adaptiveDiagnostics?.let { diagnostics ->
+                        diagnostics.after.luminanceMedian /
+                            diagnostics.before.luminanceMedian.coerceAtLeast(0.000001f)
+                    } ?: 1f,
+                    actualStarContrastGain = processedCandidate?.metrics?.let { metrics ->
+                        metrics.medianStarLocalContrast /
+                            cleanStackCandidate.metrics.medianStarLocalContrast.coerceAtLeast(0.000001f)
+                    } ?: 1f,
                     cleanStackAccepted = cleanStackDecision.accepted,
                     cleanStackRejectionReasons = cleanStackDecision.hardFailureReasons,
                     referenceReliableStarCount = retentionValidation.metrics.referenceReliableStarCount,
@@ -1951,10 +2030,10 @@ class JpegStacker(private val context: Context) {
                         val finalRegistration = allRegistrationsByKey.getValue(frame.key)
                         val enginePath = registrationDiagnostics.frameAcceptancePaths[frame.key]
                             ?: "UNAVAILABLE"
-                        val refinement = refinementResultsByKey[frame.key]
+                        val refinement = centroidResultsByKey[frame.key]
                         frame.fileName to when {
-                            refinement != null && !refinement.accepted -> "REJECTED_FULL_RESOLUTION"
-                            refinement != null && refinement.accepted -> "$enginePath+FULL_RESOLUTION_REFINED"
+                            refinement != null && !refinement.accepted -> "REJECTED_STELLAR_CENTROID"
+                            refinement != null && refinement.accepted -> "$enginePath+STELLAR_CENTROID_REFINED"
                             !finalRegistration.isReliable && enginePath != "REJECTED" ->
                                 "REJECTED_SEQUENCE_VALIDATION"
                             else -> enginePath
@@ -2012,6 +2091,7 @@ class JpegStacker(private val context: Context) {
                 )
                 processingReport = processingReport.withFullResolutionRefinement(
                     resultsByKey = refinementResultsByKey,
+                    centroidResultsByKey = centroidResultsByKey,
                     frameNameByKey = frameNameByKey,
                     provisionalAcceptedFrameCount = provisionalAcceptedFrames,
                     finalAcceptedFrameCount = acceptedFrames,
@@ -2218,7 +2298,7 @@ class JpegStacker(private val context: Context) {
                     frameCount = acceptedFrames,
                     sessionInfoUpdated = infoUpdated,
                     alignmentEnabled = alignmentApplied > 0,
-                    astroStretchApplied = true,
+                    astroStretchApplied = processingOutcome == JpegProfileProcessingOutcome.PROCESSED,
                     downscaled = false,
                     profile = profile,
                     selectedResultType = finalSelection.selected.type.name,
@@ -2228,7 +2308,9 @@ class JpegStacker(private val context: Context) {
                     fallbackReason = finalSelection.fallbackReason,
                     warnings = warnings.distinct(),
                     additionalFiles = additionalFiles,
-                    processingRunId = journalRunId
+                    processingRunId = journalRunId,
+                    processingOutcome = processingOutcome,
+                    postProcessingExecuted = stage4Executed
                 ).also {
                     Log.i(
                         POST_COMPLETION_TAG,
@@ -2568,6 +2650,7 @@ class JpegStacker(private val context: Context) {
         val cachedFrames: List<Pair<AcceptedProfileFrame, CachedArgbFrame>>,
         val finalRegistrationsByKey: Map<String, RegistrationResult>,
         val refinementResultsByKey: Map<String, FullResolutionRefinementResult>,
+        val centroidResultsByKey: Map<String, StellarCentroidRefinementResult>,
         val samplingFidelity: SamplingFidelityResult,
         val warnings: List<String>
     )
@@ -2892,6 +2975,51 @@ class JpegStacker(private val context: Context) {
         }
     }
 
+    private fun preserveConfirmedStarSignal(
+        stackedSky: FileBackedImage,
+        reference: FileBackedImage,
+        stars: List<V2DetectedStar>,
+        store: ResultCandidateStore
+    ): FileBackedImage {
+        require(stackedSky.width == reference.width && stackedSky.height == reference.height)
+        val writer = store.createTemporaryWriter(
+            "star-preserved-stack",
+            stackedSky.width,
+            stackedSky.height
+        )
+        val stackedRow = IntArray(stackedSky.width)
+        val referenceRow = IntArray(stackedSky.width)
+        try {
+            FileBackedImageReader(stackedSky).use { stackedReader ->
+                FileBackedImageReader(reference).use { referenceReader ->
+                    for (y in 0 until stackedSky.height) {
+                        stackedReader.readArgbRow(y, stackedRow)
+                        referenceReader.readArgbRow(y, referenceRow)
+                        stars.forEach { star ->
+                            val coreRadius = ceil(star.width * 1.8f).toInt().coerceIn(3, 7)
+                            val radius = coreRadius + 3
+                            val dy = y - star.y
+                            if (kotlin.math.abs(dy) > radius) return@forEach
+                            val centerX = star.x.roundToInt()
+                            val span = sqrt((radius * radius - dy * dy).coerceAtLeast(0f))
+                                .roundToInt()
+                            val left = (centerX - span).coerceAtLeast(0)
+                            val right = (centerX + span).coerceAtMost(stackedSky.width - 1)
+                            for (x in left..right) {
+                                stackedRow[x] = referenceRow[x]
+                            }
+                        }
+                        writer.writeRow(y, stackedRow)
+                    }
+                }
+            }
+            return writer.finish()
+        } catch (error: Throwable) {
+            runCatching { writer.close() }
+            throw error
+        }
+    }
+
     private suspend fun prepareAndRefineFullResolutionFrames(
         provisionalFrames: List<AcceptedProfileFrame>,
         selectedReference: ProfileAnalyzedFrame,
@@ -2952,8 +3080,10 @@ class JpegStacker(private val context: Context) {
         val finalFrames = mutableListOf<Pair<AcceptedProfileFrame, CachedArgbFrame>>()
         val finalRegistrations = linkedMapOf<String, RegistrationResult>()
         val refinementResults = linkedMapOf<String, FullResolutionRefinementResult>()
+        val centroidResults = linkedMapOf<String, StellarCentroidRefinementResult>()
         val warnings = mutableListOf<String>()
         val refiner = FullResolutionRegistrationRefiner()
+        val centroidRefiner = StellarCentroidFrameRefiner()
         provisionalCachedFrames.forEachIndexed { index, (accepted, cached) ->
             context.ensureActive()
             withContext(Dispatchers.Main.immediate) {
@@ -2963,9 +3093,9 @@ class JpegStacker(private val context: Context) {
                     provisionalFrames.size
                 )
             }
-            val result = FileBackedArgbPixelSource(referenceCached, 32).use { referenceSource ->
+            val results = FileBackedArgbPixelSource(referenceCached, 32).use { referenceSource ->
                 FileBackedArgbPixelSource(cached, 32).use { candidateSource ->
-                    refiner.refine(
+                    val zncc = refiner.refine(
                         frameId = accepted.frame.key,
                         isReference = accepted.frame.key == selectedReference.frame.key,
                         reference = referenceSource,
@@ -2979,36 +3109,59 @@ class JpegStacker(private val context: Context) {
                         stage10Confidence = accepted.registration.confidence,
                         cancellationCheck = { context.ensureActive() }
                     )
+                    val centroid = centroidRefiner.refine(
+                        frameId = accepted.frame.key,
+                        isReference = accepted.frame.key == selectedReference.frame.key,
+                        reference = referenceSource,
+                        candidate = candidateSource,
+                        initialTransform = accepted.registration.referenceToSourceTransform(),
+                        znccTransform = zncc.refinedTransform,
+                        patches = patches,
+                        analysisScaleUncertainty = (maxOf(scaleX, scaleY) * 0.5f).coerceIn(0f, 1f),
+                        stage10Residual = accepted.registration.residualError
+                            .takeIf { it.isFinite() }?.times(fullVelocityScale) ?: 3f,
+                        sequenceResidual = registrationDiagnostics.model.residual * fullVelocityScale,
+                        stage10Confidence = accepted.registration.confidence,
+                        cancellationCheck = { context.ensureActive() }
+                    )
+                    zncc to centroid
                 }
             }
+            val result = results.first
+            val centroidResult = results.second
             refinementResults[accepted.frame.key] = result
+            centroidResults[accepted.frame.key] = centroidResult
             val finalRegistration = accepted.registration
-                .withTransform(result.refinedTransform)
+                .withTransform(centroidResult.refinedTransform)
                 .copy(
-                    matchedStars = result.attemptedPatchCount,
-                    inlierStars = result.acceptedPatchCount,
-                    residualError = result.medianResidual,
-                    confidence = minOf(accepted.registration.confidence, result.confidence),
-                    isReliable = result.accepted,
-                    rejectionReason = result.rejectionReason,
+                    matchedStars = centroidResult.attemptedStarCount,
+                    inlierStars = centroidResult.acceptedStarCount,
+                    residualError = centroidResult.medianResidual,
+                    confidence = (
+                        accepted.registration.confidence * 0.35f +
+                            centroidResult.confidence * 0.65f
+                        ).coerceIn(0f, 1f),
+                    isReliable = centroidResult.accepted,
+                    rejectionReason = centroidResult.rejectionReason,
                     registrationModel = if (
                         accepted.frame.key == selectedReference.frame.key
-                    ) "REFERENCE_IDENTITY" else "FULL_RESOLUTION_REFINED",
+                    ) "REFERENCE_IDENTITY" else "STELLAR_CENTROID_REFINED",
                     scaleFixed = true,
                     rotationAllowed = false
                 )
             finalRegistrations[accepted.frame.key] = finalRegistration
-            if (result.accepted) {
+            if (centroidResult.accepted) {
                 val finalFrame = accepted.copy(registration = finalRegistration)
                 finalFrames += finalFrame to cached.copy(
-                    referenceToSourceTransform = result.refinedTransform
+                    referenceToSourceTransform = centroidResult.refinedTransform
                 )
             } else {
                 cached.file.delete()
                 warnings += "Кадр ${accepted.frame.fileName} отклонён full-resolution проверкой: " +
-                    (result.rejectionReason ?: "refinement failed")
+                    (centroidResult.rejectionReason ?: "centroid refinement failed")
             }
             logFullResolutionRefinement(accepted.frame.fileName, result)
+            logStellarCentroidRefinement(accepted.frame.fileName, centroidResult)
         }
         val samplingFidelity = FileBackedArgbPixelSource(referenceCached, 32).use { source ->
             SamplingFidelityDiagnostic().measure(source, patches)
@@ -3018,6 +3171,7 @@ class JpegStacker(private val context: Context) {
             cachedFrames = finalFrames,
             finalRegistrationsByKey = finalRegistrations,
             refinementResultsByKey = refinementResults,
+            centroidResultsByKey = centroidResults,
             samplingFidelity = samplingFidelity,
             warnings = warnings
         )
@@ -3050,8 +3204,35 @@ class JpegStacker(private val context: Context) {
         }
     }
 
+    private fun logStellarCentroidRefinement(
+        frameName: String,
+        result: StellarCentroidRefinementResult
+    ) {
+        Log.i(
+            PROFILE_REGISTRATION_TAG,
+            "frame=$frameName centroidInitial=(${formatMetric(result.initialTransform.dx)}," +
+                "${formatMetric(result.initialTransform.dy)}) zncc=(${formatMetric(result.znccTransform.dx)}," +
+                "${formatMetric(result.znccTransform.dy)}) refined=(${formatMetric(result.refinedTransform.dx)}," +
+                "${formatMetric(result.refinedTransform.dy)}) correction=(${formatMetric(result.correctionDx)}," +
+                "${formatMetric(result.correctionDy)}) stars=${result.acceptedStarCount}/${result.attemptedStarCount} " +
+                "median=${formatMetric(result.medianResidual)} p90=${formatMetric(result.percentile90Residual)} " +
+                "snr=${formatMetric(result.medianSnr)} fit=${formatMetric(result.medianFitResidual)} " +
+                "retention=${formatMetric(result.verification.refined.retention)} " +
+                "contrast=${formatMetric(result.verification.refined.contrastRatio)} " +
+                "accepted=${result.accepted} reason=${result.rejectionReason.orEmpty()}"
+        )
+        result.diagnostics.filterNot { it.accepted }.forEach { diagnostic ->
+            Log.d(
+                PROFILE_REGISTRATION_TAG,
+                "frame=$frameName centroid=(${formatMetric(diagnostic.x)},${formatMetric(diagnostic.y)}) " +
+                    "sector=${diagnostic.sector} rejected=${diagnostic.rejectionReason.orEmpty()}"
+            )
+        }
+    }
+
     private fun ProcessingReport.withFullResolutionRefinement(
         resultsByKey: Map<String, FullResolutionRefinementResult>,
+        centroidResultsByKey: Map<String, StellarCentroidRefinementResult>,
         frameNameByKey: Map<String, String>,
         provisionalAcceptedFrameCount: Int,
         finalAcceptedFrameCount: Int,
@@ -3060,9 +3241,15 @@ class JpegStacker(private val context: Context) {
     ): ProcessingReport {
         fun <T> named(selector: (FullResolutionRefinementResult) -> T): Map<String, T> =
             resultsByKey.mapKeys { frameNameByKey[it.key] ?: it.key }.mapValues { selector(it.value) }
+        fun <T> centroidNamed(selector: (StellarCentroidRefinementResult) -> T): Map<String, T> =
+            centroidResultsByKey.mapKeys { frameNameByKey[it.key] ?: it.key }.mapValues { selector(it.value) }
+        val referenceCentroids = centroidResultsByKey.values.firstOrNull {
+            it.initialTransform == com.example.astrophoto.processing.jpeg.v2.model.ReferenceToSourceTransform.Identity &&
+                it.znccTransform == com.example.astrophoto.processing.jpeg.v2.model.ReferenceToSourceTransform.Identity
+        }
         return copy(
-            registrationSchemaVersion = "astrophoto.jpeg.registration/3",
-            verificationCoordinateSpace = "ANALYSIS_THUMBNAIL_AND_FULL_RESOLUTION_PATCH_PX",
+            registrationSchemaVersion = "astrophoto.jpeg.registration/4",
+            verificationCoordinateSpace = "ANALYSIS_THUMBNAIL_AND_FULL_RESOLUTION_STELLAR_CENTROID_PX",
             fullResolutionRefinementEnabled = true,
             provisionalAcceptedFrameCount = provisionalAcceptedFrameCount,
             finalAcceptedFrameCount = finalAcceptedFrameCount,
@@ -3088,6 +3275,36 @@ class JpegStacker(private val context: Context) {
             fullResolutionPatchCentroidResidualPerFrame = named { it.verification.refined.centroidResidual },
             fullResolutionPatchWidthGrowthPerFrame = named { it.verification.refined.widthGrowth },
             fullResolutionPatchSmearPerFrame = named { it.verification.refined.smear },
+            stellarCentroidRefinementEnabled = true,
+            stellarCentroidSchemaVersion = "astrophoto.jpeg.stellar-centroid/1",
+            centroidPrimaryUsedPerFrame = centroidNamed { it.centroidPrimaryUsed },
+            znccSecondaryUsedPerFrame = centroidNamed { it.znccSecondaryUsed },
+            znccFallbackUsedPerFrame = centroidNamed { it.znccFallbackUsed },
+            referenceCentroidCount = referenceCentroids?.referenceCentroidCount ?: 0,
+            referenceCentroidAcceptedCount = referenceCentroids?.referenceCentroidAcceptedCount ?: 0,
+            referenceCentroidRejectedCount = referenceCentroids?.referenceCentroidRejectedCount ?: 0,
+            centroidAttemptedStarCountPerFrame = centroidNamed { it.attemptedStarCount },
+            centroidAcceptedStarCountPerFrame = centroidNamed { it.acceptedStarCount },
+            centroidRejectedStarCountPerFrame = centroidNamed { it.rejectedStarCount },
+            centroidSpatialSectorCountPerFrame = centroidNamed { it.spatialSectorCount },
+            centroidInitialDxPerFrame = centroidNamed { it.initialTransform.dx },
+            centroidInitialDyPerFrame = centroidNamed { it.initialTransform.dy },
+            centroidRefinedDxPerFrame = centroidNamed { it.refinedTransform.dx },
+            centroidRefinedDyPerFrame = centroidNamed { it.refinedTransform.dy },
+            centroidCorrectionDxPerFrame = centroidNamed { it.correctionDx },
+            centroidCorrectionDyPerFrame = centroidNamed { it.correctionDy },
+            centroidMedianResidualPerFrame = centroidNamed { it.medianResidual },
+            centroidP90ResidualPerFrame = centroidNamed { it.percentile90Residual },
+            centroidMedianSnrPerFrame = centroidNamed { it.medianSnr },
+            centroidMedianFitResidualPerFrame = centroidNamed { it.medianFitResidual },
+            centroidConfidencePerFrame = centroidNamed { it.confidence },
+            centroidRefinementAcceptedPerFrame = centroidNamed { it.accepted },
+            centroidRefinementReasonPerFrame = centroidNamed { it.rejectionReason ?: "accepted" },
+            centroidRetentionPerFrame = centroidNamed { it.verification.refined.retention },
+            centroidContrastRatioPerFrame = centroidNamed { it.verification.refined.contrastRatio },
+            centroidWidthGrowthPerFrame = centroidNamed { it.verification.refined.widthGrowth },
+            centroidEllipticityGrowthPerFrame = centroidNamed { it.verification.refined.ellipticityGrowth },
+            centroidSmearPerFrame = centroidNamed { it.verification.refined.smear },
             samplingKernel = sampling.kernel,
             samplingIdentityContrastRatio = sampling.identityContrastRatio,
             samplingProductionContrastRatio = sampling.productionContrastRatio,

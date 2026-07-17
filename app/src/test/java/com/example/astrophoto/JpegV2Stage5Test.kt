@@ -297,7 +297,7 @@ class JpegV2Stage5Test {
 
     @Test fun jsonReportUsesVersionedSchema() {
         val json = report().toJson()
-        assertTrue(json.contains("\"schemaVersion\": \"astrophoto.jpeg.processing/1\""))
+        assertTrue(json.contains("\"schemaVersion\": \"astrophoto.jpeg.processing/2\""))
     }
 
     @Test fun jsonReportRecordsCandidateAndFallbackReason() {
@@ -310,6 +310,11 @@ class JpegV2Stage5Test {
         val json = report().toJson()
         assertTrue(json.contains("processedResultMetrics"))
         assertTrue(json.contains("minimumBlackWhiteSeparation"))
+        assertTrue(json.contains("targetDisplaySkyMedian"))
+        assertTrue(json.contains("minimumStarContrastGain"))
+        assertTrue(json.contains("processingOutcome"))
+        assertTrue(json.contains("actualSkyBrightnessGain"))
+        assertTrue(json.contains("actualStarContrastGain"))
         assertTrue(json.contains("stageDurationsMillis"))
         assertTrue(json.contains("\"inputWidth\":96"))
         assertTrue(json.contains("\"totalDurationMillis\": 20"))

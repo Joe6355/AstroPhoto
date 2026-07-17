@@ -2,6 +2,7 @@ package com.example.astrophoto.processing.jpeg.v2.postprocessing
 
 import com.example.astrophoto.AstroProcessingProfile
 import com.example.astrophoto.processing.jpeg.v2.composition.FileBackedSkyForegroundComposer
+import com.example.astrophoto.processing.jpeg.v2.color.SrgbTransfer
 import com.example.astrophoto.processing.jpeg.v2.memory.JpegMemoryBudget
 import com.example.astrophoto.processing.jpeg.v2.memory.PipelineMemoryTracker
 import com.example.astrophoto.processing.jpeg.v2.model.AdaptiveProcessingDiagnostics
@@ -117,6 +118,7 @@ class FileBackedAdaptivePresetProcessor(
             parameters.asinhStrength,
             parameters.highlightProtection,
             parameters.maximumSkyMedianFactor,
+            parameters.targetDisplaySkyMedian,
             parameters.minimumBlackWhiteSeparation,
             store,
             memoryBudget,
@@ -156,6 +158,7 @@ class FileBackedAdaptivePresetProcessor(
             currentStatistics,
             parameters.starContrastStrength,
             parameters.maximumStarDetailGain,
+            parameters.minimumStarContrastGain,
             parameters.maximumStarWidthGrowth,
             store,
             memoryBudget,
@@ -171,6 +174,7 @@ class FileBackedAdaptivePresetProcessor(
             before,
             after,
             parameters.maximumSkyMedianFactor,
+            parameters.targetDisplaySkyMedian,
             parameters.maximumChannelClippingPercent
         )
         if (safetyScale < 0.999f) {
@@ -386,6 +390,7 @@ class FileBackedAdaptivePresetProcessor(
         asinhStrength: Float,
         highlightProtection: Float,
         maximumSkyMedianFactor: Float,
+        targetDisplaySkyMedian: Float,
         minimumSeparation: Float,
         store: ResultCandidateStore,
         budget: JpegMemoryBudget,
@@ -400,7 +405,21 @@ class FileBackedAdaptivePresetProcessor(
         val denominator = asinh(asinhStrength.toDouble()).toFloat().coerceAtLeast(0.0001f)
         val range = (white - black).coerceAtLeast(minimumSeparation)
         val confidence = (0.18f + 0.82f * stats.confidence).coerceIn(0f, 1f)
-        val applied = stretchBlend.coerceIn(0f, 1f) * confidence
+        val targetLinearMedian = SrgbTransfer.srgbToLinear(targetDisplaySkyMedian)
+        val medianNormalized = ((stats.luminanceMedian - black) / range).coerceIn(0f, 1f)
+        val fullyMappedMedian = (
+            asinh(asinhStrength * medianNormalized.toDouble()) / denominator
+            ).toFloat()
+        val targetBlend = if (fullyMappedMedian > stats.luminanceMedian) {
+            ((targetLinearMedian - stats.luminanceMedian) /
+                (fullyMappedMedian - stats.luminanceMedian)).coerceIn(0f, 1f)
+        } else {
+            0f
+        }
+        val applied = maxOf(
+            stretchBlend.coerceIn(0f, 1f) * confidence,
+            targetBlend * confidence
+        ).coerceIn(0f, 1f)
         var stretched = transform("stretch", input, alphaPlane, store, budget, tracker) { x, y, color, _, alpha ->
             val alphaValue = alpha.alphaAt(x, y)
             val red = linearChannel(color, 16)
@@ -425,6 +444,7 @@ class FileBackedAdaptivePresetProcessor(
             FileBackedFloatPlaneReader(alphaPlane).use { alpha -> statistics.calculate(image, alpha, stars) }
         }
         val allowedMedian = maxOf(
+            targetLinearMedian,
             stats.luminanceMedian * maximumSkyMedianFactor,
             stats.luminanceMedian + maxOf(stats.luminanceMad * 2f, MIN_MEDIAN_HEADROOM)
         )
@@ -516,6 +536,7 @@ class FileBackedAdaptivePresetProcessor(
         stats: SkyStatisticsResult,
         strength: Float,
         maximumDetailGain: Float,
+        minimumContrastGain: Float,
         maximumWidthGrowth: Float,
         store: ResultCandidateStore,
         budget: JpegMemoryBudget,
@@ -573,8 +594,12 @@ class FileBackedAdaptivePresetProcessor(
                         maxOf(stats.brightStarCorePercentile, stats.estimatedSafeWhitePoint),
                         centerLuminance
                     )
-                    val multiplier = 1f + (maximumDetailGain - 1f) * strength.coerceIn(0f, 1f) *
-                        star.confidence.coerceIn(0f, 1f) * brightProtection
+                    val requestedGain = maxOf(
+                        minimumContrastGain,
+                        (maximumDetailGain - 1f) * strength.coerceIn(0f, 1f) *
+                            star.confidence.coerceIn(0f, 1f)
+                    )
+                    val multiplier = 1f + requestedGain * brightProtection
                     if (multiplier <= 1.001f) {
                         rejected++
                         return@forEach
@@ -742,10 +767,12 @@ class FileBackedAdaptivePresetProcessor(
         before: SkyStatisticsResult,
         after: SkyStatisticsResult,
         maximumMedianFactor: Float,
+        targetDisplaySkyMedian: Float,
         maximumClippingPercent: Float
     ): Float {
         if (before.skyPixelCount == 0 || after.skyPixelCount == 0) return 0f
         val allowedMedian = maxOf(
+            SrgbTransfer.srgbToLinear(targetDisplaySkyMedian),
             before.luminanceMedian * maximumMedianFactor,
             before.luminanceMedian + maxOf(before.luminanceMad * 2f, MIN_MEDIAN_HEADROOM)
         )

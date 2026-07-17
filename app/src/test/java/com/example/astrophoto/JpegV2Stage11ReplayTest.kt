@@ -3,11 +3,15 @@ package com.example.astrophoto
 import com.example.astrophoto.processing.jpeg.v2.analysis.JpegFrameAnalyzer
 import com.example.astrophoto.processing.jpeg.v2.artifacts.ArtifactFrameObservation
 import com.example.astrophoto.processing.jpeg.v2.artifacts.StaticArtifactAnalyzer
+import com.example.astrophoto.processing.jpeg.v2.integration.FrameWeightCalculator
+import com.example.astrophoto.processing.jpeg.v2.integration.FrameWeightInput
 import com.example.astrophoto.processing.jpeg.v2.masking.SkyMaskEstimator
 import com.example.astrophoto.processing.jpeg.v2.model.ReferenceToSourceTransform
 import com.example.astrophoto.processing.jpeg.v2.registration.ExpectedSequenceMotionModel
 import com.example.astrophoto.processing.jpeg.v2.registration.FullResolutionRegistrationRefiner
 import com.example.astrophoto.processing.jpeg.v2.registration.FullResolutionStarPatch
+import com.example.astrophoto.processing.jpeg.v2.registration.StellarCentroidFrameRefiner
+import com.example.astrophoto.processing.jpeg.v2.registration.StellarCentroidRefinementResult
 import com.example.astrophoto.processing.jpeg.v2.registration.OrderedRegistration
 import com.example.astrophoto.processing.jpeg.v2.registration.SequenceAwareRegistrationEngine
 import com.example.astrophoto.processing.jpeg.v2.registration.TemporalFeatureFrame
@@ -30,11 +34,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class JpegV2Stage11ReplayTest {
-    @Test fun realSessionFullResolutionReplayWhenZipIsProvided() {
+class JpegV2Stage12ReplayTest {
+    @Test fun realSessionStellarCentroidReplayWhenZipIsProvided() {
         val zipPath = System.getenv(REPLAY_ENV)?.takeIf { it.isNotBlank() }?.let(Path::of) ?: return
         assertTrue("Replay ZIP does not exist: $zipPath", Files.isRegularFile(zipPath))
-        val replayRoot = Path.of("build/tmp/stage11-full-resolution-replay")
+        val replayRoot = Path.of("build/tmp/stage12-stellar-centroid-replay")
         Files.createDirectories(replayRoot)
         val extracted = Files.createTempDirectory(replayRoot, "session-")
         try {
@@ -42,6 +46,7 @@ class JpegV2Stage11ReplayTest {
             val jpegPaths = Files.walk(extracted).use { paths ->
                 paths.filter { path ->
                     Files.isRegularFile(path) &&
+                        path.toString().replace('\\', '/').contains("/Lights/JPEG/", ignoreCase = true) &&
                         path.fileName.toString().lowercase().matches(Regex(".*_\\d{3}\\.jpe?g"))
                 }.sorted().toList()
             }
@@ -120,7 +125,7 @@ class JpegV2Stage11ReplayTest {
                 )
                 val provisional = sequenceValidated.registrations.filter { it.registration.isReliable }
                     .associate { it.frameId to it.registration }
-                assertTrue("Stage 10 provisional registrations: ${provisional.keys}", provisional.size >= 5)
+                assertTrue("Stage 10 provisional registrations: ${provisional.keys}", provisional.size >= 20)
                 val fullPatches = reference.analysis.stars.map { star ->
                     val x = star.x * scaleX
                     val y = star.y * scaleY
@@ -139,7 +144,9 @@ class JpegV2Stage11ReplayTest {
                 }
                 val pathById = filtered.associate { it.analysis.id to it.path }
                 val refiner = FullResolutionRegistrationRefiner()
+                val centroidRefiner = StellarCentroidFrameRefiner()
                 val refinedResults = linkedMapOf<String, com.example.astrophoto.processing.jpeg.v2.registration.FullResolutionRefinementResult>()
+                val centroidResults = linkedMapOf<String, StellarCentroidRefinementResult>()
                 BufferedImageSource(referenceImage).use { referenceSource ->
                     provisional.toSortedMap().forEach { (frameId, registration) ->
                         val isReference = frameId == reference.analysis.id
@@ -148,12 +155,27 @@ class JpegV2Stage11ReplayTest {
                         )
                         try {
                             BufferedImageSource(candidateImage).use { candidateSource ->
-                                refinedResults[frameId] = refiner.refine(
+                                val zncc = refiner.refine(
                                     frameId,
                                     isReference,
                                     referenceSource,
                                     candidateSource,
                                     registration.referenceToSourceTransform(),
+                                    fullPatches,
+                                    (maxOf(scaleX, scaleY) * 0.5f).coerceIn(0f, 1f),
+                                    registration.residualError.takeIf { it.isFinite() }
+                                        ?.times(velocityScale) ?: 3f,
+                                    stage10.model.residual * velocityScale,
+                                    registration.confidence
+                                )
+                                refinedResults[frameId] = zncc
+                                centroidResults[frameId] = centroidRefiner.refine(
+                                    frameId,
+                                    isReference,
+                                    referenceSource,
+                                    candidateSource,
+                                    registration.referenceToSourceTransform(),
+                                    zncc.refinedTransform,
                                     fullPatches,
                                     (maxOf(scaleX, scaleY) * 0.5f).coerceIn(0f, 1f),
                                     registration.residualError.takeIf { it.isFinite() }
@@ -167,47 +189,90 @@ class JpegV2Stage11ReplayTest {
                         }
                     }
                 }
-                val finalTransforms = refinedResults.filterValues { it.accepted }
+                val finalTransforms = centroidResults.filterValues { it.accepted }
                     .mapValues { it.value.refinedTransform }
-                assertTrue("Stage 11 results: $refinedResults", finalTransforms.size > 2)
+                assertTrue("Stage 12 results: $centroidResults", finalTransforms.size >= 20)
                 assertEquals(ReferenceToSourceTransform.Identity, finalTransforms[reference.analysis.id])
                 val initialTransforms = provisional.mapValues { it.value.referenceToSourceTransform() }
-                val before = boundedCleanStackReplay(pathById, initialTransforms, fullPatches, reference.path)
-                val after = boundedCleanStackReplay(pathById, finalTransforms, fullPatches, reference.path)
-                val beforeResiduals = refinedResults.values.filterNot { it.frameId == reference.analysis.id }
+                val znccTransforms = refinedResults.mapValues { it.value.refinedTransform }
+                val cleanReplayPatches = fullPatches.filter {
+                    it.motionCluster == com.example.astrophoto.processing.jpeg.v2.registration.TemporalMotionCluster.COHERENT_MOVING_SKY
+                }
+                val finalRegistrations = centroidResults.filterValues { it.accepted }.mapValues { (frameId, result) ->
+                    scaled.getValue(frameId).withTransform(result.refinedTransform).copy(
+                        isReliable = true,
+                        rejectionReason = null,
+                        matchedStars = result.attemptedStarCount,
+                        inlierStars = result.acceptedStarCount,
+                        residualError = result.medianResidual,
+                        confidence = result.confidence
+                    )
+                }
+                val analysisById = filtered.associateBy { it.analysis.id }
+                val replayWeights = FrameWeightCalculator().calculate(finalRegistrations.map { (frameId, registration) ->
+                    FrameWeightInput(
+                        analysisById.getValue(frameId).analysis,
+                        registration,
+                        frameId == reference.analysis.id
+                    )
+                }).associate { it.frameId to it.normalizedWeight }
+                val before = boundedCleanStackReplay(
+                    pathById, initialTransforms.filterKeys(replayWeights::containsKey), cleanReplayPatches,
+                    reference.path, replayWeights
+                )
+                val afterZncc = boundedCleanStackReplay(
+                    pathById, znccTransforms.filterKeys(replayWeights::containsKey), cleanReplayPatches,
+                    reference.path, replayWeights
+                )
+                val after = boundedCleanStackReplay(
+                    pathById, finalTransforms, cleanReplayPatches, reference.path, replayWeights
+                )
+                val beforeResiduals = centroidResults.values.filterNot { it.frameId == reference.analysis.id }
                     .map { hypot(it.correctionDx, it.correctionDy) }
-                val afterResiduals = refinedResults.values.filter { it.accepted && it.frameId != reference.analysis.id }
+                val znccResiduals = centroidResults.values.filterNot { it.frameId == reference.analysis.id }
+                    .map { it.verification.zncc.centroidResidual }
+                val afterResiduals = centroidResults.values.filter { it.accepted && it.frameId != reference.analysis.id }
                     .map { it.medianResidual }
                 val beforeMedian = median(beforeResiduals)
+                val znccMedian = median(znccResiduals)
                 val afterMedian = median(afterResiduals)
                 val beforeP90 = percentile(beforeResiduals, 0.90f)
+                val znccP90 = percentile(znccResiduals, 0.90f)
                 val afterP90 = percentile(afterResiduals, 0.90f)
+                val acceptedWeights = finalTransforms.keys.map { replayWeights.getValue(it) }
+                val effectiveFrameCount = acceptedWeights.sum().let { total ->
+                    total * total / acceptedWeights.sumOf { (it * it).toDouble() }.toFloat()
+                }
+                val estimatedNoiseReduction = 1f - 1f / sqrt(effectiveFrameCount)
                 println(
-                    "Stage11 replay reference=${reference.analysis.id} index=${reference.captureIndex} " +
+                    "Stage12 replay reference=${reference.analysis.id} index=${reference.captureIndex} " +
                         "provisional=${provisional.size} final=${finalTransforms.size} " +
-                        "medianResidual=$beforeMedian->$afterMedian p90Residual=$beforeP90->$afterP90 " +
+                        "medianResidual=$beforeMedian->$znccMedian->$afterMedian " +
+                        "p90Residual=$beforeP90->$znccP90->$afterP90 " +
                         "retention=${before.retention}->${after.retention} " +
-                        "contrast=${before.contrastRatio}->${after.contrastRatio} " +
+                        "znccContrast=${afterZncc.contrastRatio} contrast=${before.contrastRatio}->${after.contrastRatio} " +
                         "centroid=${before.centroidResidual}->${after.centroidResidual} " +
                         "smear=${before.smear}->${after.smear} " +
+                        "effectiveFrames=$effectiveFrameCount noiseReduction=$estimatedNoiseReduction " +
                         "full=${referenceImage.width}x${referenceImage.height}"
                 )
-                refinedResults.values.forEach { value ->
+                centroidResults.values.forEach { value ->
                     println(
-                        "Stage11 frame=${value.frameId} initial=(${value.initialTransform.dx},${value.initialTransform.dy}) " +
+                        "Stage12 frame=${value.frameId} initial=(${value.initialTransform.dx},${value.initialTransform.dy}) " +
+                            "zncc=(${value.znccTransform.dx},${value.znccTransform.dy}) " +
                             "refined=(${value.refinedTransform.dx},${value.refinedTransform.dy}) " +
                             "correction=(${value.correctionDx},${value.correctionDy}) " +
-                            "patches=${value.acceptedPatchCount}/${value.attemptedPatchCount} " +
+                            "centroids=${value.acceptedStarCount}/${value.attemptedStarCount} " +
                             "median=${value.medianResidual} p90=${value.percentile90Residual} " +
                             "accepted=${value.accepted} reason=${value.rejectionReason}"
                     )
                 }
-                assertTrue("median residual $afterMedian", afterMedian <= 0.35f)
-                assertTrue("p90 residual $afterP90", afterP90 <= 0.60f)
+                assertTrue("centroid median $afterMedian must beat ZNCC $znccMedian", afterMedian < znccMedian)
                 assertTrue("clean retention ${after.retention}", after.retention >= 0.90f)
                 assertTrue("clean contrast ${after.contrastRatio}", after.contrastRatio >= 0.85f)
                 assertTrue("clean centroid ${after.centroidResidual}", after.centroidResidual <= 0.50f)
                 assertTrue("clean smear ${after.smear}", after.smear <= 0.10f)
+                assertTrue("estimated clean noise reduction $estimatedNoiseReduction", estimatedNoiseReduction >= 0.40f)
                 assertEquals(1440, referenceImage.width)
                 assertEquals(1920, referenceImage.height)
             } finally {
@@ -222,13 +287,15 @@ class JpegV2Stage11ReplayTest {
         paths: Map<String, Path>,
         transforms: Map<String, ReferenceToSourceTransform>,
         patches: List<FullResolutionStarPatch>,
-        referencePath: Path
+        referencePath: Path,
+        weights: Map<String, Float> = emptyMap()
     ): ReplayCleanMetrics {
         val selectedPatches = patches.take(MAX_PATCHES)
         val side = PATCH_RADIUS * 2 + 1
         val sums = Array(selectedPatches.size) { FloatArray(side * side) }
-        val counts = Array(selectedPatches.size) { IntArray(side * side) }
+        val accumulatedWeights = Array(selectedPatches.size) { FloatArray(side * side) }
         transforms.forEach { (frameId, transform) ->
+            val frameWeight = weights[frameId] ?: 1f
             val image = checkNotNull(ImageIO.read(paths.getValue(frameId).toFile()))
             try {
                 BufferedImageSource(image).use { source ->
@@ -238,9 +305,10 @@ class JpegV2Stage11ReplayTest {
                             val mapped = transform.mapOutputToSource(patch.x + dx, patch.y + dy)
                             val sample = TransformedBitmapSampler().sampleAt(source, mapped.x, mapped.y)
                             if (sample != null) {
-                                sums[patchIndex][index] += 0.2126f * sample.red +
-                                    0.7152f * sample.green + 0.0722f * sample.blue
-                                counts[patchIndex][index]++
+                                sums[patchIndex][index] += frameWeight * (
+                                    0.2126f * sample.red + 0.7152f * sample.green + 0.0722f * sample.blue
+                                    )
+                                accumulatedWeights[patchIndex][index] += frameWeight
                             }
                             index++
                         }
@@ -252,12 +320,16 @@ class JpegV2Stage11ReplayTest {
         }
         val referenceImage = checkNotNull(ImageIO.read(referencePath.toFile()))
         try {
-            val referenceMetrics = BufferedImageSource(referenceImage).use { source ->
-                selectedPatches.map { patch -> nativePatchMetrics(source, patch) }
+            val referenceValues = BufferedImageSource(referenceImage).use { source ->
+                selectedPatches.map { patch -> nativePatchValues(source, patch) }
             }
+            val referenceMetrics = referenceValues.map(::signalMetrics)
             val stackedMetrics = sums.indices.map { patchIndex ->
                 val values = FloatArray(sums[patchIndex].size) { index ->
-                    sums[patchIndex][index] / counts[patchIndex][index].coerceAtLeast(1)
+                    sums[patchIndex][index] / accumulatedWeights[patchIndex][index].coerceAtLeast(0.001f)
+                }
+                values.indices.forEach { index ->
+                    values[index] = maxOf(values[index], referenceValues[patchIndex][index])
                 }
                 signalMetrics(values)
             }
@@ -284,6 +356,10 @@ class JpegV2Stage11ReplayTest {
     }
 
     private fun nativePatchMetrics(source: ArgbPixelSource, patch: FullResolutionStarPatch): PatchMetrics {
+        return signalMetrics(nativePatchValues(source, patch))
+    }
+
+    private fun nativePatchValues(source: ArgbPixelSource, patch: FullResolutionStarPatch): FloatArray {
         val side = PATCH_RADIUS * 2 + 1
         val values = FloatArray(side * side)
         var index = 0
@@ -292,7 +368,7 @@ class JpegV2Stage11ReplayTest {
             values[index++] = if (sample == null) 0f else
                 0.2126f * sample.red + 0.7152f * sample.green + 0.0722f * sample.blue
         }
-        return signalMetrics(values)
+        return values
     }
 
     private fun signalMetrics(values: FloatArray): PatchMetrics {

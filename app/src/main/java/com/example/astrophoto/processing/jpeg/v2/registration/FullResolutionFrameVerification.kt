@@ -10,7 +10,8 @@ data class FullResolutionTransformEvidence(
     val contrastRatio: Float,
     val centroidResidual: Float,
     val widthGrowth: Float,
-    val smear: Float
+    val smear: Float,
+    val ellipticityGrowth: Float = 0f
 ) {
     companion object {
         val Empty = FullResolutionTransformEvidence(0, 0f, 0f, 0f, Float.POSITIVE_INFINITY, 1f, 1f)
@@ -24,7 +25,8 @@ data class FullResolutionFrameVerificationResult(
     val identity: FullResolutionTransformEvidence,
     val inverse: FullResolutionTransformEvidence,
     val doubleApplied: FullResolutionTransformEvidence,
-    val spatialSectorCount: Int
+    val spatialSectorCount: Int,
+    val zncc: FullResolutionTransformEvidence = FullResolutionTransformEvidence.Empty
 )
 
 class FullResolutionFrameVerification(
@@ -45,6 +47,61 @@ class FullResolutionFrameVerification(
             inverse = evidence(reference, candidate, boundedPatches, initial.inverse().asReferenceToSourceTransform()),
             doubleApplied = evidence(reference, candidate, boundedPatches, initial.appliedTwice()),
             spatialSectorCount = boundedPatches.map { it.sector }.distinct().size
+        )
+    }
+
+    /** Stage 12 verification uses measured stellar centroids; ZNCC is only a named alternative. */
+    fun verifyCentroids(
+        matches: List<StellarCentroidMatch>,
+        initial: ReferenceToSourceTransform,
+        zncc: ReferenceToSourceTransform,
+        refined: ReferenceToSourceTransform
+    ): FullResolutionFrameVerificationResult = FullResolutionFrameVerificationResult(
+        refined = centroidEvidence(matches, refined),
+        initial = centroidEvidence(matches, initial),
+        identity = centroidEvidence(matches, ReferenceToSourceTransform.Identity),
+        inverse = centroidEvidence(matches, initial.inverse().asReferenceToSourceTransform()),
+        doubleApplied = centroidEvidence(matches, initial.appliedTwice()),
+        spatialSectorCount = matches.map { it.patch.sector }.distinct().size,
+        zncc = centroidEvidence(matches, zncc)
+    )
+
+    private fun centroidEvidence(
+        matches: List<StellarCentroidMatch>,
+        transform: ReferenceToSourceTransform
+    ): FullResolutionTransformEvidence {
+        val accepted = matches.filter { it.accepted }
+        if (accepted.isEmpty()) return FullResolutionTransformEvidence.Empty
+        val residuals = accepted.map { match ->
+            kotlin.math.hypot(match.dx - transform.dx, match.dy - transform.dy)
+        }
+        val contrastRatios = accepted.map { match ->
+            val referenceContrast = (match.reference.peak - match.reference.background).coerceAtLeast(0.0001f)
+            ((match.candidate.peak - match.candidate.background) / referenceContrast).coerceIn(0f, 4f)
+        }
+        val widthGrowth = accepted.map { match ->
+            val referenceWidth = (match.reference.fwhmX + match.reference.fwhmY) * 0.5f
+            val candidateWidth = (match.candidate.fwhmX + match.candidate.fwhmY) * 0.5f
+            (candidateWidth / referenceWidth.coerceAtLeast(0.1f) - 1f).coerceIn(-1f, 4f)
+        }
+        val ellipticityGrowth = accepted.map { match ->
+            match.candidate.ellipticity - match.reference.ellipticity
+        }
+        val centroidResidual = median(residuals)
+        val confidence = median(accepted.map { it.confidence })
+        return FullResolutionTransformEvidence(
+            validPatchCount = accepted.size,
+            score = (confidence / (1f + centroidResidual)).coerceIn(0f, 1f),
+            retention = accepted.count { it.candidate.confidence >= MIN_CENTROID_CONFIDENCE }.toFloat() /
+                accepted.size,
+            contrastRatio = median(contrastRatios),
+            centroidResidual = centroidResidual,
+            widthGrowth = median(widthGrowth),
+            smear = accepted.count { match ->
+                match.candidate.ellipticity >= MAX_STELLAR_ELLIPTICITY ||
+                    match.candidate.ellipticity - match.reference.ellipticity > MAX_ELLIPTICITY_GROWTH
+            }.toFloat() / accepted.size,
+            ellipticityGrowth = median(ellipticityGrowth)
         )
     }
 
@@ -77,5 +134,8 @@ class FullResolutionFrameVerification(
 
     companion object {
         private const val MAX_VERIFICATION_PATCHES = 24
+        private const val MIN_CENTROID_CONFIDENCE = 0.20f
+        private const val MAX_STELLAR_ELLIPTICITY = 0.82f
+        private const val MAX_ELLIPTICITY_GROWTH = 0.25f
     }
 }

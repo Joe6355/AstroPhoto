@@ -5,6 +5,7 @@ import com.example.astrophoto.processing.jpeg.v2.model.AlphaMask
 import com.example.astrophoto.processing.jpeg.v2.model.DetectedStar
 import com.example.astrophoto.processing.jpeg.v2.model.SkyStatisticsResult
 import com.example.astrophoto.processing.jpeg.v2.model.StretchDiagnostics
+import com.example.astrophoto.processing.jpeg.v2.color.SrgbTransfer
 import kotlin.math.asinh
 import kotlin.math.sqrt
 
@@ -25,7 +26,8 @@ class AdaptiveAsinhStretch(
         asinhStrength: Float,
         highlightProtection: Float,
         maximumSkyMedianFactor: Float,
-        minimumBlackWhiteSeparation: Float
+        minimumBlackWhiteSeparation: Float,
+        targetDisplaySkyMedian: Float = 0f
     ): AdaptiveStretchResult {
         require(image.width == effectiveSkyAlpha.width && image.height == effectiveSkyAlpha.height)
         val blackPoint = minOf(
@@ -46,7 +48,21 @@ class AdaptiveAsinhStretch(
         val range = (whitePoint - blackPoint).coerceAtLeast(minimumBlackWhiteSeparation)
         val confidenceScale = (MIN_CONFIDENCE_SCALE +
             (1f - MIN_CONFIDENCE_SCALE) * statistics.confidence).coerceIn(0f, 1f)
-        val appliedBlend = stretchBlend.coerceIn(0f, 1f) * confidenceScale
+        val targetLinearMedian = SrgbTransfer.srgbToLinear(targetDisplaySkyMedian)
+        val medianNormalized = ((statistics.luminanceMedian - blackPoint) / range).coerceIn(0f, 1f)
+        val fullyMappedMedian = (
+            asinh(asinhStrength * medianNormalized.toDouble()) / denominator
+            ).toFloat()
+        val targetBlend = if (fullyMappedMedian > statistics.luminanceMedian) {
+            ((targetLinearMedian - statistics.luminanceMedian) /
+                (fullyMappedMedian - statistics.luminanceMedian)).coerceIn(0f, 1f)
+        } else {
+            0f
+        }
+        val appliedBlend = maxOf(
+            stretchBlend.coerceIn(0f, 1f) * confidenceScale,
+            targetBlend * confidenceScale
+        ).coerceIn(0f, 1f)
         val stretchedPixels = image.pixels.copyOf()
         for (index in stretchedPixels.indices) {
             val x = index % image.width
@@ -76,6 +92,7 @@ class AdaptiveAsinhStretch(
         var stretched = ArgbPixelImage(image.width, image.height, stretchedPixels)
         val stretchedStatistics = skyStatistics.calculate(stretched, effectiveSkyAlpha, stars)
         val allowedMedian = maxOf(
+            targetLinearMedian,
             statistics.luminanceMedian * maximumSkyMedianFactor,
             statistics.luminanceMedian + maxOf(statistics.luminanceMad * 2f, MIN_MEDIAN_HEADROOM)
         )

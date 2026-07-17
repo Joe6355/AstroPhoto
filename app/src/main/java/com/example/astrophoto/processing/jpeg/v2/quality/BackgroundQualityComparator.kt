@@ -3,6 +3,7 @@ package com.example.astrophoto.processing.jpeg.v2.quality
 import com.example.astrophoto.processing.jpeg.v2.model.AdaptiveProcessingParameters
 import com.example.astrophoto.processing.jpeg.v2.model.QualityComparison
 import com.example.astrophoto.processing.jpeg.v2.model.ResultQualityMetrics
+import com.example.astrophoto.processing.jpeg.v2.color.SrgbTransfer
 
 class BackgroundQualityComparator {
     fun compare(
@@ -13,6 +14,7 @@ class BackgroundQualityComparator {
         val hard = mutableListOf<String>()
         val warnings = mutableListOf<String>()
         val medianLimit = maxOf(
+            SrgbTransfer.srgbToLinear(parameters.targetDisplaySkyMedian),
             clean.skyMedian * parameters.maximumSkyMedianFactor,
             clean.skyMedian + maxOf(clean.skyMad * 2f, MIN_MEDIAN_HEADROOM)
         )

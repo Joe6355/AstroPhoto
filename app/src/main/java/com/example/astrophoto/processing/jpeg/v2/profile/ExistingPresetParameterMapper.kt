@@ -36,7 +36,9 @@ object ExistingPresetParameterMapper {
         maximumNeutralizationCorrection = 0f,
         maximumStarDetailGain = 1f,
         maximumChromaRadius = 0,
-        maximumStarWidthGrowth = 0f
+        maximumStarWidthGrowth = 0f,
+        targetDisplaySkyMedian = 0f,
+        minimumStarContrastGain = 0f
     )
 
     private val CLEAN_SKY = AdaptiveProcessingParameters(
@@ -46,15 +48,17 @@ object ExistingPresetParameterMapper {
         asinhStrength = 2.4f,
         highlightProtection = 0.88f,
         chromaNoiseStrength = 0.20f,
-        starContrastStrength = 0.02f,
+        starContrastStrength = 0.45f,
         maximumSkyMedianFactor = 1.50f,
         maximumChannelClippingPercent = 3f,
         minimumBlackWhiteSeparation = 0.42f,
         maximumGradientCorrection = 0.010f,
         maximumNeutralizationCorrection = 0.008f,
-        maximumStarDetailGain = 1.05f,
+        maximumStarDetailGain = 1.20f,
         maximumChromaRadius = 1,
-        maximumStarWidthGrowth = 0.02f
+        maximumStarWidthGrowth = 0.02f,
+        targetDisplaySkyMedian = 18f / 255f,
+        minimumStarContrastGain = 0.15f
     )
 
     private val CITY_WINDOW = AdaptiveProcessingParameters(
@@ -64,15 +68,17 @@ object ExistingPresetParameterMapper {
         asinhStrength = 3.8f,
         highlightProtection = 0.91f,
         chromaNoiseStrength = 0.50f,
-        starContrastStrength = 0.14f,
+        starContrastStrength = 0.65f,
         maximumSkyMedianFactor = 2.20f,
         maximumChannelClippingPercent = 3f,
         minimumBlackWhiteSeparation = 0.40f,
         maximumGradientCorrection = 0.032f,
         maximumNeutralizationCorrection = 0.026f,
-        maximumStarDetailGain = 1.18f,
+        maximumStarDetailGain = 1.28f,
         maximumChromaRadius = 2,
-        maximumStarWidthGrowth = 0.04f
+        maximumStarWidthGrowth = 0.04f,
+        targetDisplaySkyMedian = 20f / 255f,
+        minimumStarContrastGain = 0.20f
     )
 
     private val CITY_WINDOW_STRONG = AdaptiveProcessingParameters(
@@ -82,15 +88,17 @@ object ExistingPresetParameterMapper {
         asinhStrength = 5.2f,
         highlightProtection = 0.95f,
         chromaNoiseStrength = 0.74f,
-        starContrastStrength = 0.25f,
+        starContrastStrength = 0.80f,
         maximumSkyMedianFactor = 2.80f,
         maximumChannelClippingPercent = 2.5f,
         minimumBlackWhiteSeparation = 0.42f,
         maximumGradientCorrection = 0.055f,
         maximumNeutralizationCorrection = 0.042f,
-        maximumStarDetailGain = 1.27f,
+        maximumStarDetailGain = 1.45f,
         maximumChromaRadius = 3,
-        maximumStarWidthGrowth = 0.04f
+        maximumStarWidthGrowth = 0.04f,
+        targetDisplaySkyMedian = 24f / 255f,
+        minimumStarContrastGain = 0.35f
     )
 
     private val MAXIMUM_STARS = AdaptiveProcessingParameters(
@@ -100,15 +108,17 @@ object ExistingPresetParameterMapper {
         asinhStrength = 6.2f,
         highlightProtection = 0.96f,
         chromaNoiseStrength = 0.68f,
-        starContrastStrength = 0.52f,
+        starContrastStrength = 0.95f,
         maximumSkyMedianFactor = 2.50f,
         maximumChannelClippingPercent = 2f,
         minimumBlackWhiteSeparation = 0.44f,
         maximumGradientCorrection = 0.040f,
         maximumNeutralizationCorrection = 0.030f,
-        maximumStarDetailGain = 1.45f,
+        maximumStarDetailGain = 1.65f,
         maximumChromaRadius = 3,
-        maximumStarWidthGrowth = 0.03f
+        maximumStarWidthGrowth = 0.03f,
+        targetDisplaySkyMedian = 26f / 255f,
+        minimumStarContrastGain = 0.50f
     )
 
     private const val MIN_STABLE_STACK_FRAMES = 6

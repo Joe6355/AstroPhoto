@@ -100,10 +100,12 @@ internal fun automaticProfileSuccessStatus(
     selectedResultTitle: String
 ): String = buildString {
     append("Готово: ${created.fileName}")
-    append("\nПринято кадров: ${created.frameCount} / $totalInputFrames")
+    append("\nИспользовано: ${created.frameCount}/$totalInputFrames")
     append("\nВыбран результат: $selectedResultTitle")
+    append("\nPostprocessing: ${if (created.postProcessingExecuted) "запущен" else "не запускался"}")
     append("\nЗвёзды: ${created.starsBefore ?: 0} → ${created.starCount ?: 0}")
     append("\nFallback: ${if (created.fallbackUsed) "да" else "нет"}")
+    created.fallbackReason?.takeIf { it.isNotBlank() }?.let { append(" ($it)") }
     created.warnings.forEach { append("\n$it") }
 }
 

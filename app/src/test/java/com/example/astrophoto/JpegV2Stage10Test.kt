@@ -149,7 +149,7 @@ class JpegV2Stage10Test {
         }
     }
 
-    @Test fun sequenceSupportedPathRejectsLowRetentionHighSmearAndPoorAgreement() {
+    @Test fun modelSupportedFramesReachFullResolutionDespiteWeakThumbnailVerification() {
         val lowRetention = policy.evaluate(
             evidence(verification = metrics(retention = 0.70f, contrast = 1f, smear = 0f))
         )
@@ -157,9 +157,13 @@ class JpegV2Stage10Test {
             evidence(verification = metrics(retention = 1f, contrast = 1f, smear = 0.20f))
         )
         val poorAgreement = policy.evaluate(evidence(agreement = 0.30f))
-        assertTrue(lowRetention is FrameAcceptanceDecision.Rejected)
-        assertTrue(highSmear is FrameAcceptanceDecision.Rejected)
+        val noVerifiedStars = policy.evaluate(
+            evidence(verification = metrics(retention = 0f, contrast = 0f, smear = 1f, stars = 0))
+        )
+        assertTrue(lowRetention is FrameAcceptanceDecision.ProvisionalFullResolution)
+        assertTrue(highSmear is FrameAcceptanceDecision.ProvisionalFullResolution)
         assertTrue(poorAgreement is FrameAcceptanceDecision.Rejected)
+        assertTrue(noVerifiedStars is FrameAcceptanceDecision.Rejected)
     }
 
     @Test fun traditionalStrongMatchPathAndLegacyThresholdsRemainUnchanged() {
