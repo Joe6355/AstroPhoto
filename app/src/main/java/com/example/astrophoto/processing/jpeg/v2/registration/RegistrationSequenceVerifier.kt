@@ -53,7 +53,7 @@ class RegistrationSequenceVerifier {
             )
             perFrame[frame.frameId] = metrics
             perFrameAccepted[frame.frameId] = frame.frameId == reference.frameId ||
-                isFrameAccepted(metrics)
+                SequenceSupportedFrameAcceptancePolicy().strongVerificationAccepted(metrics)
         }
         return RegistrationSequenceVerification(
             identity = identityMetrics,
@@ -64,6 +64,37 @@ class RegistrationSequenceVerifier {
             doubleAppliedModel = doubleMetrics,
             perFrame = perFrame,
             perFrameAccepted = perFrameAccepted
+        )
+    }
+
+    fun verifyFrame(
+        reference: TemporalFeatureFrame,
+        candidate: TemporalFeatureFrame,
+        selected: ReferenceToSourceTransform,
+        predicted: ReferenceToSourceTransform,
+        tracks: TemporalTrackAnalysis
+    ): FrameRegistrationVerification {
+        fun metrics(transform: ReferenceToSourceTransform): RegistrationVerificationMetrics =
+            measureCanonical(
+                reference = reference,
+                frames = listOf(candidate),
+                transforms = mapOf(candidate.frameId to transform),
+                tracks = tracks,
+                requiredMatchingFrames = 1
+            )
+        val selectedMetrics = metrics(selected)
+        val sampleEvidence = (
+            selectedMetrics.reliableStarCount /
+                SequenceSupportedFrameAcceptancePolicy.MIN_SEQUENCE_VERIFICATION_STARS.toFloat()
+            ).coerceIn(0f, 1f)
+        return FrameRegistrationVerification(
+            selected = selectedMetrics,
+            predicted = metrics(predicted),
+            identity = metrics(ReferenceToSourceTransform.Identity),
+            inverse = metrics(selected.inverse().asReferenceToSourceTransform()),
+            doubleApplied = metrics(selected.appliedTwice()),
+            sampleCount = selectedMetrics.reliableStarCount,
+            confidence = selectedMetrics.score * sampleEvidence
         )
     }
 
@@ -167,13 +198,6 @@ class RegistrationSequenceVerifier {
         return selected.take(MAX_REFERENCE_STARS)
     }
 
-    private fun isFrameAccepted(metrics: RegistrationVerificationMetrics): Boolean =
-        metrics.reliableStarCount >= MIN_PER_FRAME_STARS &&
-            metrics.referenceRetention >= MIN_PER_FRAME_RETENTION &&
-            metrics.contrastRatio >= MIN_PER_FRAME_CONTRAST_RATIO &&
-            metrics.smearRate <= MAX_PER_FRAME_SMEAR_RATE &&
-            metrics.score >= MIN_PER_FRAME_SCORE
-
     private fun nearest(
         stars: List<DetectedStar>,
         x: Float,
@@ -194,11 +218,19 @@ class RegistrationSequenceVerifier {
         tracks: TemporalTrackAnalysis
     ): SparseStackMetrics {
         if (referenceStars.isEmpty() || transforms.isEmpty()) return SparseStackMetrics.empty()
-        val sourceWidth = maxOf(1f, frames.flatMap { it.stars }.maxOfOrNull { it.x } ?: 1f)
-        val sourceHeight = maxOf(1f, frames.flatMap { it.stars }.maxOfOrNull { it.y } ?: 1f)
-        val scale = minOf(1f, MAX_STACK_DIMENSION / maxOf(sourceWidth, sourceHeight))
-        val width = (sourceWidth * scale).roundToInt().coerceIn(1, MAX_STACK_DIMENSION.toInt()) + 1
-        val height = (sourceHeight * scale).roundToInt().coerceIn(1, MAX_STACK_DIMENSION.toInt()) + 1
+        var outputWidth = maxOf(1f, referenceStars.maxOfOrNull { it.x } ?: 1f)
+        var outputHeight = maxOf(1f, referenceStars.maxOfOrNull { it.y } ?: 1f)
+        frames.forEach { frame ->
+            val transform = transforms[frame.frameId] ?: return@forEach
+            frame.stars.forEach { star ->
+                val output = transform.inverse().mapSourceToOutput(star.x, star.y)
+                if (output.x.isFinite()) outputWidth = maxOf(outputWidth, output.x)
+                if (output.y.isFinite()) outputHeight = maxOf(outputHeight, output.y)
+            }
+        }
+        val scale = minOf(1f, MAX_STACK_DIMENSION / maxOf(outputWidth, outputHeight))
+        val width = (outputWidth * scale).roundToInt().coerceIn(1, MAX_STACK_DIMENSION.toInt()) + 1
+        val height = (outputHeight * scale).roundToInt().coerceIn(1, MAX_STACK_DIMENSION.toInt()) + 1
         val pixels = FloatArray(width * height)
         var stackedFrames = 0
         var stationaryIncluded = 0
@@ -352,10 +384,5 @@ class RegistrationSequenceVerifier {
         private const val MIN_VERIFICATION_ADVANTAGE = 0.025f
         private const val MIN_REFERENCE_RETENTION = 0.80f
         private const val MAX_SMEAR_RATE = 0.15f
-        private const val MIN_PER_FRAME_STARS = 4
-        private const val MIN_PER_FRAME_RETENTION = 0.40f
-        private const val MIN_PER_FRAME_CONTRAST_RATIO = 0.35f
-        private const val MAX_PER_FRAME_SMEAR_RATE = 0.50f
-        private const val MIN_PER_FRAME_SCORE = 0.45f
     }
 }

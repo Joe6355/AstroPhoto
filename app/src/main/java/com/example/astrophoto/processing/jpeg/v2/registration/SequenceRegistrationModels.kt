@@ -122,6 +122,16 @@ data class RegistrationVerificationMetrics(
     val score: Float
 )
 
+data class FrameRegistrationVerification(
+    val selected: RegistrationVerificationMetrics,
+    val predicted: RegistrationVerificationMetrics,
+    val identity: RegistrationVerificationMetrics,
+    val inverse: RegistrationVerificationMetrics,
+    val doubleApplied: RegistrationVerificationMetrics,
+    val sampleCount: Int,
+    val confidence: Float
+)
+
 data class RegistrationSequenceVerification(
     val identity: RegistrationVerificationMetrics,
     val zeroModel: RegistrationVerificationMetrics,
@@ -130,7 +140,9 @@ data class RegistrationSequenceVerification(
     val inverseModel: RegistrationVerificationMetrics = identity,
     val doubleAppliedModel: RegistrationVerificationMetrics = identity,
     val perFrame: Map<String, RegistrationVerificationMetrics> = emptyMap(),
-    val perFrameAccepted: Map<String, Boolean> = emptyMap()
+    val perFrameAccepted: Map<String, Boolean> = emptyMap(),
+    val perFrameComparisons: Map<String, FrameRegistrationVerification> = emptyMap(),
+    val aggregation: VerificationAggregation = VerificationAggregation.Empty
 )
 
 data class SequenceAwareRegistrationDiagnostics(
@@ -145,7 +157,10 @@ data class SequenceAwareRegistrationDiagnostics(
     val sequencePriorAgreementScore: Float,
     val referenceCaptureIndex: Int,
     val analysisWidth: Int,
-    val analysisHeight: Int
+    val analysisHeight: Int,
+    val modelGuidedRegistrations: Map<String, ModelGuidedRegistrationResult> = emptyMap(),
+    val frameAcceptancePaths: Map<String, String> = emptyMap(),
+    val frameAcceptanceReasons: Map<String, String> = emptyMap()
 )
 
 data class ExpectedSequenceMotionModel(

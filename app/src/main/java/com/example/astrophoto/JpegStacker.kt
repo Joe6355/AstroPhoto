@@ -125,6 +125,7 @@ import com.example.astrophoto.processing.jpeg.v2.registration.SequenceAwareRegis
 import com.example.astrophoto.processing.jpeg.v2.registration.SequenceAwareRegistrationEngine
 import com.example.astrophoto.processing.jpeg.v2.registration.TemporalFeatureFrame
 import com.example.astrophoto.processing.jpeg.v2.registration.TransformSequenceValidator
+import com.example.astrophoto.processing.jpeg.v2.registration.VerificationMetricsAggregator
 import com.example.astrophoto.processing.jpeg.v2.registration.scaledToFullResolution
 import com.example.astrophoto.processing.jpeg.v2.sampling.ArgbFrameDiskCache
 import com.example.astrophoto.processing.jpeg.v2.sampling.FileBackedArgbPixelSource
@@ -1220,6 +1221,7 @@ class JpegStacker(private val context: Context) {
                     val selectedHypothesis = analysisRegistration.model
                         .acceptedFrameHypotheses[frame.key]
                     val frameVerification = analysisRegistration.verification.perFrame[frame.key]
+                    val modelGuided = analysisRegistration.modelGuidedRegistrations[frame.key]
                     Log.i(
                         PROFILE_REGISTRATION_TAG,
                         "frame=${frame.fileName} " +
@@ -1237,7 +1239,14 @@ class JpegStacker(private val context: Context) {
                             "sequenceAgreement=${formatMetric(registration.transformSequenceScore)} " +
                             "verificationRetention=${formatMetric(frameVerification?.referenceRetention ?: 0f)} " +
                             "verificationContrast=${formatMetric(frameVerification?.contrastRatio ?: 0f)} " +
-                            "verificationSmear=${formatMetric(frameVerification?.smearRate ?: 1f)} " +
+                            "verificationSmear=${formatMetric(frameVerification?.smearRate ?: 0f)} " +
+                            "localSearchRadius=${formatMetric(modelGuided?.searchRadius ?: 0f)} " +
+                            "localCorrectionDx=${formatMetric((modelGuided?.correctionDx ?: 0f) * scaleX)} " +
+                            "localCorrectionDy=${formatMetric((modelGuided?.correctionDy ?: 0f) * scaleY)} " +
+                            "localMatches=${modelGuided?.matchedStars ?: 0} " +
+                            "localInliers=${modelGuided?.inlierStars ?: 0} " +
+                            "retryUsed=${modelGuided?.retryUsed ?: false} " +
+                            "acceptancePath=${analysisRegistration.frameAcceptancePaths[frame.key].orEmpty()} " +
                             "accepted=${registration.isReliable}"
                     )
                     if (!registration.isReliable) {
@@ -1722,6 +1731,13 @@ class JpegStacker(private val context: Context) {
                 val frameNameByKey = selectedFrames.associate { it.key to it.fileName }
                 val registrationDiagnostics = checkNotNull(sequenceDiagnostics)
                 val selectedHypotheses = registrationDiagnostics.model.acceptedFrameHypotheses
+                val finalVerificationAggregation = VerificationMetricsAggregator.aggregate(
+                    perFrame = registrationDiagnostics.verification.perFrame,
+                    acceptedFrameIds = allRegistrationsByKey.filterValues { it.isReliable }.keys,
+                    rejectedFrameIds = allRegistrationsByKey.filterValues { !it.isReliable }.keys,
+                    referenceFrameId = selectedReference.frame.key
+                )
+                val acceptedVerificationMean = finalVerificationAggregation.acceptedMean
                 var processingReport = ProcessingReport(
                     timestampMillis = now,
                     presetId = profile.name,
@@ -1828,13 +1844,10 @@ class JpegStacker(private val context: Context) {
                     spatialSectorSupportPerFrame = selectedHypotheses.mapKeys {
                         frameNameByKey[it.key] ?: it.key
                     }.mapValues { it.value.occupiedSectors },
-                    verificationReferenceRetention = registrationDiagnostics.verification
-                        .selectedModel.referenceRetention,
-                    verificationContrastRatio = registrationDiagnostics.verification
-                        .selectedModel.contrastRatio,
-                    verificationWidthGrowth = registrationDiagnostics.verification
-                        .selectedModel.widthGrowth,
-                    verificationSmearRate = registrationDiagnostics.verification.selectedModel.smearRate,
+                    verificationReferenceRetention = acceptedVerificationMean?.referenceRetention ?: 0f,
+                    verificationContrastRatio = acceptedVerificationMean?.contrastRatio ?: 0f,
+                    verificationWidthGrowth = acceptedVerificationMean?.widthGrowth ?: 0f,
+                    verificationSmearRate = acceptedVerificationMean?.smearRate ?: 0f,
                     verificationIdentityScore = registrationDiagnostics.verification.identity.score,
                     verificationZeroModelScore = registrationDiagnostics.verification.zeroModel.score,
                     verificationSelectedModelScore = registrationDiagnostics.verification.selectedModel.score,
@@ -1885,6 +1898,59 @@ class JpegStacker(private val context: Context) {
                     perFrameVerificationSmearRate = registrationDiagnostics.verification.perFrame
                         .mapKeys { frameNameByKey[it.key] ?: it.key }
                         .mapValues { it.value.smearRate },
+                    modelGuidedRegistrationEnabled = true,
+                    modelGuidedSearchRadiusPerFrame = registrationDiagnostics
+                        .modelGuidedRegistrations.mapKeys { frameNameByKey[it.key] ?: it.key }
+                        .mapValues { it.value.searchRadius },
+                    modelGuidedCorrectionDxPerFrame = registrationDiagnostics
+                        .modelGuidedRegistrations.mapKeys { frameNameByKey[it.key] ?: it.key }
+                        .mapValues { it.value.correctionDx * scaleX },
+                    modelGuidedCorrectionDyPerFrame = registrationDiagnostics
+                        .modelGuidedRegistrations.mapKeys { frameNameByKey[it.key] ?: it.key }
+                        .mapValues { it.value.correctionDy * scaleY },
+                    modelGuidedMatchedStarsPerFrame = registrationDiagnostics
+                        .modelGuidedRegistrations.mapKeys { frameNameByKey[it.key] ?: it.key }
+                        .mapValues { it.value.matchedStars },
+                    modelGuidedInlierStarsPerFrame = registrationDiagnostics
+                        .modelGuidedRegistrations.mapKeys { frameNameByKey[it.key] ?: it.key }
+                        .mapValues { it.value.inlierStars },
+                    modelGuidedResidualPerFrame = registrationDiagnostics
+                        .modelGuidedRegistrations.mapKeys { frameNameByKey[it.key] ?: it.key }
+                        .mapValues { it.value.residual },
+                    modelGuidedConfidencePerFrame = registrationDiagnostics
+                        .modelGuidedRegistrations.mapKeys { frameNameByKey[it.key] ?: it.key }
+                        .mapValues { it.value.confidence },
+                    modelGuidedRetryUsedPerFrame = registrationDiagnostics
+                        .modelGuidedRegistrations.mapKeys { frameNameByKey[it.key] ?: it.key }
+                        .mapValues { it.value.retryUsed },
+                    frameAcceptancePathPerFrame = selectedFrames.associate { frame ->
+                        val finalRegistration = allRegistrationsByKey.getValue(frame.key)
+                        val enginePath = registrationDiagnostics.frameAcceptancePaths[frame.key]
+                            ?: "UNAVAILABLE"
+                        frame.fileName to if (
+                            !finalRegistration.isReliable &&
+                            enginePath != "REJECTED"
+                        ) "REJECTED_SEQUENCE_VALIDATION" else enginePath
+                    },
+                    frameAcceptanceReasonPerFrame = selectedFrames.associate { frame ->
+                        frame.fileName to (
+                            allRegistrationsByKey.getValue(frame.key).rejectionReason
+                                ?: registrationDiagnostics.frameAcceptanceReasons[frame.key]
+                                ?: "accepted"
+                            )
+                    },
+                    frameVerificationSampleCountPerFrame = registrationDiagnostics.verification
+                        .perFrameComparisons.mapKeys { frameNameByKey[it.key] ?: it.key }
+                        .mapValues { it.value.sampleCount },
+                    frameVerificationConfidencePerFrame = registrationDiagnostics.verification
+                        .perFrameComparisons.mapKeys { frameNameByKey[it.key] ?: it.key }
+                        .mapValues { it.value.confidence },
+                    verificationSampleCount = finalVerificationAggregation.sampleCount,
+                    acceptedVerificationSampleCount = finalVerificationAggregation.acceptedSampleCount,
+                    rejectedVerificationSampleCount = finalVerificationAggregation.rejectedSampleCount,
+                    acceptedVerificationMeanRetention = acceptedVerificationMean?.referenceRetention ?: 0f,
+                    acceptedVerificationMeanContrastRatio = acceptedVerificationMean?.contrastRatio ?: 0f,
+                    acceptedVerificationMeanSmearRate = acceptedVerificationMean?.smearRate ?: 0f,
                     staticArtifactCandidates = staticArtifactMask.regions.size,
                     staticArtifactMaskRatio = staticArtifactMask.maskRatio,
                     runtimeMaxHeapBytes = memoryBudget.snapshot.maxHeapBytes,

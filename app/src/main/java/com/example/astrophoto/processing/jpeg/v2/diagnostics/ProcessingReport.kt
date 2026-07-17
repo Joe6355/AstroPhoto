@@ -169,6 +169,25 @@ data class ProcessingReport(
     val perFrameVerificationRetention: Map<String, Float> = emptyMap(),
     val perFrameVerificationContrastRatio: Map<String, Float> = emptyMap(),
     val perFrameVerificationSmearRate: Map<String, Float> = emptyMap(),
+    val modelGuidedRegistrationEnabled: Boolean = false,
+    val modelGuidedSearchRadiusPerFrame: Map<String, Float> = emptyMap(),
+    val modelGuidedCorrectionDxPerFrame: Map<String, Float> = emptyMap(),
+    val modelGuidedCorrectionDyPerFrame: Map<String, Float> = emptyMap(),
+    val modelGuidedMatchedStarsPerFrame: Map<String, Int> = emptyMap(),
+    val modelGuidedInlierStarsPerFrame: Map<String, Int> = emptyMap(),
+    val modelGuidedResidualPerFrame: Map<String, Float> = emptyMap(),
+    val modelGuidedConfidencePerFrame: Map<String, Float> = emptyMap(),
+    val modelGuidedRetryUsedPerFrame: Map<String, Boolean> = emptyMap(),
+    val frameAcceptancePathPerFrame: Map<String, String> = emptyMap(),
+    val frameAcceptanceReasonPerFrame: Map<String, String> = emptyMap(),
+    val frameVerificationSampleCountPerFrame: Map<String, Int> = emptyMap(),
+    val frameVerificationConfidencePerFrame: Map<String, Float> = emptyMap(),
+    val verificationSampleCount: Int = 0,
+    val acceptedVerificationSampleCount: Int = 0,
+    val rejectedVerificationSampleCount: Int = 0,
+    val acceptedVerificationMeanRetention: Float = 0f,
+    val acceptedVerificationMeanContrastRatio: Float = 0f,
+    val acceptedVerificationMeanSmearRate: Float = 0f,
     val staticArtifactCandidates: Int = 0,
     val staticArtifactMaskRatio: Float = 0f,
     val memorySchemaVersion: String = "astrophoto.jpeg.memory/1",
@@ -293,6 +312,25 @@ data class ProcessingReport(
         append("  \"perFrameVerificationRetention\": ${floatMapJson(perFrameVerificationRetention)},\n")
         append("  \"perFrameVerificationContrastRatio\": ${floatMapJson(perFrameVerificationContrastRatio)},\n")
         append("  \"perFrameVerificationSmearRate\": ${floatMapJson(perFrameVerificationSmearRate)},\n")
+        property("modelGuidedRegistrationEnabled", modelGuidedRegistrationEnabled)
+        append("  \"modelGuidedSearchRadiusPerFrame\": ${floatMapJson(modelGuidedSearchRadiusPerFrame)},\n")
+        append("  \"modelGuidedCorrectionDxPerFrame\": ${floatMapJson(modelGuidedCorrectionDxPerFrame)},\n")
+        append("  \"modelGuidedCorrectionDyPerFrame\": ${floatMapJson(modelGuidedCorrectionDyPerFrame)},\n")
+        append("  \"modelGuidedMatchedStarsPerFrame\": ${intMapJson(modelGuidedMatchedStarsPerFrame)},\n")
+        append("  \"modelGuidedInlierStarsPerFrame\": ${intMapJson(modelGuidedInlierStarsPerFrame)},\n")
+        append("  \"modelGuidedResidualPerFrame\": ${floatMapJson(modelGuidedResidualPerFrame)},\n")
+        append("  \"modelGuidedConfidencePerFrame\": ${floatMapJson(modelGuidedConfidencePerFrame)},\n")
+        append("  \"modelGuidedRetryUsedPerFrame\": ${booleanMapJson(modelGuidedRetryUsedPerFrame)},\n")
+        append("  \"frameAcceptancePathPerFrame\": ${stringMapJson(frameAcceptancePathPerFrame)},\n")
+        append("  \"frameAcceptanceReasonPerFrame\": ${stringMapJson(frameAcceptanceReasonPerFrame)},\n")
+        append("  \"frameVerificationSampleCountPerFrame\": ${intMapJson(frameVerificationSampleCountPerFrame)},\n")
+        append("  \"frameVerificationConfidencePerFrame\": ${floatMapJson(frameVerificationConfidencePerFrame)},\n")
+        property("verificationSampleCount", verificationSampleCount)
+        property("acceptedVerificationSampleCount", acceptedVerificationSampleCount)
+        property("rejectedVerificationSampleCount", rejectedVerificationSampleCount)
+        property("acceptedVerificationMeanRetention", acceptedVerificationMeanRetention)
+        property("acceptedVerificationMeanContrastRatio", acceptedVerificationMeanContrastRatio)
+        property("acceptedVerificationMeanSmearRate", acceptedVerificationMeanSmearRate)
         property("staticArtifactCandidates", staticArtifactCandidates)
         property("staticArtifactMaskRatio", staticArtifactMaskRatio)
         property("memorySchemaVersion", memorySchemaVersion)
@@ -470,6 +508,10 @@ data class ProcessingReport(
         private fun floatMapJson(values: Map<String, Float>): String = values.entries.joinToString(
             prefix = "{", postfix = "}"
         ) { "\"${escape(it.key)}\":${number(it.value)}" }
+
+        private fun booleanMapJson(values: Map<String, Boolean>): String = values.entries.joinToString(
+            prefix = "{", postfix = "}"
+        ) { "\"${escape(it.key)}\":${it.value}" }
 
         private fun stringArray(values: List<String>): String = values.joinToString(
             prefix = "[", postfix = "]"

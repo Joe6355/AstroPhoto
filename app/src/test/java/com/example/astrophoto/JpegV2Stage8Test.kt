@@ -309,7 +309,7 @@ class JpegV2Stage8Test {
             ?.let(Path::of)
             ?: return
         assertTrue("Replay ZIP does not exist: $zipPath", Files.isRegularFile(zipPath))
-        val replayRoot = Path.of("build/tmp/stage8-registration-replay")
+        val replayRoot = Path.of("build/tmp/stage10-registration-replay")
         Files.createDirectories(replayRoot)
         val extracted = Files.createTempDirectory(replayRoot, "session-")
         try {
@@ -369,9 +369,9 @@ class JpegV2Stage8Test {
             assertTrue(result.toString(), result.model.velocityX < 0f)
             assertTrue(result.toString(), result.model.velocityY > 0f)
             assertTrue(result.toString(), result.verification.selectedModelAccepted)
-            assertTrue(result.toString(), result.registrations.count { it.value.isReliable } >= 2)
+            assertTrue(result.toString(), result.registrations.count { it.value.isReliable } > 2)
             println(
-                "Stage9 registration replay: reference=${reference.frameId} " +
+                "Stage10 registration replay: reference=${reference.frameId} " +
                     "referenceCaptureIndex=${reference.captureIndex} " +
                     "analysis=${rawFrames.first().second.width}x${rawFrames.first().second.height} " +
                     "full=${fullResolution.first}x${fullResolution.second} " +
@@ -384,19 +384,31 @@ class JpegV2Stage8Test {
                     "inverse=${result.verification.inverseModel.score} " +
                     "identity=${result.verification.identity.score} " +
                     "double=${result.verification.doubleAppliedModel.score} " +
+                    "verificationSamples=${result.verification.aggregation.sampleCount} " +
+                    "acceptedVerificationSamples=${result.verification.aggregation.acceptedSampleCount} " +
+                    "acceptedMeanSmear=${result.verification.aggregation.acceptedMean?.smearRate} " +
                     "hypotheses=${result.hypothesisCountPerFrame.values.joinToString(",")}"
             )
             frames.forEach { frame ->
                 val predicted = result.model.predictedTransform(frame.captureIndex)
                 val selected = result.registrations.getValue(frame.frameId)
                 val metrics = result.verification.perFrame[frame.frameId]
+                val local = result.modelGuidedRegistrations[frame.frameId]
                 println(
-                    "Stage9 frame=${frame.frameId} capture=${frame.captureIndex} " +
+                    "Stage10 frame=${frame.frameId} capture=${frame.captureIndex} " +
                         "predicted=(${predicted.dx},${predicted.dy}) " +
+                        "sparseRank=${result.selectedHypothesisRankPerFrame[frame.frameId]} " +
+                        "searchRadius=${local?.searchRadius} " +
+                        "correction=(${local?.correctionDx},${local?.correctionDy}) " +
                         "selected=(${selected.dx},${selected.dy}) " +
                         "difference=(${selected.dx - predicted.dx},${selected.dy - predicted.dy}) " +
+                        "matched=${local?.matchedStars} inliers=${local?.inlierStars} " +
+                        "sequenceAgreement=${selected.transformSequenceScore} " +
                         "retention=${metrics?.referenceRetention} contrast=${metrics?.contrastRatio} " +
-                        "smear=${metrics?.smearRate} accepted=${selected.isReliable}"
+                        "smear=${metrics?.smearRate} " +
+                        "path=${result.frameAcceptancePaths[frame.frameId]} " +
+                        "reason=${result.frameAcceptanceReasons[frame.frameId]} " +
+                        "retry=${local?.retryUsed} accepted=${selected.isReliable}"
                 )
             }
         } finally {
