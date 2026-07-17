@@ -188,6 +188,35 @@ data class ProcessingReport(
     val acceptedVerificationMeanRetention: Float = 0f,
     val acceptedVerificationMeanContrastRatio: Float = 0f,
     val acceptedVerificationMeanSmearRate: Float = 0f,
+    val fullResolutionRefinementEnabled: Boolean = false,
+    val provisionalAcceptedFrameCount: Int = acceptedFrameCount,
+    val finalAcceptedFrameCount: Int = acceptedFrameCount,
+    val fullResolutionRefinementRejectedCount: Int = 0,
+    val fullResolutionInitialDxPerFrame: Map<String, Float> = emptyMap(),
+    val fullResolutionInitialDyPerFrame: Map<String, Float> = emptyMap(),
+    val fullResolutionRefinedDxPerFrame: Map<String, Float> = emptyMap(),
+    val fullResolutionRefinedDyPerFrame: Map<String, Float> = emptyMap(),
+    val fullResolutionCorrectionDxPerFrame: Map<String, Float> = emptyMap(),
+    val fullResolutionCorrectionDyPerFrame: Map<String, Float> = emptyMap(),
+    val fullResolutionAttemptedPatchCountPerFrame: Map<String, Int> = emptyMap(),
+    val fullResolutionAcceptedPatchCountPerFrame: Map<String, Int> = emptyMap(),
+    val fullResolutionRejectedPatchCountPerFrame: Map<String, Int> = emptyMap(),
+    val fullResolutionMedianPatchScorePerFrame: Map<String, Float> = emptyMap(),
+    val fullResolutionMedianResidualPerFrame: Map<String, Float> = emptyMap(),
+    val fullResolutionP90ResidualPerFrame: Map<String, Float> = emptyMap(),
+    val fullResolutionSpatialSectorCountPerFrame: Map<String, Int> = emptyMap(),
+    val fullResolutionRefinementConfidencePerFrame: Map<String, Float> = emptyMap(),
+    val fullResolutionRefinementAcceptedPerFrame: Map<String, Boolean> = emptyMap(),
+    val fullResolutionRefinementReasonPerFrame: Map<String, String> = emptyMap(),
+    val fullResolutionPatchRetentionPerFrame: Map<String, Float> = emptyMap(),
+    val fullResolutionPatchContrastRatioPerFrame: Map<String, Float> = emptyMap(),
+    val fullResolutionPatchCentroidResidualPerFrame: Map<String, Float> = emptyMap(),
+    val fullResolutionPatchWidthGrowthPerFrame: Map<String, Float> = emptyMap(),
+    val fullResolutionPatchSmearPerFrame: Map<String, Float> = emptyMap(),
+    val samplingKernel: String = "BILINEAR",
+    val samplingIdentityContrastRatio: Float = 0f,
+    val samplingProductionContrastRatio: Float = 0f,
+    val samplingAlternativeContrastRatio: Float = 0f,
     val staticArtifactCandidates: Int = 0,
     val staticArtifactMaskRatio: Float = 0f,
     val memorySchemaVersion: String = "astrophoto.jpeg.memory/1",
@@ -331,6 +360,35 @@ data class ProcessingReport(
         property("acceptedVerificationMeanRetention", acceptedVerificationMeanRetention)
         property("acceptedVerificationMeanContrastRatio", acceptedVerificationMeanContrastRatio)
         property("acceptedVerificationMeanSmearRate", acceptedVerificationMeanSmearRate)
+        property("fullResolutionRefinementEnabled", fullResolutionRefinementEnabled)
+        property("provisionalAcceptedFrameCount", provisionalAcceptedFrameCount)
+        property("finalAcceptedFrameCount", finalAcceptedFrameCount)
+        property("fullResolutionRefinementRejectedCount", fullResolutionRefinementRejectedCount)
+        append("  \"fullResolutionInitialDxPerFrame\": ${floatMapJson(fullResolutionInitialDxPerFrame)},\n")
+        append("  \"fullResolutionInitialDyPerFrame\": ${floatMapJson(fullResolutionInitialDyPerFrame)},\n")
+        append("  \"fullResolutionRefinedDxPerFrame\": ${floatMapJson(fullResolutionRefinedDxPerFrame)},\n")
+        append("  \"fullResolutionRefinedDyPerFrame\": ${floatMapJson(fullResolutionRefinedDyPerFrame)},\n")
+        append("  \"fullResolutionCorrectionDxPerFrame\": ${floatMapJson(fullResolutionCorrectionDxPerFrame)},\n")
+        append("  \"fullResolutionCorrectionDyPerFrame\": ${floatMapJson(fullResolutionCorrectionDyPerFrame)},\n")
+        append("  \"fullResolutionAttemptedPatchCountPerFrame\": ${intMapJson(fullResolutionAttemptedPatchCountPerFrame)},\n")
+        append("  \"fullResolutionAcceptedPatchCountPerFrame\": ${intMapJson(fullResolutionAcceptedPatchCountPerFrame)},\n")
+        append("  \"fullResolutionRejectedPatchCountPerFrame\": ${intMapJson(fullResolutionRejectedPatchCountPerFrame)},\n")
+        append("  \"fullResolutionMedianPatchScorePerFrame\": ${floatMapJson(fullResolutionMedianPatchScorePerFrame)},\n")
+        append("  \"fullResolutionMedianResidualPerFrame\": ${floatMapJson(fullResolutionMedianResidualPerFrame)},\n")
+        append("  \"fullResolutionP90ResidualPerFrame\": ${floatMapJson(fullResolutionP90ResidualPerFrame)},\n")
+        append("  \"fullResolutionSpatialSectorCountPerFrame\": ${intMapJson(fullResolutionSpatialSectorCountPerFrame)},\n")
+        append("  \"fullResolutionRefinementConfidencePerFrame\": ${floatMapJson(fullResolutionRefinementConfidencePerFrame)},\n")
+        append("  \"fullResolutionRefinementAcceptedPerFrame\": ${booleanMapJson(fullResolutionRefinementAcceptedPerFrame)},\n")
+        append("  \"fullResolutionRefinementReasonPerFrame\": ${stringMapJson(fullResolutionRefinementReasonPerFrame)},\n")
+        append("  \"fullResolutionPatchRetentionPerFrame\": ${floatMapJson(fullResolutionPatchRetentionPerFrame)},\n")
+        append("  \"fullResolutionPatchContrastRatioPerFrame\": ${floatMapJson(fullResolutionPatchContrastRatioPerFrame)},\n")
+        append("  \"fullResolutionPatchCentroidResidualPerFrame\": ${floatMapJson(fullResolutionPatchCentroidResidualPerFrame)},\n")
+        append("  \"fullResolutionPatchWidthGrowthPerFrame\": ${floatMapJson(fullResolutionPatchWidthGrowthPerFrame)},\n")
+        append("  \"fullResolutionPatchSmearPerFrame\": ${floatMapJson(fullResolutionPatchSmearPerFrame)},\n")
+        property("samplingKernel", samplingKernel)
+        property("samplingIdentityContrastRatio", samplingIdentityContrastRatio)
+        property("samplingProductionContrastRatio", samplingProductionContrastRatio)
+        property("samplingAlternativeContrastRatio", samplingAlternativeContrastRatio)
         property("staticArtifactCandidates", staticArtifactCandidates)
         property("staticArtifactMaskRatio", staticArtifactMaskRatio)
         property("memorySchemaVersion", memorySchemaVersion)

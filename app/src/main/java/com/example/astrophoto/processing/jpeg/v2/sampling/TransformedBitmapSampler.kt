@@ -42,13 +42,7 @@ class TransformedBitmapSampler {
     }
 
     fun sampleAt(source: ArgbPixelSource, sourceX: Float, sourceY: Float): SampledSrgb? {
-        if (
-            !sourceX.isFinite() || !sourceY.isFinite() ||
-            sourceX < 0f || sourceY < 0f ||
-            sourceX > source.width - 1f || sourceY > source.height - 1f
-        ) {
-            return null
-        }
+        if (!isCovered(source, sourceX, sourceY)) return null
         val x0 = floor(sourceX).toInt()
         val y0 = floor(sourceY).toInt()
         val x1 = minOf(source.width - 1, x0 + 1)
@@ -65,6 +59,34 @@ class TransformedBitmapSampler {
             blue = bilinearChannel(topLeft, topRight, bottomLeft, bottomRight, fractionX, fractionY)
         )
     }
+
+    /** Uses the exact production bilinear coverage and interpolation semantics for patch evidence. */
+    fun sampleLuminanceAt(source: ArgbPixelSource, sourceX: Float, sourceY: Float): Float? {
+        if (!isCovered(source, sourceX, sourceY)) return null
+        val x0 = floor(sourceX).toInt()
+        val y0 = floor(sourceY).toInt()
+        val x1 = minOf(source.width - 1, x0 + 1)
+        val y1 = minOf(source.height - 1, y0 + 1)
+        val fractionX = sourceX - x0
+        val fractionY = sourceY - y0
+        val topLeft = luminance(source.argbAt(x0, y0))
+        val topRight = luminance(source.argbAt(x1, y0))
+        val bottomLeft = luminance(source.argbAt(x0, y1))
+        val bottomRight = luminance(source.argbAt(x1, y1))
+        val top = topLeft + (topRight - topLeft) * fractionX
+        val bottom = bottomLeft + (bottomRight - bottomLeft) * fractionX
+        return (top + (bottom - top) * fractionY).coerceIn(0f, 1f)
+    }
+
+    private fun isCovered(source: ArgbPixelSource, sourceX: Float, sourceY: Float): Boolean =
+        sourceX.isFinite() && sourceY.isFinite() &&
+            sourceX >= 0f && sourceY >= 0f &&
+            sourceX <= source.width - 1f && sourceY <= source.height - 1f
+
+    private fun luminance(argb: Int): Float =
+        0.2126f * (argb ushr 16 and 0xFF) / 255f +
+            0.7152f * (argb ushr 8 and 0xFF) / 255f +
+            0.0722f * (argb and 0xFF) / 255f
 
     private fun bilinearChannel(
         topLeftColor: Int,

@@ -1,6 +1,7 @@
 package com.example.astrophoto.processing.jpeg.v2.sampling
 
 import android.graphics.Bitmap
+import com.example.astrophoto.processing.jpeg.v2.model.ReferenceToSourceTransform
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -9,7 +10,8 @@ import java.io.RandomAccessFile
 data class CachedArgbFrame(
     val file: File,
     val width: Int,
-    val height: Int
+    val height: Int,
+    val referenceToSourceTransform: ReferenceToSourceTransform? = null
 )
 
 /**
@@ -20,6 +22,7 @@ object ArgbFrameDiskCache {
     fun write(
         bitmap: Bitmap,
         file: File,
+        referenceToSourceTransform: ReferenceToSourceTransform? = null,
         onRowWritten: (Int) -> Unit = {}
     ): CachedArgbFrame {
         require(!file.exists())
@@ -43,7 +46,7 @@ object ArgbFrameDiskCache {
             }
             val expectedBytes = bitmap.width.toLong() * bitmap.height * Int.SIZE_BYTES
             require(file.length() == expectedBytes) { "Incomplete ARGB integration cache" }
-            return CachedArgbFrame(file, bitmap.width, bitmap.height)
+            return CachedArgbFrame(file, bitmap.width, bitmap.height, referenceToSourceTransform)
         } catch (error: Throwable) {
             file.delete()
             throw error

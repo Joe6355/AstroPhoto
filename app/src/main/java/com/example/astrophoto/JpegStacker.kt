@@ -119,6 +119,9 @@ import com.example.astrophoto.processing.jpeg.v2.quality.FileBackedResultQuality
 import com.example.astrophoto.processing.jpeg.v2.quality.ResultSelectionPolicy
 import com.example.astrophoto.processing.jpeg.v2.registration.OrderedRegistration
 import com.example.astrophoto.processing.jpeg.v2.registration.ExpectedSequenceMotionModel
+import com.example.astrophoto.processing.jpeg.v2.registration.FullResolutionRefinementResult
+import com.example.astrophoto.processing.jpeg.v2.registration.FullResolutionRegistrationRefiner
+import com.example.astrophoto.processing.jpeg.v2.registration.FullResolutionStarPatch
 import com.example.astrophoto.processing.jpeg.v2.registration.CaptureSequenceFrame
 import com.example.astrophoto.processing.jpeg.v2.registration.CaptureSequenceIndexResolver
 import com.example.astrophoto.processing.jpeg.v2.registration.SequenceAwareRegistrationDiagnostics
@@ -128,7 +131,10 @@ import com.example.astrophoto.processing.jpeg.v2.registration.TransformSequenceV
 import com.example.astrophoto.processing.jpeg.v2.registration.VerificationMetricsAggregator
 import com.example.astrophoto.processing.jpeg.v2.registration.scaledToFullResolution
 import com.example.astrophoto.processing.jpeg.v2.sampling.ArgbFrameDiskCache
+import com.example.astrophoto.processing.jpeg.v2.sampling.CachedArgbFrame
 import com.example.astrophoto.processing.jpeg.v2.sampling.FileBackedArgbPixelSource
+import com.example.astrophoto.processing.jpeg.v2.sampling.SamplingFidelityDiagnostic
+import com.example.astrophoto.processing.jpeg.v2.sampling.SamplingFidelityResult
 import com.example.astrophoto.processing.jpeg.v2.memory.ImageAllocationEstimate
 import com.example.astrophoto.processing.jpeg.v2.memory.JpegMemoryBudget
 import com.example.astrophoto.processing.jpeg.v2.memory.PipelineMemoryTracker
@@ -1254,24 +1260,82 @@ class JpegStacker(private val context: Context) {
                             (registration.rejectionReason ?: "registration failed")
                     }
                 }
-                val acceptedFrames = acceptedProfileFrames.size
-                alignmentApplied = (acceptedFrames - 1).coerceAtLeast(0)
-                alignmentRejected = (selectedFrames.size - acceptedFrames).coerceAtLeast(0)
-                if (acceptedFrames < 2) {
-                    warnings += "Надёжно зарегистрирован только опорный кадр; будет сохранён лучший оригинал"
-                }
-                if (acceptedFrames < profile.minimumFrames) {
-                    warnings += "После регистрации принято $acceptedFrames из ${selectedFrames.size} кадров"
-                }
+                val provisionalAcceptedFrames = acceptedProfileFrames.size
                 Log.i(
                     PROFILE_REGISTRATION_TAG,
-                    "selectedPreset=${profile.name} totalAccepted=$acceptedFrames " +
-                        "totalRejected=$alignmentRejected"
+                    "selectedPreset=${profile.name} provisionalAccepted=$provisionalAcceptedFrames " +
+                        "provisionalRejected=${selectedFrames.size - provisionalAcceptedFrames}"
                 )
                 pipelineTiming.record(
                     "registration",
                     (System.nanoTime() - registrationStarted) / 1_000_000L
                 )
+                val pixelCount = targetWidth.toLong() * targetHeight
+                val requiredCacheBytes = pixelCount * Int.SIZE_BYTES * provisionalAcceptedFrames
+                val requiredTemporaryBytes = requiredCacheBytes + pixelCount * 28L
+                require(temporaryFiles.directory.usableSpace >=
+                    requiredTemporaryBytes + MIN_CACHE_FREE_SPACE_BYTES
+                ) {
+                    "Недостаточно временного места для полноразмерной JPEG-обработки"
+                }
+                val initialFullResolutionSkyMask = scaleSkyMask(
+                    selectedReference.skyMask.mask,
+                    targetWidth,
+                    targetHeight
+                )
+                currentStage = "Full-resolution registration refinement"
+                val refinementStarted = System.nanoTime()
+                val fullResolutionPreparation = prepareAndRefineFullResolutionFrames(
+                    provisionalFrames = acceptedProfileFrames,
+                    selectedReference = selectedReference,
+                    targetWidth = targetWidth,
+                    targetHeight = targetHeight,
+                    scaleX = scaleX,
+                    scaleY = scaleY,
+                    fullVelocityScale = fullVelocityScale,
+                    registrationDiagnostics = analysisRegistration,
+                    fullResolutionSkyMask = initialFullResolutionSkyMask,
+                    temporaryFiles = temporaryFiles,
+                    memoryBudget = memoryBudget,
+                    memoryTracker = memoryTracker,
+                    onProgress = onProgress
+                )
+                val refinementResultsByKey = fullResolutionPreparation.refinementResultsByKey
+                val samplingFidelity = fullResolutionPreparation.samplingFidelity
+                fullResolutionPreparation.finalRegistrationsByKey.forEach { (key, registration) ->
+                    allRegistrationsByKey[key] = registration
+                }
+                acceptedProfileFrames.clear()
+                acceptedProfileFrames += fullResolutionPreparation.acceptedFrames
+                val cachedFrames = fullResolutionPreparation.cachedFrames
+                warnings += fullResolutionPreparation.warnings
+                val acceptedFrames = acceptedProfileFrames.size
+                val fullResolutionRefinementRejectedCount =
+                    (provisionalAcceptedFrames - acceptedFrames).coerceAtLeast(0)
+                alignmentApplied = (acceptedFrames - 1).coerceAtLeast(0)
+                alignmentRejected = (selectedFrames.size - acceptedFrames).coerceAtLeast(0)
+                registrationReports.clear()
+                selectedFrames.forEach { frame ->
+                    registrationReports += allRegistrationsByKey.getValue(frame.key).toReport(frame.fileName)
+                }
+                if (acceptedFrames < 2) {
+                    warnings += "Надёжно зарегистрирован только опорный кадр; будет сохранён лучший оригинал"
+                }
+                if (acceptedFrames < profile.minimumFrames) {
+                    warnings += "После full-resolution регистрации принято $acceptedFrames из ${selectedFrames.size} кадров"
+                }
+                pipelineTiming.record(
+                    "full_resolution_refinement",
+                    (System.nanoTime() - refinementStarted) / 1_000_000L
+                )
+                Log.i(
+                    PROFILE_REGISTRATION_TAG,
+                    "selectedPreset=${profile.name} provisionalAccepted=$provisionalAcceptedFrames " +
+                        "finalAccepted=$acceptedFrames refinementRejected=$fullResolutionRefinementRejectedCount " +
+                        "samplingKernel=${samplingFidelity.kernel} " +
+                        "samplingProductionContrast=${formatMetric(samplingFidelity.productionContrastRatio)}"
+                )
+
                 currentStage = "Calculating frame weights"
                 val weightCalculationStarted = System.nanoTime()
                 withContext(Dispatchers.Main.immediate) {
@@ -1309,45 +1373,6 @@ class JpegStacker(private val context: Context) {
                     onProgress("Stacking full-resolution image", 0, 1)
                 }
                 journalRunId?.let { runJournal.update(it, "registration_completed") }
-                val pixelCount = targetWidth.toLong() * targetHeight
-                val requiredCacheBytes = pixelCount * Int.SIZE_BYTES * acceptedFrames
-                val requiredTemporaryBytes = requiredCacheBytes + pixelCount * 28L
-                require(temporaryFiles.directory.usableSpace >=
-                    requiredTemporaryBytes + MIN_CACHE_FREE_SPACE_BYTES
-                ) {
-                    "Недостаточно временного места для полноразмерной JPEG-обработки"
-                }
-                val cacheWriteContext = currentCoroutineContext()
-                val decodeEstimate = ImageAllocationEstimate.bitmap(
-                    targetWidth,
-                    targetHeight,
-                    "integration-frame-decode"
-                )
-                memoryBudget.requireAllocation(decodeEstimate)
-                memoryTracker.recordBoundary("integration-frame-decode", decodeEstimate.bytes, 1)
-                val cachedFrames = acceptedProfileFrames.mapIndexed { index, accepted ->
-                    currentCoroutineContext().ensureActive()
-                    withContext(Dispatchers.Main.immediate) {
-                        onProgress(
-                            "Preparing full-resolution frame ${index + 1} of $acceptedFrames",
-                            index + 1,
-                            acceptedFrames
-                        )
-                    }
-                    val bitmap = decodeMedianFrame(accepted.frame, targetWidth, targetHeight)
-                        ?: error("Не удалось прочитать кадр: ${accepted.frame.fileName}")
-                    val cached = try {
-                        ArgbFrameDiskCache.write(
-                            bitmap,
-                            temporaryFiles.file("frame-${index.toString().padStart(3, '0')}.argb")
-                        ) {
-                            if (it % 64 == 0) cacheWriteContext.ensureActive()
-                        }
-                    } finally {
-                        bitmap.recycle()
-                    }
-                    accepted to cached
-                }
                 val integrationMaskEstimate = ImageAllocationEstimate.booleanMask(
                     targetWidth,
                     targetHeight,
@@ -1355,11 +1380,6 @@ class JpegStacker(private val context: Context) {
                 )
                 memoryBudget.requireAllocation(integrationMaskEstimate)
                 memoryTracker.recordBoundary("integration-sky-mask", integrationMaskEstimate.bytes, 0)
-                val initialFullResolutionSkyMask = scaleSkyMask(
-                    selectedReference.skyMask.mask,
-                    targetWidth,
-                    targetHeight
-                )
                 val stackedWriter = candidateStore.createTemporaryWriter(
                     "integrated-sky",
                     targetWidth,
@@ -1383,6 +1403,10 @@ class JpegStacker(private val context: Context) {
                         outputWidth = targetWidth,
                         outputHeight = targetHeight,
                         frames = cachedFrames.map { (accepted, cached) ->
+                            check(
+                                cached.referenceToSourceTransform ==
+                                    accepted.registration.referenceToSourceTransform()
+                            ) { "Cached transform metadata does not match refined registration" }
                             WeightedIntegrationFrame(
                                 id = accepted.analysis.id,
                                 source = cached,
@@ -1927,10 +1951,14 @@ class JpegStacker(private val context: Context) {
                         val finalRegistration = allRegistrationsByKey.getValue(frame.key)
                         val enginePath = registrationDiagnostics.frameAcceptancePaths[frame.key]
                             ?: "UNAVAILABLE"
-                        frame.fileName to if (
-                            !finalRegistration.isReliable &&
-                            enginePath != "REJECTED"
-                        ) "REJECTED_SEQUENCE_VALIDATION" else enginePath
+                        val refinement = refinementResultsByKey[frame.key]
+                        frame.fileName to when {
+                            refinement != null && !refinement.accepted -> "REJECTED_FULL_RESOLUTION"
+                            refinement != null && refinement.accepted -> "$enginePath+FULL_RESOLUTION_REFINED"
+                            !finalRegistration.isReliable && enginePath != "REJECTED" ->
+                                "REJECTED_SEQUENCE_VALIDATION"
+                            else -> enginePath
+                        }
                     },
                     frameAcceptanceReasonPerFrame = selectedFrames.associate { frame ->
                         frame.fileName to (
@@ -1981,6 +2009,14 @@ class JpegStacker(private val context: Context) {
                     },
                     processingRunId = journalRunId,
                     artifactSessionId = artifactSessionId(session.folderName)
+                )
+                processingReport = processingReport.withFullResolutionRefinement(
+                    resultsByKey = refinementResultsByKey,
+                    frameNameByKey = frameNameByKey,
+                    provisionalAcceptedFrameCount = provisionalAcceptedFrames,
+                    finalAcceptedFrameCount = acceptedFrames,
+                    rejectedCount = fullResolutionRefinementRejectedCount,
+                    sampling = samplingFidelity
                 )
                 var reportJson = processingReport.toJson()
                 temporaryFiles.atomicTextFile("final-report.json", reportJson)
@@ -2527,6 +2563,15 @@ class JpegStacker(private val context: Context) {
         val captureIndex: Int = 0
     )
 
+    private data class FullResolutionPreparationResult(
+        val acceptedFrames: List<AcceptedProfileFrame>,
+        val cachedFrames: List<Pair<AcceptedProfileFrame, CachedArgbFrame>>,
+        val finalRegistrationsByKey: Map<String, RegistrationResult>,
+        val refinementResultsByKey: Map<String, FullResolutionRefinementResult>,
+        val samplingFidelity: SamplingFidelityResult,
+        val warnings: List<String>
+    )
+
     private fun profileCaptureIndices(frames: List<SessionFrame>): Map<String, Int> {
         return CaptureSequenceIndexResolver.resolve(frames.map { frame ->
             CaptureSequenceFrame(frame.key, frame.fileName, frame.createdAtMillis)
@@ -2845,6 +2890,261 @@ class JpegStacker(private val context: Context) {
                 width = star.width * sizeScale
             )
         }
+    }
+
+    private suspend fun prepareAndRefineFullResolutionFrames(
+        provisionalFrames: List<AcceptedProfileFrame>,
+        selectedReference: ProfileAnalyzedFrame,
+        targetWidth: Int,
+        targetHeight: Int,
+        scaleX: Float,
+        scaleY: Float,
+        fullVelocityScale: Float,
+        registrationDiagnostics: SequenceAwareRegistrationDiagnostics,
+        fullResolutionSkyMask: SkyMask,
+        temporaryFiles: TemporaryPipelineFiles,
+        memoryBudget: JpegMemoryBudget,
+        memoryTracker: PipelineMemoryTracker,
+        onProgress: suspend (message: String, current: Int, total: Int) -> Unit
+    ): FullResolutionPreparationResult {
+        val context = currentCoroutineContext()
+        val decodeEstimate = ImageAllocationEstimate.bitmap(
+            targetWidth,
+            targetHeight,
+            "integration-frame-decode"
+        )
+        memoryBudget.requireAllocation(decodeEstimate)
+        memoryTracker.recordBoundary("integration-frame-decode", decodeEstimate.bytes, 1)
+        val provisionalCachedFrames = provisionalFrames.mapIndexed { index, accepted ->
+            context.ensureActive()
+            withContext(Dispatchers.Main.immediate) {
+                onProgress(
+                    "Preparing full-resolution frame ${index + 1} of ${provisionalFrames.size}",
+                    index + 1,
+                    provisionalFrames.size
+                )
+            }
+            val bitmap = decodeMedianFrame(accepted.frame, targetWidth, targetHeight)
+                ?: error("Не удалось прочитать кадр: ${accepted.frame.fileName}")
+            val cached = try {
+                ArgbFrameDiskCache.write(
+                    bitmap,
+                    temporaryFiles.file("frame-${index.toString().padStart(3, '0')}.argb"),
+                    accepted.registration.referenceToSourceTransform()
+                ) { row ->
+                    if (row % 64 == 0) context.ensureActive()
+                }
+            } finally {
+                bitmap.recycle()
+            }
+            accepted to cached
+        }
+        val patches = buildFullResolutionStarPatches(
+            selectedReference = selectedReference,
+            targetWidth = targetWidth,
+            targetHeight = targetHeight,
+            fullResolutionSkyMask = fullResolutionSkyMask,
+            registrationDiagnostics = registrationDiagnostics
+        )
+        val referenceCached = checkNotNull(
+            provisionalCachedFrames.firstOrNull { it.first.frame.key == selectedReference.frame.key }
+        ).second
+        val finalFrames = mutableListOf<Pair<AcceptedProfileFrame, CachedArgbFrame>>()
+        val finalRegistrations = linkedMapOf<String, RegistrationResult>()
+        val refinementResults = linkedMapOf<String, FullResolutionRefinementResult>()
+        val warnings = mutableListOf<String>()
+        val refiner = FullResolutionRegistrationRefiner()
+        provisionalCachedFrames.forEachIndexed { index, (accepted, cached) ->
+            context.ensureActive()
+            withContext(Dispatchers.Main.immediate) {
+                onProgress(
+                    "Refining full-resolution frame ${index + 1} of ${provisionalFrames.size}",
+                    index + 1,
+                    provisionalFrames.size
+                )
+            }
+            val result = FileBackedArgbPixelSource(referenceCached, 32).use { referenceSource ->
+                FileBackedArgbPixelSource(cached, 32).use { candidateSource ->
+                    refiner.refine(
+                        frameId = accepted.frame.key,
+                        isReference = accepted.frame.key == selectedReference.frame.key,
+                        reference = referenceSource,
+                        candidate = candidateSource,
+                        initialTransform = accepted.registration.referenceToSourceTransform(),
+                        patches = patches,
+                        analysisScaleUncertainty = (maxOf(scaleX, scaleY) * 0.5f).coerceIn(0f, 1f),
+                        stage10Residual = accepted.registration.residualError
+                            .takeIf { it.isFinite() }?.times(fullVelocityScale) ?: 3f,
+                        sequenceResidual = registrationDiagnostics.model.residual * fullVelocityScale,
+                        stage10Confidence = accepted.registration.confidence,
+                        cancellationCheck = { context.ensureActive() }
+                    )
+                }
+            }
+            refinementResults[accepted.frame.key] = result
+            val finalRegistration = accepted.registration
+                .withTransform(result.refinedTransform)
+                .copy(
+                    matchedStars = result.attemptedPatchCount,
+                    inlierStars = result.acceptedPatchCount,
+                    residualError = result.medianResidual,
+                    confidence = minOf(accepted.registration.confidence, result.confidence),
+                    isReliable = result.accepted,
+                    rejectionReason = result.rejectionReason,
+                    registrationModel = if (
+                        accepted.frame.key == selectedReference.frame.key
+                    ) "REFERENCE_IDENTITY" else "FULL_RESOLUTION_REFINED",
+                    scaleFixed = true,
+                    rotationAllowed = false
+                )
+            finalRegistrations[accepted.frame.key] = finalRegistration
+            if (result.accepted) {
+                val finalFrame = accepted.copy(registration = finalRegistration)
+                finalFrames += finalFrame to cached.copy(
+                    referenceToSourceTransform = result.refinedTransform
+                )
+            } else {
+                cached.file.delete()
+                warnings += "Кадр ${accepted.frame.fileName} отклонён full-resolution проверкой: " +
+                    (result.rejectionReason ?: "refinement failed")
+            }
+            logFullResolutionRefinement(accepted.frame.fileName, result)
+        }
+        val samplingFidelity = FileBackedArgbPixelSource(referenceCached, 32).use { source ->
+            SamplingFidelityDiagnostic().measure(source, patches)
+        }
+        return FullResolutionPreparationResult(
+            acceptedFrames = finalFrames.map { it.first },
+            cachedFrames = finalFrames,
+            finalRegistrationsByKey = finalRegistrations,
+            refinementResultsByKey = refinementResults,
+            samplingFidelity = samplingFidelity,
+            warnings = warnings
+        )
+    }
+
+    private fun logFullResolutionRefinement(
+        frameName: String,
+        result: FullResolutionRefinementResult
+    ) {
+        Log.i(
+            PROFILE_REGISTRATION_TAG,
+            "frame=$frameName fullResolutionInitial=(${formatMetric(result.initialTransform.dx)}," +
+                "${formatMetric(result.initialTransform.dy)}) refined=(${formatMetric(result.refinedTransform.dx)}," +
+                "${formatMetric(result.refinedTransform.dy)}) correction=(${formatMetric(result.correctionDx)}," +
+                "${formatMetric(result.correctionDy)}) searchRadius=${formatMetric(result.searchRadius)} " +
+                "patches=${result.acceptedPatchCount}/${result.attemptedPatchCount} " +
+                "medianResidual=${formatMetric(result.medianResidual)} " +
+                "p90Residual=${formatMetric(result.percentile90Residual)} " +
+                "retention=${formatMetric(result.verification.refined.retention)} " +
+                "contrast=${formatMetric(result.verification.refined.contrastRatio)} " +
+                "centroid=${formatMetric(result.verification.refined.centroidResidual)} " +
+                "accepted=${result.accepted} reason=${result.rejectionReason.orEmpty()}"
+        )
+        result.patchDiagnostics.filterNot { it.accepted }.forEach { diagnostic ->
+            Log.d(
+                PROFILE_REGISTRATION_TAG,
+                "frame=$frameName patch=(${formatMetric(diagnostic.x)},${formatMetric(diagnostic.y)}) " +
+                    "sector=${diagnostic.sector} rejected=${diagnostic.rejectionReason.orEmpty()}"
+            )
+        }
+    }
+
+    private fun ProcessingReport.withFullResolutionRefinement(
+        resultsByKey: Map<String, FullResolutionRefinementResult>,
+        frameNameByKey: Map<String, String>,
+        provisionalAcceptedFrameCount: Int,
+        finalAcceptedFrameCount: Int,
+        rejectedCount: Int,
+        sampling: SamplingFidelityResult
+    ): ProcessingReport {
+        fun <T> named(selector: (FullResolutionRefinementResult) -> T): Map<String, T> =
+            resultsByKey.mapKeys { frameNameByKey[it.key] ?: it.key }.mapValues { selector(it.value) }
+        return copy(
+            registrationSchemaVersion = "astrophoto.jpeg.registration/3",
+            verificationCoordinateSpace = "ANALYSIS_THUMBNAIL_AND_FULL_RESOLUTION_PATCH_PX",
+            fullResolutionRefinementEnabled = true,
+            provisionalAcceptedFrameCount = provisionalAcceptedFrameCount,
+            finalAcceptedFrameCount = finalAcceptedFrameCount,
+            fullResolutionRefinementRejectedCount = rejectedCount,
+            fullResolutionInitialDxPerFrame = named { it.initialTransform.dx },
+            fullResolutionInitialDyPerFrame = named { it.initialTransform.dy },
+            fullResolutionRefinedDxPerFrame = named { it.refinedTransform.dx },
+            fullResolutionRefinedDyPerFrame = named { it.refinedTransform.dy },
+            fullResolutionCorrectionDxPerFrame = named { it.correctionDx },
+            fullResolutionCorrectionDyPerFrame = named { it.correctionDy },
+            fullResolutionAttemptedPatchCountPerFrame = named { it.attemptedPatchCount },
+            fullResolutionAcceptedPatchCountPerFrame = named { it.acceptedPatchCount },
+            fullResolutionRejectedPatchCountPerFrame = named { it.rejectedPatchCount },
+            fullResolutionMedianPatchScorePerFrame = named { it.medianPatchScore },
+            fullResolutionMedianResidualPerFrame = named { it.medianResidual },
+            fullResolutionP90ResidualPerFrame = named { it.percentile90Residual },
+            fullResolutionSpatialSectorCountPerFrame = named { it.spatialSectorCount },
+            fullResolutionRefinementConfidencePerFrame = named { it.confidence },
+            fullResolutionRefinementAcceptedPerFrame = named { it.accepted },
+            fullResolutionRefinementReasonPerFrame = named { it.rejectionReason ?: "accepted" },
+            fullResolutionPatchRetentionPerFrame = named { it.verification.refined.retention },
+            fullResolutionPatchContrastRatioPerFrame = named { it.verification.refined.contrastRatio },
+            fullResolutionPatchCentroidResidualPerFrame = named { it.verification.refined.centroidResidual },
+            fullResolutionPatchWidthGrowthPerFrame = named { it.verification.refined.widthGrowth },
+            fullResolutionPatchSmearPerFrame = named { it.verification.refined.smear },
+            samplingKernel = sampling.kernel,
+            samplingIdentityContrastRatio = sampling.identityContrastRatio,
+            samplingProductionContrastRatio = sampling.productionContrastRatio,
+            samplingAlternativeContrastRatio = sampling.alternativeContrastRatio
+        )
+    }
+
+    private fun buildFullResolutionStarPatches(
+        selectedReference: ProfileAnalyzedFrame,
+        targetWidth: Int,
+        targetHeight: Int,
+        fullResolutionSkyMask: SkyMask,
+        registrationDiagnostics: SequenceAwareRegistrationDiagnostics
+    ): List<FullResolutionStarPatch> {
+        val scaled = scaleV2Stars(
+            selectedReference.analysis.stars,
+            selectedReference.analysis.width,
+            selectedReference.analysis.height,
+            targetWidth,
+            targetHeight
+        )
+        return selectedReference.analysis.stars.zip(scaled).map { (analysisStar, fullStar) ->
+            val sectorX = (fullStar.x / targetWidth * 3f).toInt().coerceIn(0, 2)
+            val sectorY = (fullStar.y / targetHeight * 3f).toInt().coerceIn(0, 2)
+            FullResolutionStarPatch(
+                x = fullStar.x,
+                y = fullStar.y,
+                confidence = fullStar.confidence,
+                localContrast = fullStar.localContrast,
+                width = fullStar.width,
+                ellipticity = fullStar.ellipticity,
+                sector = sectorY * 3 + sectorX,
+                motionCluster = registrationDiagnostics.trackAnalysis.clusterAt(
+                    selectedReference.frame.key,
+                    analysisStar
+                ),
+                skyCoverage = fullResolutionPatchSkyCoverage(
+                    fullResolutionSkyMask,
+                    fullStar.x,
+                    fullStar.y
+                )
+            )
+        }
+    }
+
+    private fun fullResolutionPatchSkyCoverage(mask: SkyMask, x: Float, y: Float): Float {
+        var sky = 0
+        var total = 0
+        for (offsetY in -7..7 step 3) for (offsetX in -7..7 step 3) {
+            val sampleX = (x + offsetX).roundToInt()
+            val sampleY = (y + offsetY).roundToInt()
+            total++
+            if (sampleX in 0 until mask.width && sampleY in 0 until mask.height &&
+                mask.contains(sampleX, sampleY)
+            ) sky++
+        }
+        return sky.toFloat() / total.coerceAtLeast(1)
     }
 
     private fun scaleSkyMask(mask: SkyMask, width: Int, height: Int): SkyMask =
