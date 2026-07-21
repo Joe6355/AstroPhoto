@@ -132,12 +132,21 @@ class StellarCentroidFrameRefiner(
                 reason
             )
         }
-        val aggregation = aggregate(matches.filter { it.accepted })
+        val evidenceMatches = preferStrongCentroidMatches(matches)
+        val evidenceKeys = evidenceMatches.map { patchKey(it.patch) }.toSet()
+        val aggregation = aggregate(evidenceMatches)
         val inlierKeys = aggregation.inliers.map { patchKey(it.patch) }.toSet()
         diagnostics.indices.forEach { index ->
             val value = diagnostics[index]
             if (value.accepted && patchKey(value.x, value.y) !in inlierKeys) {
-                diagnostics[index] = value.copy(accepted = false, rejectionReason = "centroid_mad_outlier")
+                diagnostics[index] = value.copy(
+                    accepted = false,
+                    rejectionReason = if (patchKey(value.x, value.y) !in evidenceKeys) {
+                        "centroid_marginal_snr_not_needed"
+                    } else {
+                        "centroid_mad_outlier"
+                    }
+                )
             }
         }
         val centroidTransform = ReferenceToSourceTransform(aggregation.dx, aggregation.dy)
@@ -402,4 +411,14 @@ class StellarCentroidFrameRefiner(
         private const val IRLS_ITERATIONS = 5
         private const val MAX_MATCH_ELLIPTICITY_GROWTH = 0.25f
     }
+}
+
+/** Uses decoder-margin stars only when the frame lacks three stronger, spatially separate matches. */
+internal fun preferStrongCentroidMatches(
+    matches: List<StellarCentroidMatch>,
+    preferredSnr: Float = 4.5f
+): List<StellarCentroidMatch> {
+    val accepted = matches.filter { it.accepted }
+    val strong = accepted.filter { minOf(it.reference.snr, it.candidate.snr) >= preferredSnr }
+    return if (strong.size >= 3 && strong.map { it.patch.sector }.distinct().size >= 2) strong else accepted
 }

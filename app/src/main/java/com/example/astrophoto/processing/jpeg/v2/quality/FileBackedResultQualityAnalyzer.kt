@@ -162,7 +162,6 @@ class FileBackedResultQualityAnalyzer(
         var blackBorder = 0L
         var suspicious = 0
         val band = maxOf(1, minOf(image.width, image.height) / 80)
-        val suspiciousThreshold = background + maxOf(mad * 8f, MIN_SUSPICIOUS_DETAIL)
         FileBackedImageReader(image, cachedRows = 5).use { candidate ->
             FileBackedImageReader(reference, cachedRows = 5).use { referenceReader ->
                 FileBackedFloatPlaneReader(alphaPlane, cachedRows = 5).use { alpha ->
@@ -198,8 +197,14 @@ class FileBackedResultQualityAnalyzer(
                         }
                         if (x in 1 until image.width - 1 && y in 1 until image.height - 1 &&
                             alpha.alphaAt(x, y) >= SKY_ALPHA_THRESHOLD &&
-                            qualityLinearLuminance(color) >= suspiciousThreshold &&
-                            isSuspicious(candidate, x, y, color, background)
+                            FileBackedSuspiciousPointClassifier.isSuspicious(
+                                candidate,
+                                x,
+                                y,
+                                color,
+                                background,
+                                mad
+                            )
                         ) suspicious++
                     }
                 }
@@ -216,33 +221,6 @@ class FileBackedResultQualityAnalyzer(
             blackBorder,
             suspicious
         )
-    }
-
-    private fun isSuspicious(
-        image: FileBackedImageReader,
-        x: Int,
-        y: Int,
-        color: Int,
-        background: Float
-    ): Boolean {
-        val luminance = qualityLinearLuminance(color)
-        var localMaximum = true
-        var support = 0
-        for (dy in -1..1) for (dx in -1..1) {
-            if (dx == 0 && dy == 0) continue
-            val neighbor = qualityLinearLuminance(image.argbAt(x + dx, y + dy))
-            if (neighbor > luminance) localMaximum = false
-            if (neighbor - background >= (luminance - background) * MIN_POINT_SUPPORT_FRACTION) support++
-        }
-        if (!localMaximum) return false
-        val deltas = floatArrayOf(
-            qualityLinearChannel(color, 16) - background,
-            qualityLinearChannel(color, 8) - background,
-            qualityLinearChannel(color, 0) - background
-        ).sortedDescending()
-        val singleChannel = deltas[0] > MIN_SINGLE_CHANNEL_DETAIL &&
-            deltas[1] < deltas[0] * MAX_SECOND_CHANNEL_FRACTION
-        return support == 0 || singleChannel
     }
 
     private fun fileBackedBanding(
@@ -332,13 +310,68 @@ class FileBackedResultQualityAnalyzer(
         private const val FOREGROUND_ALPHA_THRESHOLD = 0.001f
         private const val BRIGHT_CLIP_CHANNEL = 254
         private const val BLACK_BORDER_LUMINANCE = 2
-        private const val MIN_SUSPICIOUS_DETAIL = 0.008f
-        private const val MIN_POINT_SUPPORT_FRACTION = 0.22f
-        private const val MIN_SINGLE_CHANNEL_DETAIL = 0.04f
-        private const val MAX_SECOND_CHANNEL_FRACTION = 0.30f
         private const val BANDING_BINS = 256
         private const val MIN_LINE_SKY_FRACTION = 0.08f
         private const val MAD_NORMALIZATION = 1.4826f
         private const val MIN_NORMALIZATION = 0.002f
     }
+}
+
+/** Shared classifier used by both the quality gate and the conservative Stage 4 safety pass. */
+internal object FileBackedSuspiciousPointClassifier {
+    fun coordinates(
+        image: FileBackedImage,
+        alphaPlane: FileBackedFloatPlane,
+        background: Float,
+        mad: Float
+    ): Set<Long> {
+        val result = linkedSetOf<Long>()
+        FileBackedImageReader(image, cachedRows = 5).use { reader ->
+            FileBackedFloatPlaneReader(alphaPlane, cachedRows = 5).use { alpha ->
+                for (y in 1 until image.height - 1) for (x in 1 until image.width - 1) {
+                    if (alpha.alphaAt(x, y) < SKY_ALPHA_THRESHOLD) continue
+                    val color = reader.argbAt(x, y)
+                    if (isSuspicious(reader, x, y, color, background, mad)) {
+                        result += y.toLong() * image.width + x
+                    }
+                }
+            }
+        }
+        return result
+    }
+
+    fun isSuspicious(
+        image: FileBackedImageReader,
+        x: Int,
+        y: Int,
+        color: Int,
+        background: Float,
+        mad: Float
+    ): Boolean {
+        val luminance = qualityLinearLuminance(color)
+        if (luminance < background + maxOf(mad * 8f, MIN_SUSPICIOUS_DETAIL)) return false
+        var localMaximum = true
+        var support = 0
+        for (dy in -1..1) for (dx in -1..1) {
+            if (dx == 0 && dy == 0) continue
+            val neighbor = qualityLinearLuminance(image.argbAt(x + dx, y + dy))
+            if (neighbor > luminance) localMaximum = false
+            if (neighbor - background >= (luminance - background) * MIN_POINT_SUPPORT_FRACTION) support++
+        }
+        if (!localMaximum) return false
+        val deltas = floatArrayOf(
+            qualityLinearChannel(color, 16) - background,
+            qualityLinearChannel(color, 8) - background,
+            qualityLinearChannel(color, 0) - background
+        ).sortedDescending()
+        val singleChannel = deltas[0] > MIN_SINGLE_CHANNEL_DETAIL &&
+            deltas[1] < deltas[0] * MAX_SECOND_CHANNEL_FRACTION
+        return support == 0 || singleChannel
+    }
+
+    private const val SKY_ALPHA_THRESHOLD = 0.98f
+    private const val MIN_SUSPICIOUS_DETAIL = 0.008f
+    private const val MIN_POINT_SUPPORT_FRACTION = 0.22f
+    private const val MIN_SINGLE_CHANNEL_DETAIL = 0.04f
+    private const val MAX_SECOND_CHANNEL_FRACTION = 0.30f
 }

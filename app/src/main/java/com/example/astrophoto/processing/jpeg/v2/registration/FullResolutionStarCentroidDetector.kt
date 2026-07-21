@@ -149,7 +149,9 @@ class FullResolutionStarCentroidDetector(
         private const val BACKGROUND_RADIUS = 9
         // This is only a cheap pre-filter. The fitted PSF SNR/shape checks below are authoritative.
         private const val MIN_COMPACT_PEAK = 0.0025f
-        private const val MIN_SNR = 4.5f
+        // Android and desktop JPEG decoders differ slightly around faint point sources.
+        // Model agreement, PSF shape/residual and multi-sector gates remain authoritative.
+        private const val MIN_SNR = 4.0f
         private const val COMPARABLE_PEAK_RATIO = 0.92f
         private const val RING_PENALTY = 0.0125f
         private const val MAX_CENTROID_OVERSHOOT = 0.75f

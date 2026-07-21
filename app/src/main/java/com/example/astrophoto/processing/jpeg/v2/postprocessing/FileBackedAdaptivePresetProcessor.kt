@@ -16,6 +16,7 @@ import com.example.astrophoto.processing.jpeg.v2.model.SkyStatisticsResult
 import com.example.astrophoto.processing.jpeg.v2.model.StarEnhancementDiagnostics
 import com.example.astrophoto.processing.jpeg.v2.model.StretchDiagnostics
 import com.example.astrophoto.processing.jpeg.v2.profile.ExistingPresetParameterMapper
+import com.example.astrophoto.processing.jpeg.v2.quality.FileBackedSuspiciousPointClassifier
 import com.example.astrophoto.processing.jpeg.v2.storage.AlphaPixelSource
 import com.example.astrophoto.processing.jpeg.v2.storage.FileBackedFloatPlane
 import com.example.astrophoto.processing.jpeg.v2.storage.FileBackedFloatPlaneReader
@@ -226,7 +227,18 @@ class FileBackedAdaptivePresetProcessor(
         }
         store.deleteTemporary(workingImage)
         store.deleteTemporary(composite.effectiveSkyAlpha)
-        val processed = store.register(ResultCandidateType.PROCESSED, composite.image)
+        val pointSafe = suppressNewSuspiciousPoints(
+            candidate = composite.image,
+            baseline = stackedSky,
+            alphaPlane = effectiveSkyAlpha,
+            baselineStatistics = before,
+            candidateStatistics = after,
+            store = store,
+            budget = memoryBudget,
+            tracker = memoryTracker
+        )
+        if (pointSafe !== composite.image) store.deleteTemporary(composite.image)
+        val processed = store.register(ResultCandidateType.PROCESSED, pointSafe)
         durations["foreground_composition"] = elapsed(stageStarted)
         return FileBackedAdaptiveProcessingResult(
             image = processed,
@@ -246,6 +258,45 @@ class FileBackedAdaptivePresetProcessor(
                 stageDurationsMillis = durations
             )
         )
+    }
+
+    private fun suppressNewSuspiciousPoints(
+        candidate: FileBackedImage,
+        baseline: FileBackedImage,
+        alphaPlane: FileBackedFloatPlane,
+        baselineStatistics: SkyStatisticsResult,
+        candidateStatistics: SkyStatisticsResult,
+        store: ResultCandidateStore,
+        budget: JpegMemoryBudget,
+        tracker: PipelineMemoryTracker
+    ): FileBackedImage {
+        val baselinePoints = FileBackedSuspiciousPointClassifier.coordinates(
+            baseline,
+            alphaPlane,
+            baselineStatistics.luminanceMedian,
+            baselineStatistics.luminanceMad
+        )
+        val candidatePoints = FileBackedSuspiciousPointClassifier.coordinates(
+            candidate,
+            alphaPlane,
+            candidateStatistics.luminanceMedian,
+            candidateStatistics.luminanceMad
+        )
+        val newPoints = candidatePoints - baselinePoints
+        if (newPoints.isEmpty()) return candidate
+        FileBackedImageReader(baseline, cachedRows = 5).use { baselineReader ->
+            return transform(
+                "point-safety",
+                candidate,
+                alphaPlane,
+                store,
+                budget,
+                tracker,
+                halo = 1
+            ) { x, y, color, _, _ ->
+                if (y.toLong() * candidate.width + x in newPoints) baselineReader.argbAt(x, y) else color
+            }
+        }
     }
 
     private fun gradientPass(

@@ -23,6 +23,7 @@ import com.example.astrophoto.processing.jpeg.v2.output.PngStreamEncoder
 import com.example.astrophoto.processing.jpeg.v2.postprocessing.AdaptivePresetProcessor
 import com.example.astrophoto.processing.jpeg.v2.postprocessing.FileBackedAdaptivePresetProcessor
 import com.example.astrophoto.processing.jpeg.v2.quality.FileBackedResultQualityAnalyzer
+import com.example.astrophoto.processing.jpeg.v2.quality.FileBackedSuspiciousPointClassifier
 import com.example.astrophoto.processing.jpeg.v2.quality.ResultQualityAnalyzer
 import com.example.astrophoto.processing.jpeg.v2.quality.ResultSelectionPolicy
 import com.example.astrophoto.processing.jpeg.v2.storage.FileBackedFloatPlane
@@ -244,6 +245,35 @@ class JpegV2Stage7Test {
         assertEquals(legacy.reliableStarCount, actual.reliableStarCount)
         assertEquals(legacy.foregroundMaximumPixelDifference, actual.foregroundMaximumPixelDifference)
         assertEquals(legacy.banding.combinedScore, actual.banding.combinedScore, 0.0001f)
+    }
+
+    @Test fun stage4UsesSameSuspiciousPointClassifierAsQualityGate() {
+        val quality = source(
+            "app/src/main/java/com/example/astrophoto/processing/jpeg/v2/quality/FileBackedResultQualityAnalyzer.kt"
+        )
+        val processor = source(
+            "app/src/main/java/com/example/astrophoto/processing/jpeg/v2/postprocessing/FileBackedAdaptivePresetProcessor.kt"
+        )
+        assertTrue(quality.contains("FileBackedSuspiciousPointClassifier.isSuspicious"))
+        assertTrue(processor.contains("suppressNewSuspiciousPoints("))
+        assertTrue(processor.contains("FileBackedSuspiciousPointClassifier.coordinates"))
+        assertTrue(processor.contains("baselineReader.argbAt(x, y)"))
+    }
+
+    @Test fun sharedClassifierFindsOnlyNewIsolatedPoint() = withRun { _, store ->
+        val width = 32
+        val height = 24
+        val baselinePixels = IntArray(width * height) { 0xFF141414.toInt() }
+        val candidatePixels = baselinePixels.clone().apply {
+            this[12 * width + 16] = 0xFFFFFFFF.toInt()
+        }
+        val baseline = writeTemporary(store, "point-baseline", width, height, baselinePixels)
+        val candidate = writeTemporary(store, "point-candidate", width, height, candidatePixels)
+        val alpha = writePlane(store, "point-alpha", width, height, FloatArray(width * height) { 1f })
+        val baselinePoints = FileBackedSuspiciousPointClassifier.coordinates(baseline, alpha, 0.007f, 0.001f)
+        val candidatePoints = FileBackedSuspiciousPointClassifier.coordinates(candidate, alpha, 0.007f, 0.001f)
+        assertTrue(baselinePoints.isEmpty())
+        assertEquals(setOf(12L * width + 16L), candidatePoints)
     }
 
     @Test fun selectionKeepsHandleAndNeverMaterializesTwoCandidates() = withRun { _, store ->

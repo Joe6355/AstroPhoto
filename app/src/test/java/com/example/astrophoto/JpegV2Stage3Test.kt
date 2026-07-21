@@ -60,6 +60,80 @@ class JpegV2Stage3Test {
         assertFalse(refined.binaryMask.contains(40, 48))
     }
 
+    @Test fun disconnectedUpperDarkBuildingsAreNotSky() {
+        val width = 120
+        val height = 80
+        val image = ArgbPixelImage(width, height, IntArray(width * height) { index ->
+            val x = index % width
+            gray(if (x in 30 until 92) 42 else 7)
+        })
+        for (y in 12..18) for (x in 8..15) image.pixels[y * width + x] = gray(245)
+        for (y in 28..34) for (x in 103..110) image.pixels[y * width + x] = gray(235)
+
+        val refined = refine(image)
+
+        assertTrue(refined.binaryMask.contains(60, 20))
+        assertFalse(refined.binaryMask.contains(12, 45))
+        assertFalse(refined.binaryMask.contains(106, 45))
+    }
+
+    @Test fun subtleColorBoundarySeparatesDarkForegroundFromSky() {
+        val width = 120
+        val height = 80
+        val image = ArgbPixelImage(width, height, IntArray(width * height) { index ->
+            val x = index % width
+            if (x in 30 until 92) rgb(12, 15, 18) else rgb(8, 9, 6)
+        })
+
+        val refined = refine(image)
+
+        assertTrue(refined.binaryMask.contains(60, 20))
+        assertFalse(refined.binaryMask.contains(12, 20))
+        assertFalse(refined.binaryMask.contains(106, 20))
+    }
+
+    @Test fun vignettedPrimarySkyRemainsContinuousToTheTop() {
+        val width = 120
+        val height = 80
+        val image = ArgbPixelImage(width, height, IntArray(width * height) { index ->
+            val x = index % width
+            val y = index / width
+            when {
+                x !in 30 until 92 -> rgb(5, 5, 3)
+                y < 20 -> rgb(6 + y / 4, 7 + y / 4, 8 + y / 4)
+                else -> rgb(13, 15, 18)
+            }
+        })
+
+        val refined = refine(image)
+
+        assertTrue(refined.binaryMask.contains(60, 4))
+        assertTrue(refined.binaryMask.contains(60, 40))
+        assertFalse(refined.binaryMask.contains(12, 4))
+    }
+
+    @Test fun disconnectedSkyComponentWithConfirmedStarIsRetained() {
+        val width = 120
+        val height = 80
+        val image = ArgbPixelImage(width, height, IntArray(width * height) { index ->
+            val x = index % width
+            gray(if (x in 30 until 92) 42 else 7)
+        })
+        val refined = SkyMaskRefiner().refine(
+            initialMask = SkyMask.full(width, height),
+            reference = image,
+            stars = listOf(star(105f, 30f)),
+            initialConfidence = 1f,
+            initialUsedFallback = false,
+            registrationConfidence = 1f
+        )
+
+        assertTrue(refined.binaryMask.contains(60, 20))
+        assertTrue(refined.binaryMask.contains(105, 30))
+        assertTrue(refined.binaryMask.contains(94, 30))
+        assertFalse(refined.binaryMask.contains(12, 45))
+    }
+
     @Test fun isolatedMaskIslandIsRemoved() {
         val initial = mask(80, 60) { x, y -> y < 28 || (x in 55..57 && y in 48..50) }
         val refined = refine(uniformImage(80, 60, 50), initial)
@@ -162,6 +236,12 @@ class JpegV2Stage3Test {
         val radius = MaskFeathering().adaptiveRadius(1440, 1920)
         assertTrue(radius in 2..8)
         assertEquals(6, radius)
+    }
+
+    @Test fun refinedMaskFeathersAcrossItsCoarseColorGridAtPhotoResolution() {
+        val refined = refine(uniformImage(1440, 1920, 35))
+
+        assertTrue(refined.diagnostics.featherRadius >= 48)
     }
 
     @Test fun invalidCoverageFallsBackToReference() {
@@ -357,6 +437,10 @@ class JpegV2Stage3Test {
         ArgbPixelImage(width, height, IntArray(width * height) { gray(value) })
 
     private fun imageOf(color: Int) = ArgbPixelImage(1, 1, intArrayOf(color))
+
+    private fun rgb(red: Int, green: Int, blue: Int): Int =
+        0xFF000000.toInt() or (red shl 16) or (green shl 8) or blue
+
 
     private fun mask(width: Int, height: Int, included: (Int, Int) -> Boolean) =
         SkyMask(width, height, BooleanArray(width * height) { index -> included(index % width, index / width) })

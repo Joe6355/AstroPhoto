@@ -8,18 +8,19 @@ class StarResultComparator {
     fun compare(
         baseline: ResultQualityMetrics,
         candidate: ResultQualityMetrics,
-        profile: AstroProcessingProfile
+        profile: AstroProcessingProfile,
+        matchedStarsValidated: Boolean = false
     ): QualityComparison {
         val hard = mutableListOf<String>()
         val warnings = mutableListOf<String>()
-        if (baseline.reliableStarCount >= MIN_STARS_FOR_RATIO) {
+        if (!matchedStarsValidated && baseline.reliableStarCount >= MIN_STARS_FOR_RATIO) {
             if (candidate.reliableStarCount < baseline.reliableStarCount * HARD_MIN_STAR_FRACTION) {
                 hard += "star_count_drop_gt_20_percent"
             } else if (candidate.reliableStarCount < baseline.reliableStarCount * WARNING_MIN_STAR_FRACTION) {
                 warnings += "star_count_reduced"
             }
         }
-        if (baseline.medianStarLocalContrast > 0f) {
+        if (!matchedStarsValidated && baseline.medianStarLocalContrast > 0f) {
             if (candidate.medianStarLocalContrast <
                 baseline.medianStarLocalContrast * HARD_MIN_CONTRAST_FRACTION
             ) {
@@ -30,20 +31,20 @@ class StarResultComparator {
                 warnings += "median_star_contrast_reduced"
             }
         }
-        if (baseline.medianStarWidth > 0f && candidate.medianStarWidth >
+        if (!matchedStarsValidated && baseline.medianStarWidth > 0f && candidate.medianStarWidth >
             baseline.medianStarWidth * HARD_MAX_WIDTH_FACTOR + WIDTH_ALLOWANCE
         ) {
             hard += "median_star_width_growth_gt_25_percent"
-        } else if (baseline.medianStarWidth > 0f && candidate.medianStarWidth >
+        } else if (!matchedStarsValidated && baseline.medianStarWidth > 0f && candidate.medianStarWidth >
             baseline.medianStarWidth * WARNING_MAX_WIDTH_FACTOR + WIDTH_ALLOWANCE
         ) {
             warnings += "median_star_width_increased"
         }
-        if (baseline.medianStarEllipticity > 0f && candidate.medianStarEllipticity >
+        if (!matchedStarsValidated && baseline.medianStarEllipticity > 0f && candidate.medianStarEllipticity >
             baseline.medianStarEllipticity * HARD_MAX_ELLIPTICITY_FACTOR + ELLIPTICITY_ALLOWANCE
         ) {
             hard += "median_star_ellipticity_growth_gt_25_percent"
-        } else if (candidate.medianStarEllipticity >
+        } else if (!matchedStarsValidated && candidate.medianStarEllipticity >
             baseline.medianStarEllipticity * WARNING_MAX_ELLIPTICITY_FACTOR + ELLIPTICITY_ALLOWANCE
         ) {
             warnings += "median_star_ellipticity_increased"

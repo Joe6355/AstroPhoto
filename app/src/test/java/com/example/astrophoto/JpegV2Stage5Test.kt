@@ -109,6 +109,24 @@ class JpegV2Stage5Test {
         assertHard(starComparator.compare(metrics(), metrics().copy(medianStarWidth = 3.0f), cleanProfile), "width")
     }
 
+    @Test fun matchedStarValidationSupersedesUnmatchedGlobalPopulationMetrics() {
+        val result = starComparator.compare(
+            metrics(),
+            metrics().copy(
+                reliableStarCount = 2,
+                medianStarLocalContrast = 0.02f,
+                medianStarWidth = 3.0f,
+                medianStarEllipticity = 0.30f
+            ),
+            cleanProfile,
+            matchedStarsValidated = true
+        )
+
+        assertFalse(result.hardFailureReasons.any {
+            "star_count" in it || "contrast" in it || "width" in it || "ellipticity" in it
+        })
+    }
+
     @Test fun starComparatorRejectsExcessiveEllipticity() {
         assertHard(starComparator.compare(metrics(), metrics().copy(medianStarEllipticity = 0.30f), cleanProfile), "ellipticity")
     }

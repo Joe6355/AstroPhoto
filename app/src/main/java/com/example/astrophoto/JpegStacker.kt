@@ -2276,14 +2276,15 @@ class JpegStacker(private val context: Context) {
                         warnings = warnings.distinct(),
                         processedAtMillis = now
                     )
-                }.onFailure { error ->
+                }.getOrElse { error ->
                     Log.e(
                         POST_COMPLETION_TAG,
                         "post_completion.session_info.failed run=${journalRunId?.take(8).orEmpty()} " +
                             "output=$fileName exception=${error::class.java.simpleName}",
                         error
                     )
-                }.isSuccess
+                    false
+                }
                 if (infoUpdated) {
                     Log.i(
                         POST_COMPLETION_TAG,
@@ -2531,7 +2532,8 @@ class JpegStacker(private val context: Context) {
         val finalBinarySkyMask = SkyMask(targetWidth, targetHeight, finalSkyPixels)
         val feathering = MaskFeathering().feather(
             initialRefinedMask.binaryMask,
-            protection.mask
+            protection.mask,
+            radiusOverride = initialRefinedMask.diagnostics.featherRadius
         )
         val featherWriter = candidateStore.createFloatPlaneWriter(
             "feathered-sky",
@@ -4136,7 +4138,7 @@ class JpegStacker(private val context: Context) {
         fallbackReason: String,
         warnings: List<String>,
         processedAtMillis: Long
-    ) {
+    ): Boolean {
         val processedAt = SimpleDateFormat(
             "yyyy-MM-dd HH:mm:ss",
             Locale.getDefault()
@@ -4168,17 +4170,18 @@ class JpegStacker(private val context: Context) {
             appendLine("outputFile: Processed/$fileName")
             appendLine("processedAt: $processedAt")
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             appendMediaStoreSessionInfo(session, block)
         } else {
             appendLegacySessionInfo(session, block)
+            true
         }
     }
 
     private fun appendMediaStoreSessionInfo(
         session: SessionSummary,
         block: String
-    ) {
+    ): Boolean {
         val resolver = context.contentResolver
         val collection = MediaStore.Files.getContentUri("external")
         val relativePath =
@@ -4201,39 +4204,18 @@ class JpegStacker(private val context: Context) {
         val existingContent = existingUri?.let { uri ->
             resolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
         }.orEmpty()
-        var inserted = false
-        val uri = existingUri ?: resolver.insert(
-            collection,
-            ContentValues().apply {
-                put(MediaStore.Files.FileColumns.DISPLAY_NAME, "session_info.txt")
-                put(MediaStore.Files.FileColumns.MIME_TYPE, "text/plain")
-                put(MediaStore.Files.FileColumns.RELATIVE_PATH, relativePath)
-                put(MediaStore.Files.FileColumns.IS_PENDING, 1)
-            }
-        )?.also { inserted = true } ?: error("Не удалось обновить session_info.txt")
-
-        try {
-            val base = existingContent.ifBlank {
-                "sessionName: ${session.sessionName}\n"
-            }
-            resolver.openOutputStream(uri, "wt")?.bufferedWriter()?.use { writer ->
-                writer.write(base.trimEnd())
-                writer.write(block)
-            } ?: error("Не удалось обновить session_info.txt")
-            if (inserted) {
-                resolver.update(
-                    uri,
-                    ContentValues().apply {
-                        put(MediaStore.Files.FileColumns.IS_PENDING, 0)
-                    },
-                    null,
-                    null
-                )
-            }
-        } catch (error: Exception) {
-            if (inserted) resolver.delete(uri, null, null)
-            throw error
+        // Scoped storage does not allow creating a generic text file below Pictures via
+        // MediaStore.Files. Imported sessions may legitimately have no session_info.txt;
+        // the processing report remains the authoritative metadata artifact in that case.
+        val uri = existingUri ?: return false
+        val base = existingContent.ifBlank {
+            "sessionName: ${session.sessionName}\n"
         }
+        resolver.openOutputStream(uri, "wt")?.bufferedWriter()?.use { writer ->
+            writer.write(base.trimEnd())
+            writer.write(block)
+        } ?: error("Не удалось обновить session_info.txt")
+        return true
     }
 
     @Suppress("DEPRECATION")

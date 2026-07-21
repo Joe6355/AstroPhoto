@@ -30,11 +30,13 @@ class SkyMaskRefiner(
         val initialRatio = initial.count { it }.toFloat() / total
         val luminance = IntArray(total) { pixelLuminance(reference.pixels[it]) }
         val starSuppression = starSuppressionMask(width, height, stars)
+        val colorConnectedSky = retainColorContinuousSky(initial, reference, stars)
+        val colorDisconnectedPixels = initial.indices.count { initial[it] && !colorConnectedSky[it] }
         val edges = detectStrongEdges(luminance, width, height)
         val borderStructures = detectBorderStructures(edges, width, height)
         var edgeRejected = 0
         val candidate = BooleanArray(total) { index ->
-            if (!initial[index]) return@BooleanArray false
+            if (!initial[index] || !colorConnectedSky[index]) return@BooleanArray false
             val color = reference.pixels[index]
             val saturatedObject = luminance[index] >= BRIGHT_OBJECT_LUMINANCE &&
                 maxOf(color ushr 16 and 0xFF, color ushr 8 and 0xFF, color and 0xFF) >= 248
@@ -43,7 +45,12 @@ class SkyMaskRefiner(
             if (rejected && (rejectEdge || borderStructures[index])) edgeRejected++
             !rejected
         }
-        val connected = retainPlausibleUpperComponents(candidate, width, height)
+        val connected = retainPlausibleUpperComponents(
+            candidate,
+            width,
+            height,
+            starSuppression
+        )
         var removedIslands = 0
         candidate.indices.forEach { if (candidate[it] && !connected[it]) removedIslands++ }
         val holeResult = fillSmallHoles(connected, edges, luminance, width, height)
@@ -68,11 +75,16 @@ class SkyMaskRefiner(
             confidence = 0f
         }
         val binary = SkyMask(width, height, refinedPixels)
-        val feathered = feathering.feather(binary)
+        // Color continuity is evaluated on a coarse grid. Feather across one grid cell so
+        // those implementation-sized blocks can never become visible in the photograph.
+        val feathered = feathering.feather(
+            binary,
+            radiusOverride = colorBoundaryFeatherRadius(width, height)
+        )
         val diagnostics = MaskDiagnostics(
             initialSkyRatio = initialRatio,
             refinedSkyRatio = refinedRatio,
-            removedIslandPixels = removedIslands,
+            removedIslandPixels = removedIslands + colorDisconnectedPixels,
             filledHolePixels = holeResult.filledPixels,
             edgeRejectedPixels = edgeRejected,
             borderStructurePixels = borderStructures.count { it },
@@ -87,6 +99,165 @@ class SkyMaskRefiner(
             diagnostics = diagnostics
         )
     }
+
+    private data class ColorBlock(
+        val eligible: Boolean,
+        val meanRed: Float,
+        val meanGreen: Float,
+        val meanBlue: Float,
+        val starHits: Int
+    )
+
+    private fun retainColorContinuousSky(
+        initial: BooleanArray,
+        reference: ArgbPixelImage,
+        stars: List<DetectedStar>
+    ): BooleanArray {
+        val width = reference.width
+        val height = reference.height
+        val blockSize = max(4, minOf(width, height) / COLOR_BLOCKS_SHORT_SIDE)
+        val columns = (width + blockSize - 1) / blockSize
+        val rows = (height + blockSize - 1) / blockSize
+        val starHits = IntArray(columns * rows)
+        stars.forEach { star ->
+            val blockX = (star.x.roundToInt().coerceIn(0, width - 1) / blockSize)
+                .coerceIn(0, columns - 1)
+            val blockY = (star.y.roundToInt().coerceIn(0, height - 1) / blockSize)
+                .coerceIn(0, rows - 1)
+            starHits[blockY * columns + blockX]++
+        }
+        val blocks = Array(columns * rows) { blockIndex ->
+            val blockX = blockIndex % columns
+            val blockY = blockIndex / columns
+            val left = blockX * blockSize
+            val top = blockY * blockSize
+            val right = minOf(width, left + blockSize)
+            val bottom = minOf(height, top + blockSize)
+            var included = 0
+            var red = 0L
+            var green = 0L
+            var blue = 0L
+            for (y in top until bottom) for (x in left until right) {
+                if (!initial[y * width + x]) continue
+                val color = reference.pixels[y * width + x]
+                red += color ushr 16 and 0xFF
+                green += color ushr 8 and 0xFF
+                blue += color and 0xFF
+                included++
+            }
+            val pixels = (right - left) * (bottom - top)
+            ColorBlock(
+                eligible = included * 2 >= pixels,
+                meanRed = red.toFloat() / included.coerceAtLeast(1),
+                meanGreen = green.toFloat() / included.coerceAtLeast(1),
+                meanBlue = blue.toFloat() / included.coerceAtLeast(1),
+                starHits = starHits[blockIndex]
+            )
+        }
+        val visited = BooleanArray(blocks.size)
+        val components = mutableListOf<List<Int>>()
+        val componentStarHits = mutableListOf<Int>()
+        blocks.indices.forEach { start ->
+            if (!blocks[start].eligible || visited[start]) return@forEach
+            val queue = IntArray(blocks.size)
+            val component = mutableListOf<Int>()
+            var head = 0
+            var tail = 0
+            var supportedStars = 0
+            queue[tail++] = start
+            visited[start] = true
+            while (head < tail) {
+                val index = queue[head++]
+                component += index
+                supportedStars += blocks[index].starHits
+                val x = index % columns
+                val y = index / columns
+                fun visit(nextX: Int, nextY: Int) {
+                    if (nextX !in 0 until columns || nextY !in 0 until rows) return
+                    val next = nextY * columns + nextX
+                    if (visited[next] || !blocks[next].eligible ||
+                        !hasContinuousSkyColor(blocks[index], blocks[next])
+                    ) return
+                    visited[next] = true
+                    queue[tail++] = next
+                }
+                visit(x - 1, y)
+                visit(x + 1, y)
+                visit(x, y - 1)
+                visit(x, y + 1)
+            }
+            components += component
+            componentStarHits += supportedStars
+        }
+        if (components.isEmpty()) return initial.copyOf()
+        val best = components.indices.maxByOrNull { component ->
+            components[component].size * 3L + componentStarHits[component] * 6L
+        } ?: 0
+        val minimumComponent = max(2, blocks.size / COLOR_COMPONENT_AREA_DIVISOR)
+        val keep = BooleanArray(blocks.size)
+        val primary = BooleanArray(blocks.size)
+        components[best].forEach { primary[it] = true }
+        components.forEachIndexed { componentIndex, component ->
+            if (componentIndex == best ||
+                (componentStarHits[componentIndex] > 0 && component.size >= minimumComponent)
+            ) component.forEach { keep[it] = true }
+        }
+        completePrimarySkyUpward(keep, primary, blocks, columns, rows)
+        val result = BooleanArray(initial.size) { index ->
+            if (!initial[index]) return@BooleanArray false
+            val x = index % width
+            val y = index / width
+            keep[(y / blockSize) * columns + x / blockSize]
+        }
+        stars.forEach { star ->
+            val centerX = star.x.roundToInt().coerceIn(0, width - 1)
+            val centerY = star.y.roundToInt().coerceIn(0, height - 1)
+            val centerBlock = (centerY / blockSize) * columns + centerX / blockSize
+            if (!keep[centerBlock]) return@forEach
+            val radius = ceil(maxOf(3f, star.width * 2.1f)).toInt() + COLOR_STAR_MARGIN
+            for (dy in -radius..radius) for (dx in -radius..radius) {
+                if (dx * dx + dy * dy > radius * radius) continue
+                val x = centerX + dx
+                val y = centerY + dy
+                if (x in 0 until width && y in 0 until height && initial[y * width + x]) {
+                    result[y * width + x] = true
+                }
+            }
+        }
+        return result
+    }
+
+    private fun completePrimarySkyUpward(
+        keep: BooleanArray,
+        primary: BooleanArray,
+        blocks: Array<ColorBlock>,
+        columns: Int,
+        rows: Int
+    ) {
+        for (x in 0 until columns) {
+            val firstPrimaryRow = (0 until rows).firstOrNull { y -> primary[y * columns + x] }
+                ?: continue
+            for (y in firstPrimaryRow - 1 downTo 0) {
+                val index = y * columns + x
+                if (!blocks[index].eligible) break
+                keep[index] = true
+            }
+        }
+    }
+
+    private fun hasContinuousSkyColor(first: ColorBlock, second: ColorBlock): Boolean {
+        val red = first.meanRed - second.meanRed
+        val green = first.meanGreen - second.meanGreen
+        val blue = first.meanBlue - second.meanBlue
+        return red * red + green * green + blue * blue <=
+            MAX_NEIGHBOR_COLOR_DISTANCE * MAX_NEIGHBOR_COLOR_DISTANCE
+    }
+
+    private fun colorBoundaryFeatherRadius(width: Int, height: Int): Int =
+        max(
+            feathering.adaptiveRadius(width, height),
+            minOf(width, height) / COLOR_BLOCKS_SHORT_SIDE
+        )
 
     private data class HoleFillResult(val mask: BooleanArray, val filledPixels: Int)
 
@@ -144,11 +315,14 @@ class SkyMaskRefiner(
     private fun retainPlausibleUpperComponents(
         source: BooleanArray,
         width: Int,
-        height: Int
+        height: Int,
+        starSupport: BooleanArray
     ): BooleanArray {
+        require(starSupport.size == source.size)
         val labels = IntArray(source.size) { -1 }
         val sizes = mutableListOf<Int>()
         val upperHits = mutableListOf<Int>()
+        val starHits = mutableListOf<Int>()
         val queue = IntArray(source.size)
         val upperLimit = max(1, (height * UPPER_CONNECTIVITY_LIMIT).roundToInt())
         var label = 0
@@ -160,12 +334,14 @@ class SkyMaskRefiner(
             labels[start] = label
             var size = 0
             var hits = 0
+            var supportedStars = 0
             while (head < tail) {
                 val index = queue[head++]
                 size++
                 val x = index % width
                 val y = index / width
                 if (y <= upperLimit) hits++
+                if (starSupport[index]) supportedStars++
                 fun visit(next: Int) {
                     if (source[next] && labels[next] < 0) {
                         labels[next] = label
@@ -179,6 +355,7 @@ class SkyMaskRefiner(
             }
             sizes += size
             upperHits += hits
+            starHits += supportedStars
             label++
         }
         if (sizes.isEmpty()) return BooleanArray(source.size)
@@ -187,7 +364,8 @@ class SkyMaskRefiner(
         val best = bestCandidates.maxByOrNull { sizes[it] * 3L + upperHits[it] * 2L } ?: 0
         val minimumArea = max(MIN_COMPONENT_PIXELS, source.size / COMPONENT_AREA_DIVISOR)
         val keep = BooleanArray(sizes.size) { component ->
-            component == best || (upperHits[component] > 0 && sizes[component] >= minimumArea)
+            component == best ||
+                (starHits[component] > 0 && sizes[component] >= minimumArea)
         }
         return BooleanArray(source.size) { index -> labels[index] >= 0 && keep[labels[index]] }
     }
@@ -283,5 +461,9 @@ class SkyMaskRefiner(
         private const val HOLE_AREA_DIVISOR = 1500
         private const val MIN_REFINED_CONFIDENCE = 0.24f
         private const val FALLBACK_CONFIDENCE_CEILING = 0.30f
+        private const val COLOR_BLOCKS_SHORT_SIDE = 28
+        private const val COLOR_COMPONENT_AREA_DIVISOR = 500
+        private const val MAX_NEIGHBOR_COLOR_DISTANCE = 1.5f
+        private const val COLOR_STAR_MARGIN = 10
     }
 }

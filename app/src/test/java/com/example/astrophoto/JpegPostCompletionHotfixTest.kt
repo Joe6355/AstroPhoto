@@ -227,6 +227,16 @@ class JpegPostCompletionHotfixTest {
         assertTrue(raw.contains("onStackCompleted()"))
     }
 
+    @Test fun missingImportedSessionInfoDoesNotAttemptForbiddenPicturesInsert() {
+        val source = source("app/src/main/java/com/example/astrophoto/JpegStacker.kt")
+        val helper = source.substring(
+            source.indexOf("private fun appendMediaStoreSessionInfo("),
+            source.indexOf("private fun appendLegacySessionInfo(")
+        )
+        assertTrue(helper.contains("val uri = existingUri ?: return false"))
+        assertFalse(helper.contains("resolver.insert("))
+    }
+
     private fun result(
         filePath: String? = null,
         contentUri: String? = null,

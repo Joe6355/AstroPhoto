@@ -6,7 +6,10 @@ import com.example.astrophoto.processing.jpeg.v2.registration.FullResolutionStar
 import com.example.astrophoto.processing.jpeg.v2.registration.FullResolutionStarPatchSelector
 import com.example.astrophoto.processing.jpeg.v2.registration.LocalBackgroundEstimator
 import com.example.astrophoto.processing.jpeg.v2.registration.StellarCentroidFrameRefiner
+import com.example.astrophoto.processing.jpeg.v2.registration.StellarCentroidMatch
+import com.example.astrophoto.processing.jpeg.v2.registration.StellarCentroidMeasurement
 import com.example.astrophoto.processing.jpeg.v2.registration.TemporalMotionCluster
+import com.example.astrophoto.processing.jpeg.v2.registration.preferStrongCentroidMatches
 import com.example.astrophoto.processing.jpeg.v2.sampling.IntArrayPixelSource
 import java.nio.file.Files
 import java.nio.file.Path
@@ -196,6 +199,32 @@ class JpegV2Stage12Test {
         assertTrue(selection.rejected.none { it.reason == "patch_budget_exceeded" })
     }
 
+    @Test fun scenario50MarginalPhoneJpegStarIsMeasuredWithoutAcceptingNoise() {
+        val marginal = (6..24).asSequence().mapNotNull { amplitudePercent ->
+            detector().detect(
+                render(
+                    listOf(Star(72.2f, 61.35f, amplitude = amplitudePercent / 100f)),
+                    noise = 0.02f
+                ),
+                72.2f,
+                61.35f,
+                3f
+            ).measurement
+        }.firstOrNull { it.snr in 4.0f..4.5f }
+        assertTrue("No synthetic stellar PSF in the Android decoder margin", marginal != null)
+        assertFalse(detector().detect(render(emptyList(), noise = 0.02f), 72.2f, 61.35f, 3f).accepted)
+    }
+
+    @Test fun scenario51MarginalMatchCannotDegradeThreeStrongSectors() {
+        val matches = listOf(match(12f, 0), match(10f, 1), match(8f, 2), match(4.2f, 3))
+        assertEquals(matches.take(3), preferStrongCentroidMatches(matches))
+    }
+
+    @Test fun scenario52MarginalThirdMatchRemainsAvailable() {
+        val matches = listOf(match(12f, 0), match(10f, 1), match(4.2f, 2))
+        assertEquals(matches, preferStrongCentroidMatches(matches))
+    }
+
     private fun assertCentroid(x: Float, y: Float, predictionX: Float = x, predictionY: Float = y) {
         val detection = detector().detect(render(listOf(Star(x, y))), predictionX, predictionY, 4f)
         assertTrue(detection.toString(), detection.accepted)
@@ -294,6 +323,46 @@ class JpegV2Stage12Test {
     }
 
     private fun detector() = FullResolutionStarCentroidDetector()
+
+    private fun match(snr: Float, sector: Int): StellarCentroidMatch {
+        val measurement = StellarCentroidMeasurement(
+            x = 40f + sector,
+            y = 50f + sector,
+            background = 0.08f,
+            backgroundUncertainty = 0.01f,
+            peak = 0.25f,
+            flux = 1f,
+            fwhmX = 2f,
+            fwhmY = 2f,
+            ellipticity = 0.1f,
+            snr = snr,
+            saturationRatio = 0f,
+            fitResidual = 0.1f,
+            confidence = 0.8f
+        )
+        return StellarCentroidMatch(
+            patch = FullResolutionStarPatch(
+                measurement.x,
+                measurement.y,
+                0.8f,
+                0.2f,
+                2f,
+                0.1f,
+                sector,
+                TemporalMotionCluster.COHERENT_MOVING_SKY,
+                1f
+            ),
+            reference = measurement,
+            candidate = measurement,
+            dx = 1f,
+            dy = 1f,
+            residualToPrediction = 0f,
+            accepted = true,
+            rejectionReason = null,
+            confidence = 0.8f,
+            weight = 1f
+        )
+    }
 
     private fun assertProductionOrder() {
         val source = jpegStackerSource()

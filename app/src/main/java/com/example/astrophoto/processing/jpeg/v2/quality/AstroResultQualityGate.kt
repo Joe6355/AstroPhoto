@@ -69,7 +69,15 @@ class AstroResultQualityGate(
         cleanStack,
         buildList {
             add(foregroundComparator.compare(reference.metrics, cleanStack.metrics))
-            add(starComparator.compare(reference.metrics, cleanStack.metrics, profile))
+            add(
+                starComparator.compare(
+                    reference.metrics,
+                    cleanStack.metrics,
+                    profile,
+                    matchedStarsValidated =
+                        evidence?.referenceStarRetention?.accepted == true
+                )
+            )
             evidence?.let {
                 add(QualityComparison(it.hardFailureReasons, it.warningReasons))
             }
@@ -85,7 +93,15 @@ class AstroResultQualityGate(
         cleanStack.metrics,
         buildList {
             add(foregroundComparator.compare(reference.metrics, cleanStack.metrics))
-            add(starComparator.compare(reference.metrics, cleanStack.metrics, profile))
+            add(
+                starComparator.compare(
+                    reference.metrics,
+                    cleanStack.metrics,
+                    profile,
+                    matchedStarsValidated =
+                        evidence?.referenceStarRetention?.accepted == true
+                )
+            )
             evidence?.let { add(QualityComparison(it.hardFailureReasons, it.warningReasons)) }
         }
     )
