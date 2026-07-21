@@ -257,6 +257,30 @@ class JpegV2Stage4Test {
         assertEquals(0, result.diagnostics.foregroundDifferenceOutsideMask)
     }
 
+    @Test fun wideForegroundFeatherDoesNotCreateAVisibleDarkSkyBand() {
+        val image = starScene(64, 48)
+        val alpha = AlphaMask(64, 48, FloatArray(64 * 48) { index ->
+            val y = index / 64
+            when {
+                y < 24 -> 1f
+                y >= 40 -> 0f
+                else -> (40 - y) / 16f
+            }
+        })
+        val result = process(
+            AstroProcessingProfile.DEEP_SKY,
+            image,
+            alpha,
+            image,
+            stars = listOf(star(32, 20))
+        )
+
+        val interiorBackground = channel(result.image.pixelAt(10, 12), 8)
+        val featherBackground = channel(result.image.pixelAt(10, 30), 8)
+        assertTrue(abs(interiorBackground - featherBackground) <= 2)
+        assertTrue(localContrast(result.image, 32, 20) > localContrast(image, 32, 20))
+    }
+
     @Test fun buildingsAreNotStretched() {
         val sky = starScene(64, 48)
         val reference = splitScene(64, 48, rgb(20, 20, 20), rgb(110, 60, 30))

@@ -139,6 +139,13 @@ class AdaptivePresetProcessor(
             after = statistics.calculate(safeSky, effectiveSkyAlpha, alignedStackStars)
         }
         stageStarted = System.nanoTime()
+        val backgroundMatch = SkyBackgroundToneMatcher.calculate(before, after)
+        if (backgroundMatch.linearOffset > 0f) {
+            safeSky = matchBackground(safeSky, effectiveSkyAlpha, backgroundMatch)
+            after = statistics.calculate(safeSky, effectiveSkyAlpha, alignedStackStars)
+        }
+        stageDurations["background_matching"] = elapsed(stageStarted)
+        stageStarted = System.nanoTime()
         val composite = composer.compose(
             stackedSky = safeSky,
             reference = referenceForeground,
@@ -225,6 +232,19 @@ class AdaptivePresetProcessor(
             )
         }
         return ArgbPixelImage(original.width, original.height, output)
+    }
+
+    private fun matchBackground(
+        image: ArgbPixelImage,
+        mask: AlphaMask,
+        match: SkyBackgroundToneMatch
+    ): ArgbPixelImage {
+        val output = image.pixels.copyOf()
+        output.indices.forEach { index ->
+            val alpha = mask.alphaAt(index % image.width, index / image.width)
+            output[index] = SkyBackgroundToneMatcher.apply(output[index], alpha, match)
+        }
+        return ArgbPixelImage(image.width, image.height, output)
     }
 
     companion object {

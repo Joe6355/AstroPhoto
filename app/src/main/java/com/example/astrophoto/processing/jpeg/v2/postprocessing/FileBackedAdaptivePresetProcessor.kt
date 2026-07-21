@@ -195,6 +195,25 @@ class FileBackedAdaptivePresetProcessor(
         }
 
         stageStarted = System.nanoTime()
+        val backgroundMatch = SkyBackgroundToneMatcher.calculate(before, after)
+        if (backgroundMatch.linearOffset > 0f) {
+            val matched = transform(
+                "background-match",
+                workingImage,
+                effectiveSkyAlpha,
+                store,
+                memoryBudget,
+                memoryTracker
+            ) { x, y, color, _, alpha ->
+                SkyBackgroundToneMatcher.apply(color, alpha.alphaAt(x, y), backgroundMatch)
+            }
+            store.deleteTemporary(workingImage)
+            workingImage = matched
+            after = fileStatistics(workingImage)
+        }
+        durations["background_matching"] = elapsed(stageStarted)
+
+        stageStarted = System.nanoTime()
         val processedWriter = store.createWriter(
             ResultCandidateType.PROCESSED,
             stackedSky.width,
