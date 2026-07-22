@@ -3,6 +3,27 @@ package com.example.astrophoto.ui.theme
 import androidx.compose.ui.graphics.Color
 
 object AstroColors {
+    val LightBackground = Color(0xFFF5F7FC)
+    val LightSurface = Color(0xFFFFFFFF)
+    val LightSurfaceElevated = Color(0xFFE9EDF6)
+    val LightPrimary = Color(0xFF5B47A8)
+    val LightOnPrimary = Color(0xFFFFFFFF)
+    val LightPrimaryContainer = Color(0xFFE8E0FF)
+    val LightOnPrimaryContainer = Color(0xFF21134B)
+    val LightSecondary = Color(0xFF006875)
+    val LightOnSecondary = Color(0xFFFFFFFF)
+    val LightSecondaryContainer = Color(0xFFA6EEFA)
+    val LightOnSecondaryContainer = Color(0xFF001F24)
+    val LightSuccess = Color(0xFF28633F)
+    val LightOnSuccess = Color(0xFFFFFFFF)
+    val LightError = Color(0xFFBA1A1A)
+    val LightOnError = Color(0xFFFFFFFF)
+    val LightTextPrimary = Color(0xFF171A21)
+    val LightTextSecondary = Color(0xFF515866)
+    val LightOutline = Color(0xFF747984)
+    val LightOutlineSubtle = Color(0xFFC4C7D0)
+    val LightScrim = Color(0x66000000)
+
     val Background = Color(0xFF060A12)
     val BackgroundVeryDark = Color(0xFF020306)
     val Surface = Color(0xFF0D1421)

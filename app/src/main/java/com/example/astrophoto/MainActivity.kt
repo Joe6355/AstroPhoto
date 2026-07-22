@@ -203,7 +203,7 @@ private fun AstroPhotoApp(initialProcessingFailure: ProcessingFailureSummary? = 
     }
 
     AstroPhotoTheme(
-        darkTheme = true,
+        darkTheme = appSettings.themeMode != AppThemeMode.LIGHT.name,
         dynamicColor = false,
         veryDark = appSettings.themeMode == AppThemeMode.VERY_DARK.name
     ) {
@@ -224,6 +224,7 @@ private fun AstroPhotoApp(initialProcessingFailure: ProcessingFailureSummary? = 
                     onOpenCamera = { navigateTo(AppScreen.Camera) },
                     onOpenSessions = { navigateTo(AppScreen.Sessions) },
                     onOpenSettings = {
+                        appSettings = appSettingsStore.load()
                         settingsReturnScreen = AppScreen.Diagnostics
                         navigateTo(AppScreen.Settings)
                     },
@@ -294,7 +295,7 @@ private fun AstroPhotoApp(initialProcessingFailure: ProcessingFailureSummary? = 
                     settings = appSettings,
                     onSettingsChanged = { updated ->
                         appSettings = updated
-                        appSettingsStore.save(updated)
+                        appSettingsStore.saveAppSettings(updated)
                     },
                     onReset = {
                         appSettings = appSettingsStore.reset()
@@ -337,6 +338,7 @@ private fun AstroPhotoApp(initialProcessingFailure: ProcessingFailureSummary? = 
                         navigateTo(AppScreen.Help)
                     },
                     onOpenSettings = {
+                        appSettings = appSettingsStore.load()
                         settingsReturnScreen = AppScreen.About
                         navigateTo(AppScreen.Settings)
                     },
@@ -792,8 +794,13 @@ private fun CameraScreen(
     var seriesAction by remember { mutableStateOf("") }
     var seriesMessage by remember { mutableStateOf<String?>(null) }
     var seriesJob by remember { mutableStateOf<Job?>(null) }
-    var darkFramesFormat by remember { mutableStateOf(UiCaptureType.JPEG) }
-    var darkFramesCount by remember { mutableStateOf(3) }
+    var darkFramesFormat by remember {
+        mutableStateOf(
+            runCatching { UiCaptureType.valueOf(savedSettings.darkFramesFormat) }
+                .getOrDefault(UiCaptureType.JPEG)
+        )
+    }
+    var darkFramesCount by remember { mutableStateOf(savedSettings.darkFramesCount) }
     var darkFramesRunning by remember { mutableStateOf(false) }
     var darkFramesStopRequested by remember { mutableStateOf(false) }
     var darkFramesCurrent by remember { mutableStateOf(0) }
@@ -816,11 +823,7 @@ private fun CameraScreen(
             val thirtySeconds = 30_000_000_000L
             if (range.contains(thirtySeconds)) thirtySeconds else range.last
         } ?: 30_000_000_000L
-        seriesFormat = if (cameraCapabilities.supportsRawCapture) {
-            UiCaptureType.RAW
-        } else {
-            UiCaptureType.JPEG
-        }
+        seriesFormat = UiCaptureType.JPEG
         captureMode = UiCaptureMode.SERIES
         seriesFrameCount = 10
         seriesDelaySeconds = 1
@@ -974,6 +977,8 @@ private fun CameraScreen(
         applyLongExposureToPreview,
         singleFormat,
         seriesFormat,
+        darkFramesFormat,
+        darkFramesCount,
         captureMode,
         seriesFrameCount,
         seriesDelaySeconds,
@@ -987,7 +992,7 @@ private fun CameraScreen(
         jpegQuality,
         shootingGoal
     ) {
-        settingsStore.save(
+        settingsStore.saveCameraSettings(
             SavedCameraSettings(
                 exposureTimeNs = exposureTimeNs,
                 iso = iso,
@@ -996,6 +1001,8 @@ private fun CameraScreen(
                 applyLongExposureToPreview = applyLongExposureToPreview,
                 singleFormat = singleFormat.name,
                 seriesFormat = seriesFormat.name,
+                darkFramesFormat = darkFramesFormat.name,
+                darkFramesCount = darkFramesCount,
                 captureMode = captureMode.name,
                 seriesFrameCount = seriesFrameCount,
                 seriesDelaySeconds = seriesDelaySeconds,
@@ -2429,7 +2436,7 @@ private fun ManualControlsPanel(
                 modifier = Modifier.padding(top = 6.dp)
             )
             Text(
-                text = "Astro Mode: RAW, ∞, длинная выдержка, серия кадров",
+                text = "Astro Mode: JPEG, ∞, длинная выдержка, серия кадров",
                 modifier = Modifier.padding(top = 4.dp),
                 style = MaterialTheme.typography.bodyMedium,
                 color = AstroColors.TextSecondary

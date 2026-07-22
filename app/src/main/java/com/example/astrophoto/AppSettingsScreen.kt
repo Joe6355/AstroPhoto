@@ -142,14 +142,18 @@ fun AppSettingsScreen(
 
             item {
                 AstroExpandableSection(title = "Интерфейс") {
-                    Text("Ночная тема", style = MaterialTheme.typography.bodyLarge)
+                    Text("Тема приложения", style = MaterialTheme.typography.bodyLarge)
                     AstroSegmentedControl(
                         options = AppThemeMode.entries,
                         selected = AppThemeMode.entries.firstOrNull {
                             it.name == settings.themeMode
                         } ?: AppThemeMode.DARK,
                         label = {
-                            if (it == AppThemeMode.DARK) "Тёмная" else "Очень тёмная"
+                            when (it) {
+                                AppThemeMode.LIGHT -> "Светлая"
+                                AppThemeMode.DARK -> "Тёмная"
+                                AppThemeMode.VERY_DARK -> "Очень тёмная"
+                            }
                         },
                         onSelected = {
                             onSettingsChanged(settings.copy(themeMode = it.name))

@@ -3,6 +3,7 @@ package com.example.astrophoto
 import android.content.Context
 
 enum class AppThemeMode {
+    LIGHT,
     DARK,
     VERY_DARK
 }
@@ -15,6 +16,8 @@ data class SavedCameraSettings(
     val applyLongExposureToPreview: Boolean = false,
     val singleFormat: String = "JPEG",
     val seriesFormat: String = "JPEG",
+    val darkFramesFormat: String = "JPEG",
+    val darkFramesCount: Int = 3,
     val captureMode: String = "SINGLE",
     val seriesFrameCount: Int = 3,
     val seriesDelaySeconds: Int = 0,
@@ -51,6 +54,11 @@ class CameraSettingsStore(context: Context) {
             applyLongExposureToPreview = legacyApplyLongExposure,
             singleFormat = canonicalCaptureFormat(preferences.getString("single_format", null)),
             seriesFormat = canonicalCaptureFormat(preferences.getString("series_format", null)),
+            darkFramesFormat = canonicalCaptureFormat(
+                preferences.getString("dark_frames_format", null)
+            ),
+            darkFramesCount = preferences.getInt("dark_frames_count", 3)
+                .takeIf { it in DARK_FRAME_COUNT_VALUES } ?: 3,
             captureMode = preferences.getString("capture_mode", "SINGLE") ?: "SINGLE",
             seriesFrameCount = preferences.getInt("series_frame_count", 3),
             seriesDelaySeconds = preferences.getInt("series_delay_seconds", 0),
@@ -96,6 +104,11 @@ class CameraSettingsStore(context: Context) {
             )
             .putString("single_format", settings.singleFormat)
             .putString("series_format", settings.seriesFormat)
+            .putString("dark_frames_format", settings.darkFramesFormat)
+            .putInt(
+                "dark_frames_count",
+                settings.darkFramesCount.takeIf { it in DARK_FRAME_COUNT_VALUES } ?: 3
+            )
             .putString("capture_mode", settings.captureMode)
             .putInt("series_frame_count", settings.seriesFrameCount)
             .putInt("series_delay_seconds", settings.seriesDelaySeconds)
@@ -120,6 +133,14 @@ class CameraSettingsStore(context: Context) {
             .apply()
     }
 
+    fun saveAppSettings(settings: SavedCameraSettings) {
+        save(mergeAppSettings(load(), settings))
+    }
+
+    fun saveCameraSettings(settings: SavedCameraSettings) {
+        save(mergeCameraSettings(load(), settings))
+    }
+
     fun reset(): SavedCameraSettings {
         preferences.edit().clear().apply()
         return SavedCameraSettings()
@@ -137,8 +158,32 @@ class CameraSettingsStore(context: Context) {
 
     companion object {
         val JPEG_QUALITY_VALUES = setOf(85, 92, 100)
+        val DARK_FRAME_COUNT_VALUES = setOf(3, 5, 10, 20)
     }
 }
+
+internal fun mergeAppSettings(
+    persisted: SavedCameraSettings,
+    updated: SavedCameraSettings
+): SavedCameraSettings = persisted.copy(
+    applyLongExposureToPreview = updated.applyLongExposureToPreview,
+    vibrationAfterSeries = updated.vibrationAfterSeries,
+    soundAfterSeries = updated.soundAfterSeries,
+    histogramEnabled = updated.histogramEnabled,
+    saveTestShots = updated.saveTestShots,
+    jpegQuality = updated.jpegQuality,
+    fastPreviewEnabled = updated.fastPreviewEnabled,
+    themeMode = updated.themeMode,
+    deletionProtectionEnabled = updated.deletionProtectionEnabled
+)
+
+internal fun mergeCameraSettings(
+    persisted: SavedCameraSettings,
+    updated: SavedCameraSettings
+): SavedCameraSettings = updated.copy(
+    themeMode = persisted.themeMode,
+    deletionProtectionEnabled = persisted.deletionProtectionEnabled
+)
 
 internal fun canonicalCaptureFormat(storedValue: String?): String =
     storedValue?.takeIf { it == "JPEG" || it == "RAW" } ?: "JPEG"

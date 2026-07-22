@@ -8,7 +8,6 @@ import androidx.compose.ui.unit.sp
 
 private val baseStyle = TextStyle(
     fontFamily = FontFamily.Default,
-    color = AstroColors.TextPrimary,
     letterSpacing = 0.sp
 )
 
