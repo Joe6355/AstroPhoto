@@ -22,6 +22,7 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
+import kotlin.math.pow
 
 internal object ReplayDefectThresholds {
     const val MANIFEST_VERSION = "replay-camera-defects/1"
@@ -122,6 +123,58 @@ internal data class ReplayTrailCorrespondence(
     val status: String
 )
 
+internal data class ReplayManualTrailAnnotation(
+    val id: String,
+    val centerline: List<ReplayPoint>,
+    val note: String
+)
+
+internal enum class ReplayManualTrailStatus { EXPLAINED, PARTIALLY_MATCHED, UNMATCHED, UNCERTAIN }
+
+internal data class ReplayDefectComponent(
+    val id: Int,
+    val cores: List<ReplayConfirmedDefect>,
+    val footprintPixels: IntArray
+) {
+    val paths: List<List<ReplayDefectPathPoint>> get() = cores.map { it.eligiblePath }.filter { it.isNotEmpty() }
+}
+
+internal data class ReplayManualTrailCorrespondence(
+    val trailId: String,
+    val componentId: Int?,
+    val intersectionOverUnion: Double,
+    val medianDistance: Double,
+    val maximumDistance: Double,
+    val orientationDifferenceDegrees: Double?,
+    val coveredFraction: Double,
+    val status: ReplayManualTrailStatus,
+    val overlapsConfirmedStar: Boolean,
+    val medianChromaResidual: Double,
+    val maximumChromaResidual: Double,
+    val medianLuminanceResidual: Double,
+    val maximumLuminanceResidual: Double
+)
+
+internal object ReplayStage1BAnnotations {
+    /** Fixed manual annotations for the supplied 1440x1920 urban 30-frame replay. */
+    val CURRENT_30_FRAME_1440_X_1920: List<ReplayManualTrailAnnotation> = listOf(
+        ReplayManualTrailAnnotation("manual-01", listOf(ReplayPoint(921.0, 368.0), ReplayPoint(935.0, 373.0)), "upper shallow trail"),
+        ReplayManualTrailAnnotation("manual-02", listOf(ReplayPoint(931.0, 454.0), ReplayPoint(941.0, 460.0)), "upper faint diagonal trail"),
+        ReplayManualTrailAnnotation("manual-03", listOf(ReplayPoint(701.0, 729.0), ReplayPoint(711.0, 719.0)), "central faint diagonal trail"),
+        ReplayManualTrailAnnotation("manual-04", listOf(ReplayPoint(856.0, 882.0), ReplayPoint(866.0, 870.0)), "central-right diagonal trail"),
+        ReplayManualTrailAnnotation("manual-05", listOf(ReplayPoint(940.0, 1247.0), ReplayPoint(960.0, 1233.0)), "lower-middle diagonal trail"),
+        ReplayManualTrailAnnotation("manual-06", listOf(ReplayPoint(1015.0, 1432.0), ReplayPoint(1041.0, 1417.0)), "lower-right diagonal trail")
+    )
+
+    fun forCurrentReplay(width: Int, height: Int, frameIds: Set<String>): List<ReplayManualTrailAnnotation> {
+        val expected = (1..30).map { index ->
+            "AstroSeries_20260714_022705_${index.toString().padStart(3, '0')}.jpg"
+        }.toSet()
+        return if (width == 1440 && height == 1920 && frameIds == expected) CURRENT_30_FRAME_1440_X_1920
+        else emptyList()
+    }
+}
+
 internal data class ReplayConfirmedDefect(
     val coreX: Int,
     val coreY: Int,
@@ -155,7 +208,10 @@ internal data class ReplayCameraDefectBundle(
     val coveragePercent: Double,
     val coverageStatus: ReplayMapCoverageStatus,
     val rejectedFrameIds: Set<String>,
-    val acceptedFrameIds: Set<String>
+    val acceptedFrameIds: Set<String>,
+    val defectComponents: List<ReplayDefectComponent>,
+    val manualTrails: List<ReplayManualTrailAnnotation>,
+    val manualCorrespondences: List<ReplayManualTrailCorrespondence>
 ) {
     val explainedTrails: List<ReplayTrailCorrespondence> = correspondences.filter { it.explained }
     val unexplainedTrails: List<ReplayTrailCorrespondence> = correspondences.filterNot { it.explained }
@@ -304,10 +360,16 @@ internal class ReplayCameraDefectDiagnosticRunner {
         allFrameIds: Set<String>,
         stars: List<FullResolutionStarPatch>,
         outputRoot: Path,
+        manualTrails: List<ReplayManualTrailAnnotation> = emptyList(),
         imageLoader: (ReplayDefectFrame) -> ArgbPixelImage
     ): ReplayCameraDefectBundle {
         require(frames.isNotEmpty())
         require(frames.map { it.id }.toSet().size == frames.size)
+        require(manualTrails.flatMap { it.centerline }.all { point ->
+            point.x.isFinite() && point.y.isFinite() &&
+                point.x in 0.0..(baseline.width - 1).toDouble() &&
+                point.y in 0.0..(baseline.height - 1).toDouble()
+        }) { "Manual Stage 1B trail annotation is outside the clean-stack bounds" }
         val orderedFrames = frames.sortedBy { it.captureIndex }
         val acceptedIds = orderedFrames.map { it.id }.toSet()
         require(acceptedIds.all { it in allFrameIds })
@@ -372,6 +434,13 @@ internal class ReplayCameraDefectDiagnosticRunner {
             }
         }
         val coverage = proposed.count { it } * 100.0 / proposed.size
+        val defectComponents = consolidateDefectComponents(confirmedWithMatches, baseline.width, baseline.height)
+        val manualCorrespondences = correspondManualTrails(
+            baseline,
+            manualTrails,
+            defectComponents,
+            stars
+        )
         val bundle = ReplayCameraDefectBundle(
             skyMask,
             skyHash,
@@ -389,7 +458,10 @@ internal class ReplayCameraDefectDiagnosticRunner {
             coverage,
             ReplayDefectMath.coverageStatus(coverage),
             rejectedIds,
-            acceptedIds
+            acceptedIds,
+            defectComponents,
+            manualTrails,
+            manualCorrespondences
         )
         writeOutputs(bundle, baseline, orderedFrames, outputRoot, imageLoader, maximumRoundTripError)
         return bundle
@@ -793,6 +865,170 @@ internal class ReplayCameraDefectDiagnosticRunner {
         return trails
     }
 
+    private fun consolidateDefectComponents(
+        defects: List<ReplayConfirmedDefect>,
+        width: Int,
+        height: Int
+    ): List<ReplayDefectComponent> {
+        val footprints = defects.map { defect ->
+            buildSet {
+                add(defect.coreY * width + defect.coreX)
+                defect.footprintOffsets.forEach { (dx, dy) ->
+                    val x = defect.coreX + dx
+                    val y = defect.coreY + dy
+                    if (x in 0 until width && y in 0 until height) add(y * width + x)
+                }
+            }
+        }
+        val remaining = defects.indices.toMutableSet()
+        val groups = mutableListOf<List<Int>>()
+        while (remaining.isNotEmpty()) {
+            val seed = remaining.minWith(compareBy<Int> { defects[it].coreY }.thenBy { defects[it].coreX })
+            remaining.remove(seed)
+            val group = mutableListOf(seed)
+            val queue = ArrayDeque<Int>()
+            queue += seed
+            while (queue.isNotEmpty()) {
+                val current = queue.removeFirst()
+                val adjacent = remaining.filter { candidate -> footprintsTouch(footprints[current], footprints[candidate], width, height) }
+                adjacent.forEach {
+                    remaining.remove(it)
+                    group += it
+                    queue += it
+                }
+            }
+            groups += group
+        }
+        return groups.sortedWith(compareBy<List<Int>> { group -> group.minOf { defects[it].coreY } }
+            .thenBy { group -> group.minOf { defects[it].coreX } })
+            .mapIndexed { id, group ->
+                ReplayDefectComponent(
+                    id,
+                    group.map { defects[it] }.sortedWith(compareBy<ReplayConfirmedDefect> { it.coreY }.thenBy { it.coreX }),
+                    group.flatMap { footprints[it] }.distinct().sorted().toIntArray()
+                )
+            }
+    }
+
+    private fun footprintsTouch(first: Set<Int>, second: Set<Int>, width: Int, height: Int): Boolean {
+        if (first.size > second.size) return footprintsTouch(second, first, width, height)
+        return first.any { index ->
+            val x = index % width
+            val y = index / width
+            (-1..1).any { dy ->
+                (-1..1).any { dx ->
+                    val nx = x + dx
+                    val ny = y + dy
+                    nx in 0 until width && ny in 0 until height && ny * width + nx in second
+                }
+            }
+        }
+    }
+
+    private fun correspondManualTrails(
+        baseline: ArgbPixelImage,
+        annotations: List<ReplayManualTrailAnnotation>,
+        components: List<ReplayDefectComponent>,
+        stars: List<FullResolutionStarPatch>
+    ): List<ReplayManualTrailCorrespondence> = annotations.flatMap { annotation ->
+        val trailPath = annotation.centerline.mapIndexed { index, point ->
+            ReplayDefectPathPoint(annotation.id, index, point.x, point.y, true)
+        }
+        val trailPixels = rasterize(trailPath, baseline.width, baseline.height)
+        val trailGeometry = ReplayDefectMath.pca(trailPixels.map {
+            ReplayPoint((it % baseline.width).toDouble(), (it / baseline.width).toDouble())
+        })
+        val residuals = segmentSamples(annotation.centerline)
+            .distinct()
+            .mapNotNull { point -> localResidualAt(baseline, point.x.roundToInt(), point.y.roundToInt()) }
+        val chromaResiduals = residuals.map { it.first }
+        val luminanceResiduals = residuals.map { it.second }
+        if (components.isEmpty()) {
+            listOf(ReplayManualTrailCorrespondence(
+                annotation.id, null, 0.0, Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY,
+                null, 0.0, ReplayManualTrailStatus.UNCERTAIN, false,
+                ReplayDefectMath.median(chromaResiduals), chromaResiduals.maxOrNull() ?: 0.0,
+                ReplayDefectMath.median(luminanceResiduals), luminanceResiduals.maxOrNull() ?: 0.0
+            ))
+        } else components.map { component ->
+            val pathPixels = component.paths.flatMap { rasterize(it, baseline.width, baseline.height) }.toSet()
+            val intersection = pathPixels.count { it in trailPixels }
+            val union = pathPixels.size + trailPixels.size - intersection
+            val distances = trailPixels.map { index ->
+                val point = ReplayPoint((index % baseline.width).toDouble(), (index / baseline.width).toDouble())
+                component.paths.minOfOrNull { distanceToPath(point, it) } ?: Double.POSITIVE_INFINITY
+            }
+            val medianDistance = ReplayDefectMath.median(distances)
+            val maximumDistance = distances.maxOrNull() ?: Double.POSITIVE_INFINITY
+            val pathGeometry = ReplayDefectMath.pca(pathPixels.map {
+                ReplayPoint((it % baseline.width).toDouble(), (it / baseline.width).toDouble())
+            })
+            val orientation = ReplayDefectMath.orientationDifferenceDegrees(
+                trailGeometry.orientationRadians,
+                pathGeometry.orientationRadians
+            )
+            val iou = intersection.toDouble() / union.coerceAtLeast(1)
+            val covered = intersection.toDouble() / trailPixels.size.coerceAtLeast(1)
+            val explained = iou >= ReplayDefectThresholds.EXPLAINED_MIN_IOU &&
+                medianDistance <= ReplayDefectThresholds.EXPLAINED_MAX_MEDIAN_DISTANCE &&
+                maximumDistance <= ReplayDefectThresholds.EXPLAINED_MAX_DISTANCE &&
+                orientation != null && orientation <= ReplayDefectThresholds.EXPLAINED_MAX_ORIENTATION_DEGREES &&
+                covered >= ReplayDefectThresholds.EXPLAINED_MIN_COVERED_FRACTION
+            val status = when {
+                explained -> ReplayManualTrailStatus.EXPLAINED
+                orientation == null -> ReplayManualTrailStatus.UNCERTAIN
+                intersection > 0 || (medianDistance <= ReplayDefectThresholds.EXPLAINED_MAX_DISTANCE &&
+                    orientation <= ReplayDefectThresholds.EXPLAINED_MAX_ORIENTATION_DEGREES) -> ReplayManualTrailStatus.PARTIALLY_MATCHED
+                else -> ReplayManualTrailStatus.UNMATCHED
+            }
+            val overlapsStar = pathPixels.any { index ->
+                val x = index % baseline.width
+                val y = index / baseline.width
+                stars.any { star -> hypot(x - star.x.toDouble(), y - star.y.toDouble()) <= max(1.5, star.width * 2.0) }
+            }
+            ReplayManualTrailCorrespondence(
+                annotation.id, component.id, iou, medianDistance, maximumDistance, orientation, covered,
+                status, overlapsStar,
+                ReplayDefectMath.median(chromaResiduals), chromaResiduals.maxOrNull() ?: 0.0,
+                ReplayDefectMath.median(luminanceResiduals), luminanceResiduals.maxOrNull() ?: 0.0
+            )
+        }
+    }
+
+    private fun segmentSamples(it: List<ReplayPoint>): List<ReplayPoint> {
+        if (it.isEmpty()) return emptyList()
+        if (it.size == 1) return it
+        return it.zipWithNext().flatMap { (first, second) ->
+            val steps = ceil(hypot(second.x - first.x, second.y - first.y)).toInt().coerceAtLeast(1)
+            (0..steps).map { step ->
+                val t = step.toDouble() / steps
+                ReplayPoint(first.x + (second.x - first.x) * t, first.y + (second.y - first.y) * t)
+            }
+        }
+    }
+
+    private fun localResidualAt(image: ArgbPixelImage, x: Int, y: Int): Pair<Double, Double>? {
+        if (x !in 2 until image.width - 2 || y !in 2 until image.height - 2) return null
+        val rings = Array(3) { IntArray(16) }
+        ReplayDefectMath.ringOffsets.forEachIndexed { index, (dx, dy) ->
+            val color = image.pixels[(y + dy) * image.width + x + dx]
+            rings[0][index] = color ushr 16 and 0xFF
+            rings[1][index] = color ushr 8 and 0xFF
+            rings[2][index] = color and 0xFF
+        }
+        rings.forEach { it.sort() }
+        val color = image.pixels[y * image.width + x]
+        val residuals = listOf(
+            (color ushr 16 and 0xFF) - (rings[0][7] + rings[0][8]) * 0.5,
+            (color ushr 8 and 0xFF) - (rings[1][7] + rings[1][8]) * 0.5,
+            (color and 0xFF) - (rings[2][7] + rings[2][8]) * 0.5
+        )
+        val positive = residuals.map { max(0.0, it) }.sortedDescending()
+        val chroma = positive[0] - positive[1]
+        val luminance = 0.2126 * residuals[0] + 0.7152 * residuals[1] + 0.0722 * residuals[2]
+        return chroma to luminance
+    }
+
     private fun connectedComponent(
         mask: BooleanArray,
         width: Int,
@@ -995,8 +1231,18 @@ internal class ReplayCameraDefectDiagnosticRunner {
         writeImage(outputRoot.resolve("camera-persistence-heatmap.png"), persistenceImage(baseline, bundle.allSupportedCandidates, frames.size))
         writeImage(outputRoot.resolve("projected-path-overlay.png"), pathOverlay(baseline, bundle.confirmedDefects, observedOnly = false))
         writeImage(outputRoot.resolve("observed-inferred-overlay.png"), pathOverlay(baseline, bundle.confirmedDefects, observedOnly = true))
+        val stretched = strongStretchPreview(baseline)
+        writeImage(outputRoot.resolve("stage1b-strong-stretch.png"), stretched)
+        writeImage(outputRoot.resolve("stage1b-manual-trails-overlay.png"), manualTrailOverlay(stretched, bundle.manualTrails))
+        writeImage(
+            outputRoot.resolve("stage1b-manual-component-overlay.png"),
+            manualComponentOverlay(stretched, bundle.manualTrails, bundle.defectComponents)
+        )
         Files.writeString(outputRoot.resolve("defect-candidates.tsv"), candidateTable(bundle))
         Files.writeString(outputRoot.resolve("trail-correspondence.tsv"), correspondenceTable(bundle))
+        Files.writeString(outputRoot.resolve("stage1b-components.tsv"), componentTable(bundle))
+        Files.writeString(outputRoot.resolve("stage1b-manual-annotations.tsv"), manualAnnotationTable(bundle.manualTrails))
+        Files.writeString(outputRoot.resolve("stage1b-manual-correspondence.tsv"), manualCorrespondenceTable(bundle))
         Files.writeString(outputRoot.resolve("camera-defect-report.txt"), report(bundle, maximumRoundTripError))
         writeReviewCrops(bundle, baseline, frames, outputRoot.resolve("review-crops"), imageLoader)
     }
@@ -1037,6 +1283,53 @@ internal class ReplayCameraDefectDiagnosticRunner {
         return ArgbPixelImage(baseline.width, baseline.height, pixels)
     }
 
+    private fun strongStretchPreview(baseline: ArgbPixelImage): ArgbPixelImage {
+        val pixels = IntArray(baseline.pixels.size) { index ->
+            val color = baseline.pixels[index]
+            val red = ((color ushr 16 and 0xFF) / 255.0).pow(0.35)
+            val green = ((color ushr 8 and 0xFF) / 255.0).pow(0.35)
+            val blue = ((color and 0xFF) / 255.0).pow(0.35)
+            0xFF000000.toInt() or
+                ((red * 255.0).roundToInt().coerceIn(0, 255) shl 16) or
+                ((green * 255.0).roundToInt().coerceIn(0, 255) shl 8) or
+                (blue * 255.0).roundToInt().coerceIn(0, 255)
+        }
+        return ArgbPixelImage(baseline.width, baseline.height, pixels)
+    }
+
+    private fun manualTrailOverlay(
+        preview: ArgbPixelImage,
+        annotations: List<ReplayManualTrailAnnotation>
+    ): ArgbPixelImage {
+        val pixels = preview.pixels.copyOf()
+        annotations.forEach { annotation ->
+            val path = annotation.centerline.mapIndexed { index, point ->
+                ReplayDefectPathPoint(annotation.id, index, point.x, point.y, true)
+            }
+            rasterize(path, preview.width, preview.height).forEach { pixels[it] = 0xFF00FFFF.toInt() }
+        }
+        return ArgbPixelImage(preview.width, preview.height, pixels)
+    }
+
+    private fun manualComponentOverlay(
+        preview: ArgbPixelImage,
+        annotations: List<ReplayManualTrailAnnotation>,
+        components: List<ReplayDefectComponent>
+    ): ArgbPixelImage {
+        val pixels = preview.pixels.copyOf()
+        components.forEach { component ->
+            component.paths.flatMap { rasterize(it, preview.width, preview.height) }
+                .forEach { pixels[it] = 0xFFFF00FF.toInt() }
+        }
+        annotations.forEach { annotation ->
+            val path = annotation.centerline.mapIndexed { index, point ->
+                ReplayDefectPathPoint(annotation.id, index, point.x, point.y, true)
+            }
+            rasterize(path, preview.width, preview.height).forEach { pixels[it] = 0xFF00FFFF.toInt() }
+        }
+        return ArgbPixelImage(preview.width, preview.height, pixels)
+    }
+
     private fun candidateTable(bundle: ReplayCameraDefectBundle): String = buildString {
         appendLine("coreX\tcoreY\tkind\tstatus\tobservedSupport\teligiblePathPoints\tobservedPathPoints\tinferredPathPoints\tintegerRms\tcentroidRms\tcoreMedianResidual\tfootprintPixels\tmatchedTrails")
         bundle.allSupportedCandidates.forEach { defect ->
@@ -1063,7 +1356,61 @@ internal class ReplayCameraDefectDiagnosticRunner {
         }
     }
 
+    private fun componentTable(bundle: ReplayCameraDefectBundle): String = buildString {
+        appendLine("componentId\tcoreCount\tcores\tfootprintPixels\tpathCount\tobservedPathPoints\tinferredPathPoints")
+        bundle.defectComponents.forEach { component ->
+            appendLine(listOf(
+                component.id,
+                component.cores.size,
+                component.cores.joinToString("|") { "${it.coreX},${it.coreY}" },
+                component.footprintPixels.size,
+                component.paths.size,
+                component.paths.sumOf { path -> path.count { it.observed } },
+                component.paths.sumOf { path -> path.count { !it.observed } }
+            ).joinToString("\t"))
+        }
+    }
+
+    private fun manualAnnotationTable(annotations: List<ReplayManualTrailAnnotation>): String = buildString {
+        appendLine("trailId\tcenterline\tnote")
+        annotations.sortedBy { it.id }.forEach { annotation ->
+            appendLine(listOf(
+                annotation.id,
+                annotation.centerline.joinToString("|") { "${it.x},${it.y}" },
+                annotation.note
+            ).joinToString("\t"))
+        }
+    }
+
+    private fun manualCorrespondenceTable(bundle: ReplayCameraDefectBundle): String = buildString {
+        appendLine("trailId\tcomponentId\tiou\tmedianDistance\tmaximumDistance\torientationDifferenceDegrees\tcoveredFraction\tstatus\toverlapsConfirmedStar\tmedianChromaResidual\tmaximumChromaResidual\tmedianLuminanceResidual\tmaximumLuminanceResidual\tselectedBest")
+        val best = bestManualCorrespondences(bundle.manualCorrespondences).associateBy { it.trailId }
+        bundle.manualCorrespondences.sortedWith(compareBy<ReplayManualTrailCorrespondence> { it.trailId }.thenBy { it.componentId })
+            .forEach { value ->
+                appendLine(listOf(
+                    value.trailId, value.componentId ?: "none", value.intersectionOverUnion,
+                    value.medianDistance, value.maximumDistance,
+                    value.orientationDifferenceDegrees ?: "undefined", value.coveredFraction,
+                    value.status, value.overlapsConfirmedStar, value.medianChromaResidual,
+                    value.maximumChromaResidual, value.medianLuminanceResidual,
+                    value.maximumLuminanceResidual, best[value.trailId] == value
+                ).joinToString("\t"))
+            }
+    }
+
+    private fun bestManualCorrespondences(
+        values: List<ReplayManualTrailCorrespondence>
+    ): List<ReplayManualTrailCorrespondence> = values.groupBy { it.trailId }.values.map { candidates ->
+        candidates.sortedWith(
+            compareByDescending<ReplayManualTrailCorrespondence> { it.intersectionOverUnion }
+                .thenBy { it.medianDistance }
+                .thenBy { it.maximumDistance }
+                .thenBy { it.componentId }
+        ).first()
+    }.sortedBy { it.trailId }
+
     private fun report(bundle: ReplayCameraDefectBundle, maximumRoundTripError: Double): String = buildString {
+        val bestManual = bestManualCorrespondences(bundle.manualCorrespondences)
         appendLine("mode=replay_only_camera_space_defect_map")
         appendLine("integrationModified=false")
         appendLine("productionEnabled=false")
@@ -1077,6 +1424,9 @@ internal class ReplayCameraDefectDiagnosticRunner {
         appendLine("acceptedFrameIds=${bundle.acceptedFrameIds.sorted().joinToString("|")}")
         appendLine("rejectedFrameIds=${bundle.rejectedFrameIds.sorted().joinToString("|")}")
         appendLine("confirmedDefectCount=${bundle.confirmedDefects.size}")
+        appendLine("rawConfirmedCoreCount=${bundle.confirmedDefects.size}")
+        appendLine("uniqueConnectedComponentCount=${bundle.defectComponents.size}")
+        appendLine("uniqueConnectedComponentFootprintPixels=${bundle.defectComponents.sumOf { it.footprintPixels.size }}")
         appendLine("rejectedStarLikeCandidateCount=${bundle.rejectedStarLikeCandidates.size}")
         appendLine("mapCoveragePercent=${bundle.coveragePercent}")
         appendLine("mapCoverageStatus=${bundle.coverageStatus}")
@@ -1086,6 +1436,16 @@ internal class ReplayCameraDefectDiagnosticRunner {
         appendLine("missedTrailDiagnosticUncertainty=manual_review_pending")
         appendLine("confirmedVisuallyMatched=${bundle.confirmedDefects.count { it.matchedTrailIds.isNotEmpty() }}")
         appendLine("confirmedVisuallyUnmatched=${bundle.confirmedDefects.count { it.matchedTrailIds.isEmpty() }}")
+        appendLine("stage1bPreviewTransform=encoded_srgb_channel_power_0.35_display_only")
+        appendLine("stage1bMeasurementsSource=unchanged_clean_stack_pixels")
+        appendLine("manualTrailCount=${bundle.manualTrails.size}")
+        appendLine("manualAnnotationHash=${sha256(manualAnnotationTable(bundle.manualTrails).toByteArray(StandardCharsets.UTF_8))}")
+        appendLine("manualExplained=${bestManual.count { it.status == ReplayManualTrailStatus.EXPLAINED }}")
+        appendLine("manualPartiallyMatched=${bestManual.count { it.status == ReplayManualTrailStatus.PARTIALLY_MATCHED }}")
+        appendLine("manualUnmatched=${bestManual.count { it.status == ReplayManualTrailStatus.UNMATCHED }}")
+        appendLine("manualUncertain=${bestManual.count { it.status == ReplayManualTrailStatus.UNCERTAIN }}")
+        appendLine("manualBestMatches=${bestManual.joinToString("|") { "${it.trailId}:${it.componentId ?: "none"}:${it.status}" }}")
+        appendLine("stage3Decision=BLOCKED_PENDING_MANUAL_STAGE1B_REVIEW")
     }
 
     private fun writeReviewCrops(

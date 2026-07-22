@@ -466,6 +466,11 @@ class JpegV2Stage12ReplayTest {
             allFrameIds = paths.keys,
             stars = fullResolutionStars,
             outputRoot = outputRoot.resolve("camera-defects"),
+            manualTrails = ReplayStage1BAnnotations.forCurrentReplay(
+                cleanComposite.image.width,
+                cleanComposite.image.height,
+                paths.keys
+            ),
             imageLoader = { frame ->
                 val image = checkNotNull(ImageIO.read(paths.getValue(frame.id).toFile()))
                 try {

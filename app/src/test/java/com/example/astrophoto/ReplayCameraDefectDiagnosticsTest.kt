@@ -64,6 +64,15 @@ class ReplayCameraDefectDiagnosticsTest {
         assertEquals(ReplayMapCoverageStatus.HARD_REJECTION, ReplayDefectMath.coverageStatus(0.020001))
     }
 
+    @Test fun manualAnnotationsAreScopedToTheExactSuppliedReplay() {
+        val expectedIds = (1..30).map {
+            "AstroSeries_20260714_022705_${it.toString().padStart(3, '0')}.jpg"
+        }.toSet()
+        assertEquals(6, ReplayStage1BAnnotations.forCurrentReplay(1440, 1920, expectedIds).size)
+        assertTrue(ReplayStage1BAnnotations.forCurrentReplay(1440, 1920, expectedIds - expectedIds.first()).isEmpty())
+        assertTrue(ReplayStage1BAnnotations.forCurrentReplay(1080, 1920, expectedIds).isEmpty())
+    }
+
     @Test fun realRunnerUsesEveryEligibleFrameAndMarksWeakObservationInferred() {
         val width = 48
         val height = 48
@@ -84,6 +93,14 @@ class ReplayCameraDefectDiagnosticsTest {
             val output = ReplayTransformSemantics.sourceToOutput(frame.transform, sourceX.toDouble(), sourceY.toDouble())
             baseline.pixels[output.y.toInt() * width + output.x.toInt()] = rgb(22, 10, 10)
         }
+        val manualTrail = ReplayManualTrailAnnotation(
+            "synthetic-trail",
+            listOf(
+                ReplayTransformSemantics.sourceToOutput(frames.first().transform, sourceX.toDouble(), sourceY.toDouble()),
+                ReplayTransformSemantics.sourceToOutput(frames.last().transform, sourceX.toDouble(), sourceY.toDouble())
+            ),
+            "synthetic full eligible-frame path"
+        )
         val root = Files.createTempDirectory("camera-defect-diagnostic")
         try {
             val result = ReplayCameraDefectDiagnosticRunner().run(
@@ -92,7 +109,8 @@ class ReplayCameraDefectDiagnosticsTest {
                 frames,
                 frames.map { it.id }.toSet() + "rejected",
                 emptyList(),
-                root
+                root,
+                listOf(manualTrail)
             ) { images.getValue(it.id) }
             val defect = result.confirmedDefects.single { it.coreX == sourceX && it.coreY == sourceY }
             assertEquals(10, defect.eligiblePath.size)
@@ -101,7 +119,41 @@ class ReplayCameraDefectDiagnosticsTest {
             assertTrue("expected one 8-connected trail", result.trails.isNotEmpty())
             assertEquals(setOf("rejected"), result.rejectedFrameIds)
             assertFalse(1 to 0 in defect.footprintOffsets)
+            assertEquals(1, result.defectComponents.size)
+            assertEquals(ReplayManualTrailStatus.EXPLAINED, result.manualCorrespondences.single().status)
             assertTrue(Files.isRegularFile(root.resolve("threshold-manifest.json")))
+            assertTrue(Files.isRegularFile(root.resolve("stage1b-strong-stretch.png")))
+            assertTrue(Files.isRegularFile(root.resolve("stage1b-manual-correspondence.tsv")))
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test fun adjacentPersistentCoresConsolidateIntoOneCameraComponent() {
+        val width = 40
+        val height = 40
+        val frames = (0 until 10).map { ReplayDefectFrame("f$it", it, ReferenceToSourceTransform.Identity) }
+        val images = frames.associate { frame ->
+            frame.id to uniform(width, height, 10).also { image ->
+                image.pixels[20 * width + 20] = rgb(34, 10, 10)
+                image.pixels[20 * width + 21] = rgb(31, 10, 10)
+            }
+        }
+        val root = Files.createTempDirectory("camera-defect-components")
+        try {
+            val result = ReplayCameraDefectDiagnosticRunner().run(
+                uniform(width, height, 10),
+                AlphaMask.full(width, height),
+                frames,
+                frames.map { it.id }.toSet(),
+                emptyList(),
+                root
+            ) { images.getValue(it.id) }
+            assertEquals(2, result.confirmedDefects.count { it.coreY == 20 && it.coreX in 20..21 })
+            assertEquals(1, result.defectComponents.count { component ->
+                component.cores.any { it.coreX == 20 && it.coreY == 20 } &&
+                    component.cores.any { it.coreX == 21 && it.coreY == 20 }
+            })
         } finally {
             root.toFile().deleteRecursively()
         }
