@@ -250,6 +250,7 @@ class JpegV2Stage12ReplayTest {
                     reference = reference,
                     referenceImage = referenceImage,
                     paths = pathById,
+                    captureIndices = captureById,
                     registrations = finalRegistrations,
                     weights = replayWeights,
                     fullResolutionStars = fullPatches
@@ -321,6 +322,7 @@ class JpegV2Stage12ReplayTest {
         reference: ReplayAnalysis,
         referenceImage: BufferedImage,
         paths: Map<String, Path>,
+        captureIndices: Map<String, Int>,
         registrations: Map<String, com.example.astrophoto.processing.jpeg.v2.model.RegistrationResult>,
         weights: Map<String, Float>,
         fullResolutionStars: List<FullResolutionStarPatch>
@@ -451,6 +453,28 @@ class JpegV2Stage12ReplayTest {
             effectiveSkyAlpha = effectiveSky,
             confirmedStars = confirmedStars
         )
+        val cameraDefectDiagnostics = ReplayCameraDefectDiagnosticRunner().run(
+            baseline = cleanComposite.image,
+            effectiveSkyAlpha = effectiveSky,
+            frames = registrations.map { (frameId, registration) ->
+                ReplayDefectFrame(
+                    id = frameId,
+                    captureIndex = captureIndices.getValue(frameId),
+                    transform = registration.referenceToSourceTransform()
+                )
+            },
+            allFrameIds = paths.keys,
+            stars = fullResolutionStars,
+            outputRoot = outputRoot.resolve("camera-defects"),
+            imageLoader = { frame ->
+                val image = checkNotNull(ImageIO.read(paths.getValue(frame.id).toFile()))
+                try {
+                    bufferedImageToArgb(image)
+                } finally {
+                    image.flush()
+                }
+            }
+        )
         Files.createDirectories(outputRoot)
         writePng(outputRoot.resolve("clean-stack.png"), cleanComposite.image)
         writePng(outputRoot.resolve("recovered-stars-baseline.png"), cleanComposite.image)
@@ -492,6 +516,11 @@ class JpegV2Stage12ReplayTest {
         assertTrue(
             "Linear gamut overflow",
             toneDiagnostics.results.all { it.candidate.maximumLinearChannel <= 1.0 + 1e-12 }
+        )
+        assertEquals(registrations.keys, cameraDefectDiagnostics.acceptedFrameIds)
+        assertTrue(
+            "Rejected frames leaked into camera-space diagnostics",
+            cameraDefectDiagnostics.acceptedFrameIds.intersect(cameraDefectDiagnostics.rejectedFrameIds).isEmpty()
         )
         return BackgroundDiagnosticMetrics(cleanMetrics, processedMetrics)
     }
