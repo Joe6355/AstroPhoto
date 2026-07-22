@@ -13,6 +13,9 @@ import android.provider.MediaStore
 import android.util.Log
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -52,15 +55,21 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
@@ -1366,6 +1375,7 @@ private fun ProcessedResultViewer(
         mutableStateOf<ViewerImageState>(ViewerImageState.Loading)
     }
     var actionError by remember(result.key) { mutableStateOf<String?>(null) }
+    val zoomState = remember(result.key) { ResultImageZoomState() }
 
     LaunchedEffect(result.key) {
         imageState = ViewerImageState.Loading
@@ -1416,11 +1426,11 @@ private fun ProcessedResultViewer(
             ) {
                 when (val state = imageState) {
                     ViewerImageState.Loading -> CircularProgressIndicator()
-                    is ViewerImageState.Loaded -> Image(
+                    is ViewerImageState.Loaded -> ZoomableResultImage(
                         bitmap = state.image.bitmap.asImageBitmap(),
                         contentDescription = result.fileName,
                         modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Fit
+                        zoomState = zoomState
                     )
                     is ViewerImageState.Error -> Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -1534,6 +1544,7 @@ private fun ProcessedComparisonViewer(
         mutableStateOf<ViewerImageState>(ViewerImageState.Loading)
     }
     var loading by remember(first, second) { mutableStateOf(true) }
+    val sharedZoomState = remember(first, second) { ResultImageZoomState() }
 
     LaunchedEffect(first, second) {
         loading = true
@@ -1581,6 +1592,22 @@ private fun ProcessedComparisonViewer(
                 title = "Сравнение",
                 onBack = onDismiss
             )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Щипок или двойной тап — масштаб обеих фотографий",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+                if (sharedZoomState.scale > MIN_RESULT_ZOOM) {
+                    TextButton(onClick = sharedZoomState::reset) {
+                        Text("${formatZoomScale(sharedZoomState.scale)}× · Сбросить")
+                    }
+                }
+            }
             if (loading) {
                 CircularProgressIndicator(
                     modifier = Modifier.align(Alignment.CenterHorizontally)
@@ -1599,12 +1626,14 @@ private fun ProcessedComparisonViewer(
                         ComparisonPane(
                             state = firstState,
                             label = first.label,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f),
+                            zoomState = sharedZoomState
                         )
                         ComparisonPane(
                             state = secondState,
                             label = second.label,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f),
+                            zoomState = sharedZoomState
                         )
                     }
                 } else {
@@ -1615,12 +1644,14 @@ private fun ProcessedComparisonViewer(
                         ComparisonPane(
                             state = firstState,
                             label = first.label,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f),
+                            zoomState = sharedZoomState
                         )
                         ComparisonPane(
                             state = secondState,
                             label = second.label,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f),
+                            zoomState = sharedZoomState
                         )
                     }
                 }
@@ -1644,7 +1675,8 @@ private fun ProcessedComparisonViewer(
 private fun ComparisonPane(
     state: ViewerImageState,
     label: String,
-    modifier: Modifier
+    modifier: Modifier,
+    zoomState: ResultImageZoomState
 ) {
     Column(modifier = modifier) {
         Text(
@@ -1661,11 +1693,12 @@ private fun ComparisonPane(
         ) {
             when (state) {
                 ViewerImageState.Loading -> CircularProgressIndicator()
-                is ViewerImageState.Loaded -> Image(
+                is ViewerImageState.Loaded -> ZoomableResultImage(
                     bitmap = state.image.bitmap.asImageBitmap(),
                     contentDescription = label,
                     modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Fit
+                    zoomState = zoomState,
+                    showScale = false
                 )
                 is ViewerImageState.Error -> Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -1686,6 +1719,105 @@ private fun ComparisonPane(
         }
     }
 }
+
+private class ResultImageZoomState {
+    var scale by mutableStateOf(1f)
+        private set
+    var offset by mutableStateOf(Offset.Zero)
+        private set
+    private var viewportSize = IntSize.Zero
+
+    fun updateViewport(size: IntSize) {
+        viewportSize = size
+        offset = clampZoomOffset(offset, scale, viewportSize)
+    }
+
+    fun transform(zoomChange: Float, panChange: Offset) {
+        val nextScale = (scale * zoomChange).coerceIn(MIN_RESULT_ZOOM, MAX_RESULT_ZOOM)
+        scale = nextScale
+        offset = if (nextScale == MIN_RESULT_ZOOM) {
+            Offset.Zero
+        } else {
+            clampZoomOffset(offset + panChange, nextScale, viewportSize)
+        }
+    }
+
+    fun reset() {
+        scale = MIN_RESULT_ZOOM
+        offset = Offset.Zero
+    }
+
+    fun toggle() {
+        if (scale > MIN_RESULT_ZOOM) {
+            reset()
+        } else {
+            scale = DOUBLE_TAP_RESULT_ZOOM
+            offset = Offset.Zero
+        }
+    }
+}
+
+@Composable
+private fun ZoomableResultImage(
+    bitmap: androidx.compose.ui.graphics.ImageBitmap,
+    contentDescription: String,
+    modifier: Modifier = Modifier,
+    zoomState: ResultImageZoomState = remember { ResultImageZoomState() },
+    showScale: Boolean = true
+) {
+    val gestureState = rememberTransformableState { zoomChange, panChange, _ ->
+        zoomState.transform(zoomChange, panChange)
+    }
+
+    Box(
+        modifier = modifier
+            .clipToBounds()
+            .onSizeChanged(zoomState::updateViewport)
+            .pointerInput(zoomState) {
+                detectTapGestures(onDoubleTap = { zoomState.toggle() })
+            }
+            .transformable(gestureState),
+        contentAlignment = Alignment.Center
+    ) {
+        Image(
+            bitmap = bitmap,
+            contentDescription = contentDescription,
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = zoomState.scale
+                    scaleY = zoomState.scale
+                    translationX = zoomState.offset.x
+                    translationY = zoomState.offset.y
+                },
+            contentScale = ContentScale.Fit
+        )
+        if (showScale && zoomState.scale > MIN_RESULT_ZOOM) {
+            TextButton(
+                onClick = zoomState::reset,
+                modifier = Modifier.align(Alignment.TopEnd)
+            ) {
+                Text("${formatZoomScale(zoomState.scale)}×")
+            }
+        }
+    }
+}
+
+internal fun clampZoomOffset(offset: Offset, scale: Float, viewportSize: IntSize): Offset {
+    if (scale <= MIN_RESULT_ZOOM || viewportSize == IntSize.Zero) return Offset.Zero
+    val maxX = viewportSize.width * (scale - 1f) / 2f
+    val maxY = viewportSize.height * (scale - 1f) / 2f
+    return Offset(
+        x = offset.x.coerceIn(-maxX, maxX),
+        y = offset.y.coerceIn(-maxY, maxY)
+    )
+}
+
+private fun formatZoomScale(scale: Float): String = String.format(Locale.US, "%.1f", scale)
+
+private const val MIN_RESULT_ZOOM = 1f
+private const val DOUBLE_TAP_RESULT_ZOOM = 3f
+private const val MAX_RESULT_ZOOM = 6f
 
 private fun ProcessedResult.toComparisonImage(): ComparisonImage =
     ComparisonImage(
