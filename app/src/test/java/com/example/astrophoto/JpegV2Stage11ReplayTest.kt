@@ -453,6 +453,11 @@ class JpegV2Stage12ReplayTest {
             effectiveSkyAlpha = effectiveSky,
             confirmedStars = confirmedStars
         )
+        val manualTrails = ReplayStage1BAnnotations.forCurrentReplay(
+            cleanComposite.image.width,
+            cleanComposite.image.height,
+            paths.keys
+        )
         val cameraDefectDiagnostics = ReplayCameraDefectDiagnosticRunner().run(
             baseline = cleanComposite.image,
             effectiveSkyAlpha = effectiveSky,
@@ -466,11 +471,30 @@ class JpegV2Stage12ReplayTest {
             allFrameIds = paths.keys,
             stars = fullResolutionStars,
             outputRoot = outputRoot.resolve("camera-defects"),
-            manualTrails = ReplayStage1BAnnotations.forCurrentReplay(
-                cleanComposite.image.width,
-                cleanComposite.image.height,
-                paths.keys
-            ),
+            manualTrails = manualTrails,
+            imageLoader = { frame ->
+                val image = checkNotNull(ImageIO.read(paths.getValue(frame.id).toFile()))
+                try {
+                    bufferedImageToArgb(image)
+                } finally {
+                    image.flush()
+                }
+            }
+        )
+        val reverseProvenance = ReplayTrailReverseProvenanceRunner().run(
+            baseline = cleanComposite.image,
+            reference = referenceArgb,
+            effectiveSkyAlpha = effectiveSky,
+            annotations = manualTrails,
+            frames = registrations.map { (frameId, registration) ->
+                ReplayProvenanceFrame(
+                    id = frameId,
+                    captureIndex = captureIndices.getValue(frameId),
+                    transform = registration.referenceToSourceTransform(),
+                    normalizedWeight = weights.getValue(frameId)
+                )
+            },
+            outputRoot = outputRoot.resolve("camera-defects").resolve("stage1c"),
             imageLoader = { frame ->
                 val image = checkNotNull(ImageIO.read(paths.getValue(frame.id).toFile()))
                 try {
@@ -527,6 +551,7 @@ class JpegV2Stage12ReplayTest {
             "Rejected frames leaked into camera-space diagnostics",
             cameraDefectDiagnostics.acceptedFrameIds.intersect(cameraDefectDiagnostics.rejectedFrameIds).isEmpty()
         )
+        assertEquals(manualTrails.map { it.id }, reverseProvenance.trails.map { it.annotation.id })
         return BackgroundDiagnosticMetrics(cleanMetrics, processedMetrics)
     }
 
