@@ -340,7 +340,7 @@ class JpegV2Stage12ReplayTest {
                 normalizedWeight = weights.getValue(frameId)
             )
         }
-        runBlocking {
+        val cleanIntegrationDiagnostics = runBlocking {
             LinearWeightedIntegrator(
                 tileCoordinator = TileProcessingCoordinator(
                     preferredTileSize = maxOf(width, height),
@@ -465,7 +465,7 @@ class JpegV2Stage12ReplayTest {
         val normalReferenceFrames = frames.map { frame ->
             if (frame.id == reference.analysis.id) frame.copy(normalizedWeight = normalReferenceWeight) else frame
         }
-        runBlocking {
+        val normalReferenceIntegrationDiagnostics = runBlocking {
             LinearWeightedIntegrator(
                 tileCoordinator = TileProcessingCoordinator(
                     preferredTileSize = maxOf(width, height),
@@ -564,6 +564,37 @@ class JpegV2Stage12ReplayTest {
                 }
             }
         )
+        val stage1EBaselineSnapshot = cleanComposite.image.pixels.copyOf()
+        val registrationBakeoff = ReplayRegistrationCorrectionBakeoffRunner().run(
+            baseline = cleanComposite.image,
+            normalReferenceWeightCandidate = normalReferenceCandidate,
+            reference = referenceArgb,
+            initialSkyMask = initialSkyMask,
+            effectiveSkyAlpha = effectiveSky,
+            annotations = manualTrails,
+            morphology = morphologyDiagnostics,
+            frames = registrations.map { (frameId, registration) ->
+                ReplayProvenanceFrame(
+                    id = frameId,
+                    captureIndex = captureIndices.getValue(frameId),
+                    transform = registration.referenceToSourceTransform(),
+                    normalizedWeight = weights.getValue(frameId)
+                )
+            },
+            confirmedStars = confirmedStars,
+            referenceFrameId = reference.analysis.id,
+            baselineProcessingDurationMillis = cleanIntegrationDiagnostics.processingDurationMillis,
+            normalReferenceProcessingDurationMillis = normalReferenceIntegrationDiagnostics.processingDurationMillis,
+            outputRoot = outputRoot.resolve("camera-defects").resolve("stage1e"),
+            imageLoader = { frame ->
+                val image = checkNotNull(ImageIO.read(paths.getValue(frame.id).toFile()))
+                try {
+                    bufferedImageToArgb(image)
+                } finally {
+                    image.flush()
+                }
+            }
+        )
         Files.createDirectories(outputRoot)
         writePng(outputRoot.resolve("clean-stack.png"), cleanComposite.image)
         writePng(outputRoot.resolve("recovered-stars-baseline.png"), cleanComposite.image)
@@ -616,6 +647,11 @@ class JpegV2Stage12ReplayTest {
         assertTrue(
             "Stage 1D diagnostics mutated baseline pixels",
             stage1DBaselineSnapshot.contentEquals(cleanComposite.image.pixels)
+        )
+        assertTrue("Stage 1E baseline hash changed", registrationBakeoff.baselineUnchanged)
+        assertTrue(
+            "Stage 1E diagnostics mutated baseline pixels",
+            stage1EBaselineSnapshot.contentEquals(cleanComposite.image.pixels)
         )
         return BackgroundDiagnosticMetrics(cleanMetrics, processedMetrics)
     }
