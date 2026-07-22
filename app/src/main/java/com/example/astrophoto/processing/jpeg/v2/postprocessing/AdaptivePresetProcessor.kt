@@ -4,9 +4,16 @@ import com.example.astrophoto.ArgbPixelImage
 import com.example.astrophoto.AstroProcessingProfile
 import com.example.astrophoto.processing.jpeg.v2.composition.SkyForegroundComposer
 import com.example.astrophoto.processing.jpeg.v2.model.AdaptiveProcessingDiagnostics
+import com.example.astrophoto.processing.jpeg.v2.model.AdaptiveProcessingFeatureFlags
 import com.example.astrophoto.processing.jpeg.v2.model.AlphaMask
+import com.example.astrophoto.processing.jpeg.v2.model.ChromaNoiseDiagnostics
 import com.example.astrophoto.processing.jpeg.v2.model.DetectedStar
+import com.example.astrophoto.processing.jpeg.v2.model.GradientRemovalDiagnostics
+import com.example.astrophoto.processing.jpeg.v2.model.LinearRgb
+import com.example.astrophoto.processing.jpeg.v2.model.NeutralizationDiagnostics
 import com.example.astrophoto.processing.jpeg.v2.model.PresetProcessingResult
+import com.example.astrophoto.processing.jpeg.v2.model.StarEnhancementDiagnostics
+import com.example.astrophoto.processing.jpeg.v2.model.StretchDiagnostics
 import com.example.astrophoto.processing.jpeg.v2.profile.ExistingPresetParameterMapper
 
 class AdaptivePresetProcessor(
@@ -16,7 +23,8 @@ class AdaptivePresetProcessor(
     private val stretch: AdaptiveAsinhStretch = AdaptiveAsinhStretch(statistics),
     private val chromaNoiseReducer: ChromaNoiseReducer = ChromaNoiseReducer(),
     private val starEnhancer: LocalStarContrastEnhancer = LocalStarContrastEnhancer(),
-    private val composer: SkyForegroundComposer = SkyForegroundComposer()
+    private val composer: SkyForegroundComposer = SkyForegroundComposer(),
+    private val featureFlags: AdaptiveProcessingFeatureFlags = AdaptiveProcessingFeatureFlags()
 ) {
     suspend fun process(
         stackedSky: ArgbPixelImage,
@@ -39,6 +47,32 @@ class AdaptivePresetProcessor(
         var stageStarted = System.nanoTime()
         val before = statistics.calculate(stackedSky, effectiveSkyAlpha, alignedStackStars)
         stageDurations["sky_statistics"] = elapsed(stageStarted)
+        if (featureFlags.bypassArtifactPronePostProcessing) {
+            val composite = composer.compose(
+                stackedSky = stackedSky,
+                reference = referenceForeground,
+                featheredSkyMask = effectiveSkyAlpha,
+                validCoverage = effectiveSkyAlpha,
+                precomputedEffectiveSkyAlpha = effectiveSkyAlpha
+            )
+            stageDurations["artifact_prone_postprocessing_bypassed"] = 0L
+            return PresetProcessingResult(
+                composite.image,
+                AdaptiveProcessingDiagnostics(
+                    preset = profile.name,
+                    before = before,
+                    after = before,
+                    gradient = GradientRemovalDiagnostics(0f, 0, 0, 0, 0f),
+                    neutralization = NeutralizationDiagnostics(LinearRgb(0f, 0f, 0f)),
+                    stretch = StretchDiagnostics(0f, 1f, 0f, 0f, 0f, 1f),
+                    chromaNoise = ChromaNoiseDiagnostics(0f, 0),
+                    starEnhancement = StarEnhancementDiagnostics(0f, 0, 0, 0, 0f),
+                    foregroundDifferenceOutsideMask = composite.diagnostics.maximumForegroundChannelDifference,
+                    processingDurationMillis = (System.nanoTime() - started) / 1_000_000L,
+                    stageDurationsMillis = stageDurations
+                )
+            )
+        }
         var working = stackedSky
 
         onProgress("Removing light pollution", 1, TOTAL_STAGES)

@@ -6,6 +6,7 @@ import com.example.astrophoto.processing.jpeg.v2.color.SrgbTransfer
 import com.example.astrophoto.processing.jpeg.v2.memory.JpegMemoryBudget
 import com.example.astrophoto.processing.jpeg.v2.memory.PipelineMemoryTracker
 import com.example.astrophoto.processing.jpeg.v2.model.AdaptiveProcessingDiagnostics
+import com.example.astrophoto.processing.jpeg.v2.model.AdaptiveProcessingFeatureFlags
 import com.example.astrophoto.processing.jpeg.v2.model.ChromaNoiseDiagnostics
 import com.example.astrophoto.processing.jpeg.v2.model.DetectedStar
 import com.example.astrophoto.processing.jpeg.v2.model.GradientRemovalDiagnostics
@@ -38,7 +39,8 @@ data class FileBackedAdaptiveProcessingResult(
 /** Stage 4 equivalent that owns only bounded tile/halo buffers and file handles. */
 class FileBackedAdaptivePresetProcessor(
     private val statistics: FileBackedSkyStatistics = FileBackedSkyStatistics(),
-    private val composer: FileBackedSkyForegroundComposer = FileBackedSkyForegroundComposer()
+    private val composer: FileBackedSkyForegroundComposer = FileBackedSkyForegroundComposer(),
+    private val featureFlags: AdaptiveProcessingFeatureFlags = AdaptiveProcessingFeatureFlags()
 ) {
     suspend fun process(
         stackedSky: FileBackedImage,
@@ -70,6 +72,21 @@ class FileBackedAdaptivePresetProcessor(
         var stageStarted = System.nanoTime()
         val before = fileStatistics(stackedSky)
         durations["sky_statistics"] = elapsed(stageStarted)
+        if (featureFlags.bypassArtifactPronePostProcessing) {
+            durations["artifact_prone_postprocessing_bypassed"] = 0L
+            return bypassPostProcessing(
+                stackedSky,
+                referenceForeground,
+                effectiveSkyAlpha,
+                profile,
+                before,
+                store,
+                memoryBudget,
+                memoryTracker,
+                started,
+                durations
+            )
+        }
 
         onProgress("Removing light pollution", 1, TOTAL_STAGES)
         stageStarted = System.nanoTime()
@@ -272,6 +289,68 @@ class FileBackedAdaptivePresetProcessor(
                 ),
                 chromaNoise = chromaDiagnostics,
                 starEnhancement = starDiagnostics,
+                foregroundDifferenceOutsideMask = composite.diagnostics.maximumForegroundChannelDifference,
+                processingDurationMillis = (System.nanoTime() - started) / 1_000_000L,
+                stageDurationsMillis = durations
+            )
+        )
+    }
+
+    private fun bypassPostProcessing(
+        stackedSky: FileBackedImage,
+        referenceForeground: FileBackedImage,
+        effectiveSkyAlpha: FileBackedFloatPlane,
+        profile: AstroProcessingProfile,
+        before: SkyStatisticsResult,
+        store: ResultCandidateStore,
+        memoryBudget: JpegMemoryBudget,
+        memoryTracker: PipelineMemoryTracker,
+        started: Long,
+        durations: Map<String, Long>
+    ): FileBackedAdaptiveProcessingResult {
+        val processedWriter = store.createWriter(
+            ResultCandidateType.PROCESSED,
+            stackedSky.width,
+            stackedSky.height
+        )
+        val alphaCopyWriter = store.createFloatPlaneWriter(
+            "diagnostic-bypass-effective",
+            stackedSky.width,
+            stackedSky.height
+        )
+        val alphaForMask = FileBackedFloatPlaneReader(effectiveSkyAlpha)
+        val alphaForCoverage = FileBackedFloatPlaneReader(effectiveSkyAlpha)
+        val alphaPrecomputed = FileBackedFloatPlaneReader(effectiveSkyAlpha)
+        val composite = try {
+            composer.compose(
+                stackedSky = stackedSky,
+                reference = referenceForeground,
+                featheredSkyMask = alphaForMask,
+                validCoverage = alphaForCoverage,
+                output = processedWriter,
+                effectiveAlphaOutput = alphaCopyWriter,
+                memoryBudget = memoryBudget,
+                memoryTracker = memoryTracker,
+                precomputedEffectiveSkyAlpha = alphaPrecomputed
+            )
+        } finally {
+            alphaForMask.close()
+            alphaForCoverage.close()
+            alphaPrecomputed.close()
+        }
+        store.deleteTemporary(composite.effectiveSkyAlpha)
+        val processed = store.register(ResultCandidateType.PROCESSED, composite.image)
+        return FileBackedAdaptiveProcessingResult(
+            processed,
+            AdaptiveProcessingDiagnostics(
+                preset = profile.name,
+                before = before,
+                after = before,
+                gradient = GradientRemovalDiagnostics(0f, 0, 0, 0, 0f),
+                neutralization = NeutralizationDiagnostics(LinearRgb(0f, 0f, 0f)),
+                stretch = StretchDiagnostics(0f, 1f, 0f, 0f, 0f, 1f),
+                chromaNoise = ChromaNoiseDiagnostics(0f, 0),
+                starEnhancement = StarEnhancementDiagnostics(0f, 0, 0, 0, 0f),
                 foregroundDifferenceOutsideMask = composite.diagnostics.maximumForegroundChannelDifference,
                 processingDurationMillis = (System.nanoTime() - started) / 1_000_000L,
                 stageDurationsMillis = durations

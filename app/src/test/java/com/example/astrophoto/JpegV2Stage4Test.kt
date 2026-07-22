@@ -3,6 +3,7 @@ package com.example.astrophoto
 import com.example.astrophoto.processing.jpeg.v2.analysis.JpegStarDetector
 import com.example.astrophoto.processing.jpeg.v2.composition.SkyForegroundComposer
 import com.example.astrophoto.processing.jpeg.v2.model.AlphaMask
+import com.example.astrophoto.processing.jpeg.v2.model.AdaptiveProcessingFeatureFlags
 import com.example.astrophoto.processing.jpeg.v2.model.DetectedStar
 import com.example.astrophoto.processing.jpeg.v2.model.SkyMask
 import com.example.astrophoto.processing.jpeg.v2.postprocessing.AdaptiveAsinhStretch
@@ -459,6 +460,39 @@ class JpegV2Stage4Test {
             val second = process(profile, image, AlphaMask.full(image.width, image.height))
             assertArrayEquals(profile.name, first.image.pixels, second.image.pixels)
         }
+    }
+
+    @Test fun diagnosticBypassReturnsTheUnprocessedCleanComposite() {
+        val sky = gradientScene()
+        val reference = splitScene(sky.width, sky.height, rgb(35, 35, 35), rgb(120, 70, 30))
+        val alpha = topMask(sky.width, sky.height, sky.height / 2)
+        val expected = SkyForegroundComposer().compose(
+            sky,
+            reference,
+            alpha,
+            alpha,
+            alpha
+        ).image
+        val actual = runBlocking {
+            AdaptivePresetProcessor(
+                featureFlags = AdaptiveProcessingFeatureFlags(
+                    bypassArtifactPronePostProcessing = true
+                )
+            ).process(
+                sky,
+                reference,
+                alpha,
+                AstroProcessingProfile.DEEP_SKY,
+                20,
+                emptyList()
+            )
+        }
+
+        assertArrayEquals(expected.pixels, actual.image.pixels)
+        assertEquals(actual.diagnostics.before, actual.diagnostics.after)
+        assertTrue(actual.diagnostics.stageDurationsMillis.containsKey(
+            "artifact_prone_postprocessing_bypassed"
+        ))
     }
 
     private fun process(

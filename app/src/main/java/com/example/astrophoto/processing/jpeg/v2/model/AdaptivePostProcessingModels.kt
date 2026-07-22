@@ -76,6 +76,11 @@ data class AdaptiveProcessingParameters(
     }
 }
 
+/** Temporary, internal diagnostic switch. Production behavior remains enabled by default. */
+data class AdaptiveProcessingFeatureFlags(
+    val bypassArtifactPronePostProcessing: Boolean = false
+)
+
 data class GradientRemovalDiagnostics(
     val modelConfidence: Float,
     val gridColumns: Int,

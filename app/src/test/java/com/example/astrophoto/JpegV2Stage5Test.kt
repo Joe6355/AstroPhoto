@@ -170,6 +170,52 @@ class JpegV2Stage5Test {
         assertBackgroundHard(metrics().copy(gradientResidual = 0.10f), "gradient")
     }
 
+    @Test fun backgroundComparatorRejectsObservedBadDeepSkyMetrics() {
+        val clean = metrics().copy(
+            skyMad = 0.0004884005f,
+            banding = BandingMetrics(0.039459605f, 0f, 0.039459605f),
+            gradientResidual = 0.00090800284f
+        )
+        val processed = clean.copy(
+            skyMad = 0.0014652015f,
+            banding = BandingMetrics(0.15164334f, 0.1598496f, 0.22033519f),
+            gradientResidual = 0.004471277f
+        )
+        val comparison = backgroundComparator.compare(
+            clean,
+            processed,
+            ExistingPresetParameterMapper.parametersFor(cleanProfile, 20)
+        )
+
+        assertTrue(comparison.hardFailureReasons.contains("sky_mad_increased_excessively"))
+        assertTrue(comparison.hardFailureReasons.contains("banding_increased_excessively"))
+        assertTrue(comparison.hardFailureReasons.contains("gradient_residual_worsened"))
+    }
+
+    @Test fun backgroundComparatorAllowsSmallMetricJitterNearZero() {
+        val clean = metrics().copy(
+            skyMad = 0.00010f,
+            banding = BandingMetrics(0.01f, 0f, 0.01f),
+            gradientResidual = 0.00010f
+        )
+        val processed = clean.copy(
+            skyMad = 0.00020f,
+            banding = BandingMetrics(0.03f, 0f, 0.03f),
+            gradientResidual = 0.00030f
+        )
+        val comparison = backgroundComparator.compare(
+            clean,
+            processed,
+            ExistingPresetParameterMapper.parametersFor(cleanProfile, 20)
+        )
+
+        assertFalse(comparison.hardFailureReasons.any {
+            it == "sky_mad_increased_excessively" ||
+                it == "banding_increased_excessively" ||
+                it == "gradient_residual_worsened"
+        })
+    }
+
     @Test fun backgroundComparatorRejectsFlatGraySky() {
         assertBackgroundHard(metrics().copy(skyMedian = 0.22f, skyMad = 0.0005f), "gray")
     }

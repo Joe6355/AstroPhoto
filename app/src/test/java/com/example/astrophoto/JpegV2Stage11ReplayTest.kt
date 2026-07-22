@@ -3,10 +3,26 @@ package com.example.astrophoto
 import com.example.astrophoto.processing.jpeg.v2.analysis.JpegFrameAnalyzer
 import com.example.astrophoto.processing.jpeg.v2.artifacts.ArtifactFrameObservation
 import com.example.astrophoto.processing.jpeg.v2.artifacts.StaticArtifactAnalyzer
+import com.example.astrophoto.processing.jpeg.v2.composition.MaskFeathering
+import com.example.astrophoto.processing.jpeg.v2.composition.SkyForegroundComposer
 import com.example.astrophoto.processing.jpeg.v2.integration.FrameWeightCalculator
 import com.example.astrophoto.processing.jpeg.v2.integration.FrameWeightInput
+import com.example.astrophoto.processing.jpeg.v2.integration.LinearWeightedIntegrator
+import com.example.astrophoto.processing.jpeg.v2.integration.TileProcessingCoordinator
+import com.example.astrophoto.processing.jpeg.v2.integration.WeightedIntegrationFrame
+import com.example.astrophoto.processing.jpeg.v2.masking.ForegroundProtectionMask
 import com.example.astrophoto.processing.jpeg.v2.masking.SkyMaskEstimator
+import com.example.astrophoto.processing.jpeg.v2.masking.SkyMaskRefiner
+import com.example.astrophoto.processing.jpeg.v2.model.AdaptiveProcessingFeatureFlags
+import com.example.astrophoto.processing.jpeg.v2.model.AlphaMask
 import com.example.astrophoto.processing.jpeg.v2.model.ReferenceToSourceTransform
+import com.example.astrophoto.processing.jpeg.v2.model.ResultQualityMetrics
+import com.example.astrophoto.processing.jpeg.v2.model.SkyMask
+import com.example.astrophoto.processing.jpeg.v2.model.SkyMaskResult
+import com.example.astrophoto.processing.jpeg.v2.output.ArgbArrayPngSource
+import com.example.astrophoto.processing.jpeg.v2.output.PngStreamEncoder
+import com.example.astrophoto.processing.jpeg.v2.postprocessing.AdaptivePresetProcessor
+import com.example.astrophoto.processing.jpeg.v2.quality.ResultQualityAnalyzer
 import com.example.astrophoto.processing.jpeg.v2.registration.ExpectedSequenceMotionModel
 import com.example.astrophoto.processing.jpeg.v2.registration.FullResolutionRegistrationRefiner
 import com.example.astrophoto.processing.jpeg.v2.registration.FullResolutionStarPatch
@@ -30,6 +46,7 @@ import javax.imageio.ImageIO
 import kotlin.math.ceil
 import kotlin.math.hypot
 import kotlin.math.sqrt
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -67,7 +84,7 @@ class JpegV2Stage12ReplayTest {
                 val mask = maskEstimator.estimate(thumbnail)
                 val fileName = path.fileName.toString()
                 val capture = captureIndex(fileName) ?: order + 1
-                ReplayAnalysis(path, capture, analyzer.analyze(fileName, fileName, thumbnail, mask))
+                ReplayAnalysis(path, capture, analyzer.analyze(fileName, fileName, thumbnail, mask), mask)
             }.sortedBy { it.captureIndex }
             val artifactAnalyzer = StaticArtifactAnalyzer()
             val artifactMask = artifactAnalyzer.analyze(
@@ -227,6 +244,15 @@ class JpegV2Stage12ReplayTest {
                 val after = boundedCleanStackReplay(
                     pathById, finalTransforms, cleanReplayPatches, reference.path, replayWeights
                 )
+                val backgroundDiagnostic = writeBackgroundDiagnosticReplay(
+                    outputRoot = Path.of("build/reports/jpeg-postprocess-ab"),
+                    reference = reference,
+                    referenceImage = referenceImage,
+                    paths = pathById,
+                    registrations = finalRegistrations,
+                    weights = replayWeights,
+                    fullResolutionStars = fullPatches
+                )
                 val beforeResiduals = centroidResults.values.filterNot { it.frameId == reference.analysis.id }
                     .map { hypot(it.correctionDx, it.correctionDy) }
                 val znccResiduals = centroidResults.values.filterNot { it.frameId == reference.analysis.id }
@@ -254,6 +280,12 @@ class JpegV2Stage12ReplayTest {
                         "centroid=${before.centroidResidual}->${after.centroidResidual} " +
                         "smear=${before.smear}->${after.smear} " +
                         "effectiveFrames=$effectiveFrameCount noiseReduction=$estimatedNoiseReduction " +
+                        "cleanSkyMad=${backgroundDiagnostic.clean.skyMad} " +
+                        "processedSkyMad=${backgroundDiagnostic.processed.skyMad} " +
+                        "cleanBanding=${backgroundDiagnostic.clean.banding.combinedScore} " +
+                        "processedBanding=${backgroundDiagnostic.processed.banding.combinedScore} " +
+                        "cleanGradient=${backgroundDiagnostic.clean.gradientResidual} " +
+                        "processedGradient=${backgroundDiagnostic.processed.gradientResidual} " +
                         "full=${referenceImage.width}x${referenceImage.height}"
                 )
                 centroidResults.values.forEach { value ->
@@ -280,6 +312,201 @@ class JpegV2Stage12ReplayTest {
             }
         } finally {
             extracted.toFile().deleteRecursively()
+        }
+    }
+
+    private fun writeBackgroundDiagnosticReplay(
+        outputRoot: Path,
+        reference: ReplayAnalysis,
+        referenceImage: BufferedImage,
+        paths: Map<String, Path>,
+        registrations: Map<String, com.example.astrophoto.processing.jpeg.v2.model.RegistrationResult>,
+        weights: Map<String, Float>,
+        fullResolutionStars: List<FullResolutionStarPatch>
+    ): BackgroundDiagnosticMetrics {
+        val width = referenceImage.width
+        val height = referenceImage.height
+        val initialSkyMask = scaleSkyMask(reference.skyMask.mask, width, height)
+        val stackedPixels = IntArray(width * height)
+        val coverage = FloatArray(width * height)
+        val frames = registrations.map { (frameId, registration) ->
+            WeightedIntegrationFrame(
+                id = frameId,
+                source = paths.getValue(frameId),
+                transform = registration,
+                normalizedWeight = weights.getValue(frameId)
+            )
+        }
+        runBlocking {
+            LinearWeightedIntegrator(
+                tileCoordinator = TileProcessingCoordinator(
+                    preferredTileSize = maxOf(width, height),
+                    minimumTileSize = 32
+                )
+            ).integrate(
+                outputWidth = width,
+                outputHeight = height,
+                frames = frames,
+                maximumWorkingMemoryBytes = 512L * 1024L * 1024L,
+                openSource = { path ->
+                    OwnedBufferedImageSource(checkNotNull(ImageIO.read(path.toFile())))
+                },
+                allowRobustClipping = false,
+                includeOutputPixel = initialSkyMask::contains,
+                writeTile = { tile, pixels ->
+                    copyTile(pixels, tile.width, tile.height, tile.left, tile.top, width, stackedPixels)
+                },
+                writeCoverageTile = { tile, values ->
+                    copyTile(values, tile.width, tile.height, tile.left, tile.top, width, coverage)
+                }
+            )
+        }
+        val stacked = ArgbPixelImage(width, height, stackedPixels)
+        val referenceArgb = bufferedImageToArgb(referenceImage)
+        val stars = fullResolutionStars.map { patch ->
+            com.example.astrophoto.processing.jpeg.v2.model.DetectedStar(
+                patch.x,
+                patch.y,
+                1f,
+                patch.localContrast,
+                patch.localContrast,
+                patch.width,
+                patch.ellipticity,
+                patch.confidence
+            )
+        }
+        val refined = SkyMaskRefiner().refine(
+            initialSkyMask,
+            referenceArgb,
+            stars,
+            reference.skyMask.confidence,
+            reference.skyMask.usedFallback,
+            registrations.values.map { it.confidence }.average().toFloat()
+        )
+        val protection = ForegroundProtectionMask().detect(referenceArgb, stars)
+        val feathered = MaskFeathering().feather(
+            refined.binaryMask,
+            protection.mask,
+            refined.diagnostics.featherRadius
+        ).alphaMask
+        val validCoverage = AlphaMask(width, height, coverage)
+        val cleanComposite = SkyForegroundComposer().compose(
+            stacked,
+            referenceArgb,
+            feathered,
+            validCoverage
+        )
+        val effectiveSky = cleanComposite.effectiveSkyAlpha
+        val bypassed = runBlocking {
+            AdaptivePresetProcessor(
+                featureFlags = AdaptiveProcessingFeatureFlags(
+                    bypassArtifactPronePostProcessing = true
+                )
+            ).process(
+                stacked,
+                referenceArgb,
+                effectiveSky,
+                AstroProcessingProfile.DEEP_SKY,
+                frames.size,
+                stars
+            )
+        }
+        assertTrue(
+            "Diagnostic bypass must be pixel-identical to the clean stack",
+            bypassed.image.pixels.contentEquals(cleanComposite.image.pixels)
+        )
+        val processed = runBlocking {
+            AdaptivePresetProcessor().process(
+                stacked,
+                referenceArgb,
+                effectiveSky,
+                AstroProcessingProfile.DEEP_SKY,
+                frames.size,
+                stars
+            )
+        }
+        val analyzer = ResultQualityAnalyzer()
+        val cleanMetrics = analyzer.analyze(cleanComposite.image, referenceArgb, effectiveSky)
+        val processedMetrics = analyzer.analyze(processed.image, referenceArgb, effectiveSky)
+        Files.createDirectories(outputRoot)
+        writePng(outputRoot.resolve("clean-stack.png"), cleanComposite.image)
+        writePng(outputRoot.resolve("deep-sky-current.png"), processed.image)
+        Files.writeString(
+            outputRoot.resolve("metrics.txt"),
+            buildString {
+                appendLine("acceptedFrames=${frames.size}")
+                appendLine("clean.skyMad=${cleanMetrics.skyMad}")
+                appendLine("processed.skyMad=${processedMetrics.skyMad}")
+                appendLine("clean.banding=${cleanMetrics.banding.combinedScore}")
+                appendLine("processed.banding=${processedMetrics.banding.combinedScore}")
+                appendLine("clean.gradientResidual=${cleanMetrics.gradientResidual}")
+                appendLine("processed.gradientResidual=${processedMetrics.gradientResidual}")
+            }
+        )
+        return BackgroundDiagnosticMetrics(cleanMetrics, processedMetrics)
+    }
+
+    private fun scaleSkyMask(source: SkyMask, width: Int, height: Int): SkyMask = SkyMask(
+        width,
+        height,
+        BooleanArray(width * height) { index ->
+            val x = index % width
+            val y = index / width
+            source.contains(
+                (x.toLong() * source.width / width).toInt().coerceIn(0, source.width - 1),
+                (y.toLong() * source.height / height).toInt().coerceIn(0, source.height - 1)
+            )
+        }
+    )
+
+    private fun copyTile(
+        source: IntArray,
+        tileWidth: Int,
+        tileHeight: Int,
+        left: Int,
+        top: Int,
+        outputWidth: Int,
+        destination: IntArray
+    ) {
+        for (row in 0 until tileHeight) source.copyInto(
+            destination,
+            destinationOffset = (top + row) * outputWidth + left,
+            startIndex = row * tileWidth,
+            endIndex = (row + 1) * tileWidth
+        )
+    }
+
+    private fun copyTile(
+        source: FloatArray,
+        tileWidth: Int,
+        tileHeight: Int,
+        left: Int,
+        top: Int,
+        outputWidth: Int,
+        destination: FloatArray
+    ) {
+        for (row in 0 until tileHeight) source.copyInto(
+            destination,
+            destinationOffset = (top + row) * outputWidth + left,
+            startIndex = row * tileWidth,
+            endIndex = (row + 1) * tileWidth
+        )
+    }
+
+    private fun bufferedImageToArgb(image: BufferedImage): ArgbPixelImage = ArgbPixelImage(
+        image.width,
+        image.height,
+        IntArray(image.width * image.height).also { pixels ->
+            image.getRGB(0, 0, image.width, image.height, pixels, 0, image.width)
+        }
+    )
+
+    private fun writePng(path: Path, image: ArgbPixelImage) {
+        Files.newOutputStream(path).use { output ->
+            PngStreamEncoder.encode(
+                ArgbArrayPngSource(image.width, image.height, image.pixels),
+                output
+            )
         }
     }
 
@@ -486,10 +713,23 @@ class JpegV2Stage12ReplayTest {
         override fun argbAt(x: Int, y: Int): Int = image.getRGB(x, y)
     }
 
+    private class OwnedBufferedImageSource(private val image: BufferedImage) : ArgbPixelSource {
+        override val width: Int = image.width
+        override val height: Int = image.height
+        override fun argbAt(x: Int, y: Int): Int = image.getRGB(x, y)
+        override fun close() = image.flush()
+    }
+
     private data class ReplayAnalysis(
         val path: Path,
         val captureIndex: Int,
-        val analysis: com.example.astrophoto.processing.jpeg.v2.model.FrameAnalysis
+        val analysis: com.example.astrophoto.processing.jpeg.v2.model.FrameAnalysis,
+        val skyMask: SkyMaskResult
+    )
+
+    private data class BackgroundDiagnosticMetrics(
+        val clean: ResultQualityMetrics,
+        val processed: ResultQualityMetrics
     )
 
     private data class PatchMetrics(

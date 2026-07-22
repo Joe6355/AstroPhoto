@@ -23,9 +23,15 @@ class BackgroundQualityComparator {
         } else if (processed.skyMedian > clean.skyMedian * WARNING_MEDIAN_FACTOR + MIN_MEDIAN_HEADROOM) {
             warnings += "sky_median_increased"
         }
-        if (processed.skyMad > clean.skyMad * HARD_NOISE_FACTOR + NOISE_ALLOWANCE) {
+        if (significantlyWorse(processed.skyMad, clean.skyMad, HARD_NOISE_FACTOR, NOISE_ALLOWANCE)) {
             hard += "sky_mad_increased_excessively"
-        } else if (processed.skyMad > clean.skyMad * WARNING_NOISE_FACTOR + NOISE_ALLOWANCE) {
+        } else if (significantlyWorse(
+                processed.skyMad,
+                clean.skyMad,
+                WARNING_NOISE_FACTOR,
+                WARNING_NOISE_ALLOWANCE
+            )
+        ) {
             warnings += "sky_mad_increased"
         }
         if (processed.chromaNoiseEstimate >
@@ -41,16 +47,30 @@ class BackgroundQualityComparator {
         if (exceedsClipping(clean, processed, clippingLimit)) {
             hard += "per_channel_clipping_excessive"
         }
-        if (processed.banding.combinedScore >
-            clean.banding.combinedScore * HARD_BANDING_FACTOR + BANDING_ALLOWANCE
+        if (significantlyWorse(
+                processed.banding.combinedScore,
+                clean.banding.combinedScore,
+                HARD_BANDING_FACTOR,
+                BANDING_ALLOWANCE
+            )
         ) {
             hard += "banding_increased_excessively"
-        } else if (processed.banding.combinedScore >
-            clean.banding.combinedScore * WARNING_BANDING_FACTOR + BANDING_ALLOWANCE
+        } else if (significantlyWorse(
+                processed.banding.combinedScore,
+                clean.banding.combinedScore,
+                WARNING_BANDING_FACTOR,
+                WARNING_BANDING_ALLOWANCE
+            )
         ) {
             warnings += "banding_increased"
         }
-        if (processed.gradientResidual > clean.gradientResidual * HARD_GRADIENT_FACTOR + GRADIENT_ALLOWANCE) {
+        if (significantlyWorse(
+                processed.gradientResidual,
+                clean.gradientResidual,
+                HARD_GRADIENT_FACTOR,
+                GRADIENT_ALLOWANCE
+            )
+        ) {
             hard += "gradient_residual_worsened"
         }
         if (processed.skyMedian >= FLAT_GRAY_MIN_MEDIAN && processed.skyMad <= FLAT_GRAY_MAX_MAD) {
@@ -85,21 +105,30 @@ class BackgroundQualityComparator {
         maxOf(metrics.channelMedian.red, metrics.channelMedian.green, metrics.channelMedian.blue) -
             minOf(metrics.channelMedian.red, metrics.channelMedian.green, metrics.channelMedian.blue)
 
+    private fun significantlyWorse(
+        processed: Float,
+        clean: Float,
+        factor: Float,
+        minimumIncrease: Float
+    ): Boolean = processed > clean * factor && processed - clean > minimumIncrease
+
     companion object {
         private const val MIN_MEDIAN_HEADROOM = 0.001f
         private const val METRIC_TOLERANCE = 0.001f
         private const val WARNING_MEDIAN_FACTOR = 1.35f
-        private const val HARD_NOISE_FACTOR = 1.65f
+        private const val HARD_NOISE_FACTOR = 1.75f
         private const val WARNING_NOISE_FACTOR = 1.30f
-        private const val NOISE_ALLOWANCE = 0.002f
+        private const val NOISE_ALLOWANCE = 1f / 4095f
+        private const val WARNING_NOISE_ALLOWANCE = 1f / 8191f
         private const val HARD_CHROMA_FACTOR = 1.50f
         private const val WARNING_CHROMA_FACTOR = 1.25f
         private const val CHROMA_ALLOWANCE = 0.003f
-        private const val HARD_BANDING_FACTOR = 1.50f
+        private const val HARD_BANDING_FACTOR = 2.00f
         private const val WARNING_BANDING_FACTOR = 1.25f
-        private const val BANDING_ALLOWANCE = 0.35f
-        private const val HARD_GRADIENT_FACTOR = 1.35f
-        private const val GRADIENT_ALLOWANCE = 0.010f
+        private const val BANDING_ALLOWANCE = 0.05f
+        private const val WARNING_BANDING_ALLOWANCE = 0.025f
+        private const val HARD_GRADIENT_FACTOR = 2.00f
+        private const val GRADIENT_ALLOWANCE = 1f / 1024f
         private const val FLAT_GRAY_MIN_MEDIAN = 0.18f
         private const val FLAT_GRAY_MAX_MAD = 0.001f
         private const val CRUSHED_BLACK_LIMIT = 1f / 4095f
