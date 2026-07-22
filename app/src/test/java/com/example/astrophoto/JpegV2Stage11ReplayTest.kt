@@ -45,6 +45,7 @@ import java.util.zip.ZipInputStream
 import javax.imageio.ImageIO
 import kotlin.math.ceil
 import kotlin.math.hypot
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -428,9 +429,48 @@ class JpegV2Stage12ReplayTest {
         val analyzer = ResultQualityAnalyzer()
         val cleanMetrics = analyzer.analyze(cleanComposite.image, referenceArgb, effectiveSky)
         val processedMetrics = analyzer.analyze(processed.image, referenceArgb, effectiveSky)
+        val confirmedStars = fullResolutionStars
+            .filter {
+                it.motionCluster == com.example.astrophoto.processing.jpeg.v2.registration.TemporalMotionCluster.COHERENT_MOVING_SKY &&
+                    it.confidence >= 0.35f
+            }
+            .map { patch ->
+                com.example.astrophoto.processing.jpeg.v2.model.DetectedStar(
+                    patch.x,
+                    patch.y,
+                    1f,
+                    patch.localContrast,
+                    patch.localContrast,
+                    patch.width,
+                    patch.ellipticity,
+                    patch.confidence
+                )
+            }
+        val toneDiagnostics = ReplayGlobalToneDiagnosticRunner().run(
+            baseline = cleanComposite.image,
+            effectiveSkyAlpha = effectiveSky,
+            confirmedStars = confirmedStars
+        )
         Files.createDirectories(outputRoot)
         writePng(outputRoot.resolve("clean-stack.png"), cleanComposite.image)
+        writePng(outputRoot.resolve("recovered-stars-baseline.png"), cleanComposite.image)
         writePng(outputRoot.resolve("deep-sky-current.png"), processed.image)
+        toneDiagnostics.results.forEach { result ->
+            writePng(
+                outputRoot.resolve("global-tone-gain-${gainLabel(result.candidate.gain)}.png"),
+                result.candidate.image
+            )
+        }
+        writeToneDiagnosticCrops(
+            outputRoot.resolve("crops"),
+            cleanComposite.image,
+            effectiveSky,
+            toneDiagnostics
+        )
+        Files.writeString(
+            outputRoot.resolve("global-tone-metrics.txt"),
+            toneDiagnostics.reportText()
+        )
         Files.writeString(
             outputRoot.resolve("metrics.txt"),
             buildString {
@@ -443,7 +483,145 @@ class JpegV2Stage12ReplayTest {
                 appendLine("processed.gradientResidual=${processedMetrics.gradientResidual}")
             }
         )
+        assertTrue("Global-tone diagnostics mutated baseline pixels", toneDiagnostics.baselineUnchanged)
+        assertTrue("No confirmed fixed star supports", toneDiagnostics.supports.isNotEmpty())
+        assertTrue(
+            "Candidate anchors diverged",
+            toneDiagnostics.results.all { it.candidate.anchors == toneDiagnostics.anchors }
+        )
+        assertTrue(
+            "Linear gamut overflow",
+            toneDiagnostics.results.all { it.candidate.maximumLinearChannel <= 1.0 + 1e-12 }
+        )
         return BackgroundDiagnosticMetrics(cleanMetrics, processedMetrics)
+    }
+
+    private fun writeToneDiagnosticCrops(
+        outputRoot: Path,
+        baseline: ArgbPixelImage,
+        effectiveSky: AlphaMask,
+        diagnostics: ReplayToneDiagnosticBundle
+    ) {
+        Files.createDirectories(outputRoot)
+        val crops = replayToneCrops(baseline, effectiveSky, diagnostics)
+        crops.forEach { crop ->
+            writePng(
+                outputRoot.resolve("${crop.name}-baseline.png"),
+                cropImage(baseline, crop)
+            )
+            diagnostics.results.forEach { result ->
+                writePng(
+                    outputRoot.resolve(
+                        "${crop.name}-gain-${gainLabel(result.candidate.gain)}.png"
+                    ),
+                    cropImage(result.candidate.image, crop)
+                )
+            }
+        }
+    }
+
+    private fun replayToneCrops(
+        baseline: ArgbPixelImage,
+        effectiveSky: AlphaMask,
+        diagnostics: ReplayToneDiagnosticBundle
+    ): List<ReplayToneCrop> {
+        val cropSize = minOf(256, baseline.width, baseline.height)
+        val skyTargetX = (baseline.width * 0.58).roundToInt()
+        val skyTargetY = (baseline.height * 0.24).roundToInt()
+        val skyCenter = closestPixel(
+            baseline.width,
+            baseline.height,
+            skyTargetX,
+            skyTargetY
+        ) { x, y -> effectiveSky.alphaAt(x, y) >= 0.98f }
+        val weakStarSupport = diagnostics.supports.indices
+            .minByOrNull { diagnostics.baselineStarMetrics[it].contrast }
+            ?.let(diagnostics.supports::get)
+        val starCenter = weakStarSupport?.let {
+            it.baselineX.roundToInt() to it.baselineY.roundToInt()
+        } ?: skyCenter
+        val highlightCenter = brightestForegroundPixel(baseline, effectiveSky)
+        return listOf(
+            cropAround("sky", skyCenter.first, skyCenter.second, cropSize, baseline),
+            cropAround("weak-star", starCenter.first, starCenter.second, cropSize, baseline),
+            cropAround(
+                "building-edge",
+                (baseline.width * 0.20).roundToInt(),
+                (baseline.height * 0.34).roundToInt(),
+                cropSize,
+                baseline
+            ),
+            cropAround("bright-window", highlightCenter.first, highlightCenter.second, cropSize, baseline)
+        )
+    }
+
+    private fun brightestForegroundPixel(
+        image: ArgbPixelImage,
+        effectiveSky: AlphaMask
+    ): Pair<Int, Int> {
+        var bestIndex = 0
+        var bestValue = -1
+        image.pixels.indices.forEach { index ->
+            val x = index % image.width
+            val y = index / image.width
+            if (effectiveSky.alphaAt(x, y) > 0.02f) return@forEach
+            val color = image.pixels[index]
+            val value = maxOf(color ushr 16 and 0xFF, color ushr 8 and 0xFF, color and 0xFF)
+            if (value > bestValue) {
+                bestValue = value
+                bestIndex = index
+            }
+        }
+        return bestIndex % image.width to bestIndex / image.width
+    }
+
+    private fun closestPixel(
+        width: Int,
+        height: Int,
+        targetX: Int,
+        targetY: Int,
+        included: (Int, Int) -> Boolean
+    ): Pair<Int, Int> {
+        var bestX = targetX.coerceIn(0, width - 1)
+        var bestY = targetY.coerceIn(0, height - 1)
+        var bestDistance = Long.MAX_VALUE
+        for (y in 0 until height) for (x in 0 until width) {
+            if (!included(x, y)) continue
+            val dx = (x - targetX).toLong()
+            val dy = (y - targetY).toLong()
+            val distance = dx * dx + dy * dy
+            if (distance < bestDistance) {
+                bestDistance = distance
+                bestX = x
+                bestY = y
+            }
+        }
+        return bestX to bestY
+    }
+
+    private fun cropAround(
+        name: String,
+        centerX: Int,
+        centerY: Int,
+        size: Int,
+        image: ArgbPixelImage
+    ): ReplayToneCrop {
+        val left = (centerX - size / 2).coerceIn(0, image.width - size)
+        val top = (centerY - size / 2).coerceIn(0, image.height - size)
+        return ReplayToneCrop(name, left, top, size, size)
+    }
+
+    private fun cropImage(image: ArgbPixelImage, crop: ReplayToneCrop): ArgbPixelImage {
+        val pixels = IntArray(crop.width * crop.height)
+        for (row in 0 until crop.height) {
+            image.pixels.copyInto(
+                pixels,
+                destinationOffset = row * crop.width,
+                startIndex = (crop.top + row) * image.width + crop.left,
+                endIndex = (crop.top + row) * image.width + crop.left + crop.width
+            )
+        }
+        return ArgbPixelImage(crop.width, crop.height, pixels)
     }
 
     private fun scaleSkyMask(source: SkyMask, width: Int, height: Int): SkyMask = SkyMask(
@@ -744,6 +922,14 @@ class JpegV2Stage12ReplayTest {
         val contrastRatio: Float,
         val centroidResidual: Float,
         val smear: Float
+    )
+
+    private data class ReplayToneCrop(
+        val name: String,
+        val left: Int,
+        val top: Int,
+        val width: Int,
+        val height: Int
     )
 
     companion object {
