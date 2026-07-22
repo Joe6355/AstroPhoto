@@ -458,6 +458,41 @@ class JpegV2Stage12ReplayTest {
             cleanComposite.image.height,
             paths.keys
         )
+        val normalReferenceWeight = median(
+            weights.filterKeys { it != reference.analysis.id }.values.toList()
+        )
+        val normalReferencePixels = IntArray(width * height)
+        val normalReferenceFrames = frames.map { frame ->
+            if (frame.id == reference.analysis.id) frame.copy(normalizedWeight = normalReferenceWeight) else frame
+        }
+        runBlocking {
+            LinearWeightedIntegrator(
+                tileCoordinator = TileProcessingCoordinator(
+                    preferredTileSize = maxOf(width, height),
+                    minimumTileSize = 32
+                )
+            ).integrate(
+                outputWidth = width,
+                outputHeight = height,
+                frames = normalReferenceFrames,
+                maximumWorkingMemoryBytes = 512L * 1024L * 1024L,
+                openSource = { path ->
+                    OwnedBufferedImageSource(checkNotNull(ImageIO.read(path.toFile())))
+                },
+                allowRobustClipping = false,
+                includeOutputPixel = initialSkyMask::contains,
+                writeTile = { tile, pixels ->
+                    copyTile(pixels, tile.width, tile.height, tile.left, tile.top, width, normalReferencePixels)
+                }
+            )
+        }
+        val normalReferenceCandidate = SkyForegroundComposer().compose(
+            ArgbPixelImage(width, height, normalReferencePixels),
+            referenceArgb,
+            effectiveSky,
+            AlphaMask.full(width, height),
+            precomputedEffectiveSkyAlpha = effectiveSky
+        ).image
         val cameraDefectDiagnostics = ReplayCameraDefectDiagnosticRunner().run(
             baseline = cleanComposite.image,
             effectiveSkyAlpha = effectiveSky,
@@ -495,6 +530,31 @@ class JpegV2Stage12ReplayTest {
                 )
             },
             outputRoot = outputRoot.resolve("camera-defects").resolve("stage1c"),
+            imageLoader = { frame ->
+                val image = checkNotNull(ImageIO.read(paths.getValue(frame.id).toFile()))
+                try {
+                    bufferedImageToArgb(image)
+                } finally {
+                    image.flush()
+                }
+            }
+        )
+        val stage1DBaselineSnapshot = cleanComposite.image.pixels.copyOf()
+        val morphologyDiagnostics = ReplayTrailMorphologyDiagnosticRunner().run(
+            baseline = cleanComposite.image,
+            normalWeightReferenceCandidate = normalReferenceCandidate,
+            annotations = manualTrails,
+            frames = registrations.map { (frameId, registration) ->
+                ReplayProvenanceFrame(
+                    id = frameId,
+                    captureIndex = captureIndices.getValue(frameId),
+                    transform = registration.referenceToSourceTransform(),
+                    normalizedWeight = weights.getValue(frameId)
+                )
+            },
+            controlStars = confirmedStars.map { ReplayControlStar(it.x.toDouble(), it.y.toDouble()) },
+            referenceFrameId = reference.analysis.id,
+            outputRoot = outputRoot.resolve("camera-defects").resolve("stage1d"),
             imageLoader = { frame ->
                 val image = checkNotNull(ImageIO.read(paths.getValue(frame.id).toFile()))
                 try {
@@ -552,6 +612,11 @@ class JpegV2Stage12ReplayTest {
             cameraDefectDiagnostics.acceptedFrameIds.intersect(cameraDefectDiagnostics.rejectedFrameIds).isEmpty()
         )
         assertEquals(manualTrails.map { it.id }, reverseProvenance.trails.map { it.annotation.id })
+        assertEquals(manualTrails.map { it.id }, morphologyDiagnostics.trails.map { it.annotation.id })
+        assertTrue(
+            "Stage 1D diagnostics mutated baseline pixels",
+            stage1DBaselineSnapshot.contentEquals(cleanComposite.image.pixels)
+        )
         return BackgroundDiagnosticMetrics(cleanMetrics, processedMetrics)
     }
 
