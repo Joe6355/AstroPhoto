@@ -91,6 +91,10 @@ import com.example.astrophoto.processing.jpeg.v2.diagnostics.ProcessingRunJourna
 import com.example.astrophoto.processing.jpeg.v2.diagnostics.AppSpecificProcessingReportStore
 import com.example.astrophoto.processing.jpeg.v2.diagnostics.artifactSessionId
 import com.example.astrophoto.processing.jpeg.v2.diagnostics.completeJournalWithSingleRetry
+import com.example.astrophoto.processing.jpeg.v2.enhancement.EnhancedAncillaryOutcome
+import com.example.astrophoto.processing.jpeg.v2.enhancement.EnhancedGlobalToneProcessor
+import com.example.astrophoto.processing.jpeg.v2.enhancement.GlobalToneTransform
+import com.example.astrophoto.processing.jpeg.v2.enhancement.publishOptionalEnhanced
 import com.example.astrophoto.processing.jpeg.v2.integration.FrameWeightCalculator
 import com.example.astrophoto.processing.jpeg.v2.integration.FrameWeightInput
 import com.example.astrophoto.processing.jpeg.v2.integration.LinearWeightedIntegrator
@@ -198,6 +202,45 @@ internal fun jpegProfileOutputPlan(
         "Стек отклонён проверкой качества: использовано $acceptedFrames/$totalFrames; " +
             "${failureReason ?: "reference-only result"}. Файл профиля не создан."
     )
+}
+
+internal data class SavedResultBookkeeping(
+    val report: ProcessingReport,
+    val reportJson: String
+)
+
+internal fun completeSavedResultBookkeeping(
+    report: ProcessingReport,
+    writeCacheReport: (String) -> Unit,
+    updateJournal: () -> Unit
+): SavedResultBookkeeping {
+    val failures = mutableListOf<String>()
+    val initialJson = report.toJson()
+    val cacheWritten = try {
+        writeCacheReport(initialJson)
+        true
+    } catch (error: CancellationException) {
+        throw error
+    } catch (error: Throwable) {
+        failures += "Post-save report cache update failed: " +
+            (error.message ?: error::class.java.simpleName)
+        false
+    }
+    try {
+        updateJournal()
+    } catch (error: CancellationException) {
+        throw error
+    } catch (error: Throwable) {
+        failures += "Post-save journal update failed: " +
+            (error.message ?: error::class.java.simpleName)
+    }
+    if (failures.isEmpty()) return SavedResultBookkeeping(report, initialJson)
+    val finalReport = report.copy(warnings = (report.warnings + failures).distinct())
+    val finalJson = finalReport.toJson()
+    if (cacheWritten) {
+        runCatching { writeCacheReport(finalJson) }
+    }
+    return SavedResultBookkeeping(finalReport, finalJson)
 }
 
 data class JpegStackResult(
@@ -2102,30 +2145,27 @@ class JpegStacker(private val context: Context) {
                 temporaryFiles.atomicTextFile("final-report.json", reportJson)
                 journalRunId?.let { runJournal.update(it, "report_prepared") }
                 currentStage = "Saving lossless PNG"
-                withContext(Dispatchers.Main.immediate) {
-                    onProgress("Saving lossless PNG", 3, 3)
-                }
-                val pngWritingStarted = System.nanoTime()
-                val saved = FileBackedImageReader(finalSelection.selected.image).use { selectedReader ->
-                    LosslessProcessedImageWriter(context).write(
-                        session,
-                        selectedReader,
-                        requestedFileName
-                    )
-                }
-                pipelineTiming.record(
-                    "png_writing",
-                    (System.nanoTime() - pngWritingStarted) / 1_000_000L
+                val savedArtifacts = savePrimaryAndAncillaryEnhanced(
+                    selected = finalSelection.selected,
+                    requestedFileName = requestedFileName,
+                    effectiveSkyAlpha = effectiveSkyAlpha,
+                    confirmedStars = fullResolutionStars,
+                    candidateStore = candidateStore,
+                    session = session,
+                    timestamp = timestamp,
+                    pipelineTiming = pipelineTiming,
+                    processingReport = processingReport,
+                    warnings = warnings,
+                    temporaryFiles = temporaryFiles,
+                    journalRunId = journalRunId,
+                    runJournal = runJournal,
+                    onProgress = onProgress
                 )
+                val saved = savedArtifacts.saved
                 val fileName = saved.fileName
-                processingReport = processingReport.copy(
-                    outputPngDisplayName = fileName,
-                    stageDurationsMillis = pipelineTiming.snapshot(),
-                    lastCompletedStage = "png_saved"
-                )
-                reportJson = processingReport.toJson()
-                temporaryFiles.atomicTextFile("final-report.json", reportJson)
-                journalRunId?.let { runJournal.update(it, "png_saved") }
+                val enhancedFileName = savedArtifacts.enhancedFileName
+                processingReport = savedArtifacts.processingReport
+                reportJson = savedArtifacts.reportJson
 
                 currentStage = "Writing processing report"
                 val reportOutcome = try {
@@ -2141,7 +2181,7 @@ class JpegStacker(private val context: Context) {
                 } catch (error: Exception) {
                     ReportWriteOutcome.Failed(error.message ?: error::class.java.simpleName)
                 }
-                val additionalFiles = when (reportOutcome) {
+                val reportFiles = when (reportOutcome) {
                     is ReportWriteOutcome.Written -> {
                         pipelineTiming.record(
                             "report_writing",
@@ -2179,6 +2219,7 @@ class JpegStacker(private val context: Context) {
                         emptyList()
                     }
                 }
+                val additionalFiles = reportFiles + listOfNotNull(enhancedFileName)
                 val publishedReport = when (reportOutcome) {
                     is ReportWriteOutcome.Written -> reportOutcome.value
                     is ReportWriteOutcome.Failed -> null
@@ -2446,6 +2487,176 @@ class JpegStacker(private val context: Context) {
             "post_completion.profile_returned run=${journalRunId?.take(8).orEmpty()} output=$outputFileName"
         )
         finalizedStackResult
+    }
+
+    private data class SavedProfileArtifacts(
+        val saved: SavedProcessedImage,
+        val enhancedFileName: String?,
+        val processingReport: ProcessingReport,
+        val reportJson: String
+    )
+
+    private suspend fun savePrimaryAndAncillaryEnhanced(
+        selected: StoredResultCandidate,
+        requestedFileName: String,
+        effectiveSkyAlpha: FileBackedFloatPlane,
+        confirmedStars: List<V2DetectedStar>,
+        candidateStore: ResultCandidateStore,
+        session: SessionSummary,
+        timestamp: String,
+        pipelineTiming: PipelineTimingCollector,
+        processingReport: ProcessingReport,
+        warnings: MutableList<String>,
+        temporaryFiles: TemporaryPipelineFiles,
+        journalRunId: String?,
+        runJournal: ProcessingRunJournal,
+        onProgress: suspend (message: String, current: Int, total: Int) -> Unit
+    ): SavedProfileArtifacts {
+        withContext(Dispatchers.Main.immediate) {
+            onProgress("Saving lossless PNG", 3, 3)
+        }
+        val pngWritingStarted = System.nanoTime()
+        val saved = FileBackedImageReader(selected.image).use { selectedReader ->
+            LosslessProcessedImageWriter(context).write(
+                session,
+                selectedReader,
+                requestedFileName
+            )
+        }
+        pipelineTiming.record(
+            "png_writing",
+            (System.nanoTime() - pngWritingStarted) / 1_000_000L
+        )
+        val enhanced = publishAncillaryEnhanced(
+            selected = selected,
+            effectiveSkyAlpha = effectiveSkyAlpha,
+            confirmedStars = confirmedStars,
+            candidateStore = candidateStore,
+            session = session,
+            timestamp = timestamp,
+            pipelineTiming = pipelineTiming
+        )
+        warnings += enhanced.processingWarnings
+        val updatedReport = processingReport.copy(
+            outputPngDisplayName = saved.fileName,
+            stageDurationsMillis = pipelineTiming.snapshot(),
+            lastCompletedStage = "png_saved",
+            warnings = warnings.distinct(),
+            enhancedAttempted = enhanced.attempted,
+            enhancedCreated = enhanced.fileName != null,
+            enhancedValidationStatus = enhanced.status,
+            enhancedOutputFileName = enhanced.fileName,
+            enhancedGain = if (enhanced.attempted) {
+                GlobalToneTransform.APPROVED_GAIN.toFloat()
+            } else {
+                0f
+            },
+            enhancedRejectionReasons = enhanced.reasons,
+            enhancedValidationWarnings = enhanced.validationWarnings,
+            enhancedValidationMetrics = enhanced.metrics
+        )
+        val bookkeeping = completeSavedResultBookkeeping(
+            report = updatedReport,
+            writeCacheReport = { json ->
+                temporaryFiles.atomicTextFile("final-report.json", json)
+            },
+            updateJournal = {
+                journalRunId?.let { runJournal.update(it, "png_saved") }
+            }
+        )
+        warnings += bookkeeping.report.warnings
+        return SavedProfileArtifacts(
+            saved = saved,
+            enhancedFileName = enhanced.fileName,
+            processingReport = bookkeeping.report,
+            reportJson = bookkeeping.reportJson
+        )
+    }
+
+    private data class AncillaryEnhancedPublication(
+        val attempted: Boolean,
+        val status: String,
+        val fileName: String? = null,
+        val reasons: List<String> = emptyList(),
+        val validationWarnings: List<String> = emptyList(),
+        val metrics: Map<String, Float> = emptyMap(),
+        val processingWarnings: List<String> = emptyList()
+    )
+
+    private suspend fun publishAncillaryEnhanced(
+        selected: StoredResultCandidate,
+        effectiveSkyAlpha: FileBackedFloatPlane,
+        confirmedStars: List<V2DetectedStar>,
+        candidateStore: ResultCandidateStore,
+        session: SessionSummary,
+        timestamp: String,
+        pipelineTiming: PipelineTimingCollector
+    ): AncillaryEnhancedPublication {
+        if (selected.type != ResultCandidateType.CLEAN_STACK) {
+            return AncillaryEnhancedPublication(
+                attempted = false,
+                status = "NOT_ATTEMPTED"
+            )
+        }
+        val started = System.nanoTime()
+        val outcome = publishOptionalEnhanced(
+            createCandidate = {
+                EnhancedGlobalToneProcessor().createCandidate(
+                    baseline = selected.image,
+                    effectiveSkyAlpha = effectiveSkyAlpha,
+                    confirmedStars = confirmedStars,
+                    store = candidateStore
+                )
+            },
+            saveCandidate = { enhancedImage ->
+                FileBackedImageReader(enhancedImage).use { enhancedReader ->
+                    LosslessProcessedImageWriter(context).write(
+                        session,
+                        enhancedReader,
+                        "Enhanced_$timestamp.png"
+                    )
+                }
+            },
+            releaseCandidate = { enhancedImage ->
+                candidateStore.deleteTemporary(enhancedImage)
+            }
+        )
+        pipelineTiming.record(
+            "enhanced_global_tone",
+            (System.nanoTime() - started) / 1_000_000L
+        )
+        return when (outcome) {
+            is EnhancedAncillaryOutcome.Saved -> AncillaryEnhancedPublication(
+                attempted = true,
+                status = "SAVED",
+                fileName = outcome.result.fileName,
+                validationWarnings = outcome.candidate.validation.warnings,
+                metrics = outcome.candidate.validation.metrics.asReportMetrics()
+            )
+            is EnhancedAncillaryOutcome.Rejected -> {
+                val reasons = outcome.candidate.validation.hardFailureReasons
+                AncillaryEnhancedPublication(
+                    attempted = true,
+                    status = "REJECTED",
+                    reasons = reasons,
+                    validationWarnings = outcome.candidate.validation.warnings,
+                    metrics = outcome.candidate.validation.metrics.asReportMetrics(),
+                    processingWarnings = listOf(
+                        "Enhanced rejected: ${reasons.joinToString("|")}"
+                    )
+                )
+            }
+            is EnhancedAncillaryOutcome.Failed -> AncillaryEnhancedPublication(
+                attempted = true,
+                status = "FAILED",
+                reasons = listOf(outcome.reason),
+                validationWarnings = outcome.candidate?.validation?.warnings.orEmpty(),
+                metrics = outcome.candidate?.validation?.metrics?.asReportMetrics().orEmpty(),
+                processingWarnings = listOf(
+                    "Enhanced was not created: ${outcome.reason}"
+                )
+            )
+        }
     }
 
     private data class FileBackedMaskStageResult(

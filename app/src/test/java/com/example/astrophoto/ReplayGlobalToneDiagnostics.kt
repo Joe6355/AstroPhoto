@@ -387,7 +387,9 @@ internal class ReplayGlobalToneDiagnosticRunner(
         confirmedStars: List<DetectedStar>,
         gains: List<Double> = listOf(0.25, 0.50, 0.75)
     ): ReplayToneDiagnosticBundle {
-        require(gains == listOf(0.25, 0.50, 0.75))
+        require(gains.isNotEmpty())
+        require(gains.distinct().size == gains.size)
+        require(gains.all { it in 0.0..1.0 })
         val baselineHashBefore = decodedPixelHash(baseline)
         val baselineSky = skyStatistics.calculate(baseline, effectiveSkyAlpha, confirmedStars)
         val anchors = ReplayToneAnchors(

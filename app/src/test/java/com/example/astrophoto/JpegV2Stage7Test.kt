@@ -380,7 +380,7 @@ class JpegV2Stage7Test {
             "FileBackedAdaptivePresetProcessor().process",
             "FileBackedResultQualityAnalyzer(",
             "StoredResultCandidate(",
-            "FileBackedImageReader(finalSelection.selected.image)",
+            "FileBackedImageReader(selected.image)",
             "finalBitmapAllocationBytes = 0L",
             "ProcessingRunJournal(context)"
         ).forEach { required -> assertTrue(required, profile.contains(required)) }
@@ -403,11 +403,47 @@ class JpegV2Stage7Test {
     @Test fun reportFailureCannotInvalidateAlreadySavedPngAndCancellationIsRethrown() {
         val source = source("app/src/main/java/com/example/astrophoto/JpegStacker.kt")
         val prepared = source.indexOf("atomicTextFile(\"final-report.json\"")
-        val save = source.indexOf("LosslessProcessedImageWriter(context).write")
+        val save = source.indexOf("savePrimaryAndAncillaryEnhanced(", prepared)
         val report = source.indexOf("ProcessingReportWriter(context).write", save)
         assertTrue(prepared >= 0 && save > prepared && report > save)
+        assertTrue(source.contains("LosslessProcessedImageWriter(context).write"))
         assertTrue(source.substring(report, report + 700).contains("catch (error: CancellationException)"))
         assertTrue(source.substring(report, report + 1200).contains("ReportWriteOutcome.Failed"))
+    }
+
+    @Test fun enhancedRemainsAncillaryFileBackedAndCannotChangeResultSelection() {
+        val stacker = source("app/src/main/java/com/example/astrophoto/JpegStacker.kt")
+        val saveFunction = stacker.substring(
+            stacker.indexOf("private suspend fun savePrimaryAndAncillaryEnhanced("),
+            stacker.indexOf("private data class AncillaryEnhancedPublication")
+        )
+        val primarySave = saveFunction.indexOf("LosslessProcessedImageWriter(context).write")
+        val ancillaryStart = saveFunction.indexOf("publishAncillaryEnhanced(")
+        assertTrue(primarySave >= 0 && ancillaryStart > primarySave)
+        assertTrue(saveFunction.contains("selected = selected"))
+        assertFalse(saveFunction.contains("Bitmap.createBitmap"))
+
+        val ancillaryFunction = stacker.substring(
+            stacker.indexOf("private suspend fun publishAncillaryEnhanced("),
+            stacker.indexOf("suspend fun loadResultPreview(")
+        )
+        assertTrue(ancillaryFunction.contains("selected.type != ResultCandidateType.CLEAN_STACK"))
+        assertTrue(ancillaryFunction.contains("baseline = selected.image"))
+        assertTrue(ancillaryFunction.contains("FileBackedImageReader(enhancedImage)"))
+
+        val selection = source(
+            "app/src/main/java/com/example/astrophoto/processing/jpeg/v2/quality/ResultSelectionPolicy.kt"
+        )
+        assertFalse(selection.contains("ENHANCED"))
+    }
+
+    @Test fun processedDiscoveryExcludesPendingMediaStoreRows() {
+        val results = source("app/src/main/java/com/example/astrophoto/ProcessedResults.kt")
+        assertTrue(
+            results.contains(
+                "\${MediaStore.Images.Media.IS_PENDING}=0"
+            )
+        )
     }
 
     @Test fun reportContainsCompleteStage7MemoryAndRecoverySchema() {

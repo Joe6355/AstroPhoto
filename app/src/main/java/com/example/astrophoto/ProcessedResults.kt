@@ -108,11 +108,79 @@ enum class ProcessedResultType(val title: String) {
     URBAN_SKY_STRONG("Город / окно — сильная обработка"),
     MAX_STARS("Максимум звёзд"),
     RECOVERED_STARS("Восстановление звёзд"),
+    ENHANCED("Enhanced"),
     BACKGROUND_REMOVED("Удаление засветки"),
     STARS_ONLY_PREVIEW("Превью звёзд"),
     EDITED("Отредактировано"),
     UNKNOWN("Неизвестный результат")
 }
+
+internal fun processedResultTypeForFileName(fileName: String): ProcessedResultType =
+    if (
+        fileName.endsWith(".png", ignoreCase = true) ||
+        fileName.endsWith(".jpeg", ignoreCase = true)
+    ) {
+        processedResultTypeForFileName("${fileName.substringBeforeLast('.')}.jpg")
+    } else when {
+        fileName.startsWith("StackedDarkAligned_") &&
+            fileName.endsWith(".jpg", ignoreCase = true) ->
+            ProcessedResultType.DARK_ALIGNED_STACK
+        fileName.startsWith("StackedAligned_") &&
+            fileName.endsWith(".jpg", ignoreCase = true) ->
+            ProcessedResultType.ALIGNED_STACK
+        fileName.startsWith("StackedDark_") &&
+            fileName.endsWith(".jpg", ignoreCase = true) ->
+            ProcessedResultType.DARK_STACK
+        fileName.startsWith("Stacked_") &&
+            fileName.endsWith(".jpg", ignoreCase = true) ->
+            ProcessedResultType.STACK
+        fileName.startsWith("MasterDark_") &&
+            fileName.endsWith(".jpg", ignoreCase = true) ->
+            ProcessedResultType.MASTER_DARK
+        fileName.startsWith("MedianAligned_") &&
+            fileName.endsWith(".jpg", ignoreCase = true) ->
+            ProcessedResultType.MEDIAN_ALIGNED_STACK
+        fileName.startsWith("Median_") &&
+            fileName.endsWith(".jpg", ignoreCase = true) ->
+            ProcessedResultType.MEDIAN_STACK
+        fileName.startsWith("SigmaAligned_") &&
+            fileName.endsWith(".jpg", ignoreCase = true) ->
+            ProcessedResultType.SIGMA_ALIGNED_STACK
+        fileName.startsWith("Sigma_") &&
+            fileName.endsWith(".jpg", ignoreCase = true) ->
+            ProcessedResultType.SIGMA_STACK
+        fileName.startsWith("DeepSkyAligned_") &&
+            fileName.endsWith(".jpg", ignoreCase = true) ->
+            ProcessedResultType.DEEP_SKY_ALIGNED
+        fileName.startsWith("DeepSky_") &&
+            fileName.endsWith(".jpg", ignoreCase = true) ->
+            ProcessedResultType.DEEP_SKY
+        fileName.startsWith("UrbanSkyStrong_") &&
+            fileName.endsWith(".jpg", ignoreCase = true) ->
+            ProcessedResultType.URBAN_SKY_STRONG
+        fileName.startsWith("UrbanSky_") &&
+            fileName.endsWith(".jpg", ignoreCase = true) ->
+            ProcessedResultType.URBAN_SKY
+        fileName.startsWith("MaxStars_") &&
+            fileName.endsWith(".jpg", ignoreCase = true) ->
+            ProcessedResultType.MAX_STARS
+        fileName.startsWith("RecoveredStars_") &&
+            fileName.endsWith(".jpg", ignoreCase = true) ->
+            ProcessedResultType.RECOVERED_STARS
+        fileName.startsWith("Enhanced_") &&
+            fileName.endsWith(".jpg", ignoreCase = true) ->
+            ProcessedResultType.ENHANCED
+        fileName.startsWith("BackgroundRemoved_") &&
+            fileName.endsWith(".jpg", ignoreCase = true) ->
+            ProcessedResultType.BACKGROUND_REMOVED
+        fileName.startsWith("StarsOnlyPreview_") &&
+            fileName.endsWith(".jpg", ignoreCase = true) ->
+            ProcessedResultType.STARS_ONLY_PREVIEW
+        fileName.startsWith("Edited_") &&
+            fileName.endsWith(".jpg", ignoreCase = true) ->
+            ProcessedResultType.EDITED
+        else -> ProcessedResultType.UNKNOWN
+    }
 
 data class ProcessedResult(
     val key: String,
@@ -127,6 +195,15 @@ data class ProcessedResult(
     val isReadable: Boolean = true,
     val errorMessage: String? = null
 )
+
+internal val processedResultDisplayOrder: Comparator<ProcessedResult> =
+    compareByDescending<ProcessedResult> { it.createdAtMillis }
+        .thenBy { it.fileName }
+        .thenBy { it.key }
+
+internal fun sortProcessedResultsForDisplay(
+    results: Iterable<ProcessedResult>
+): List<ProcessedResult> = results.sortedWith(processedResultDisplayOrder)
 
 private data class ProcessedRenameResult(
     val fileName: String,
@@ -351,7 +428,8 @@ private class ProcessedResultsRepository(private val context: Context) {
                 MediaStore.Images.Media.DATE_ADDED,
                 MediaStore.Images.Media.MIME_TYPE
             ),
-            "${MediaStore.Images.Media.RELATIVE_PATH}=?",
+            "${MediaStore.Images.Media.RELATIVE_PATH}=? AND " +
+                "${MediaStore.Images.Media.IS_PENDING}=0",
             arrayOf(relativePath),
             "${MediaStore.Images.Media.DATE_ADDED} DESC, " +
                 "${MediaStore.Images.Media.DISPLAY_NAME} ASC"
@@ -401,7 +479,7 @@ private class ProcessedResultsRepository(private val context: Context) {
                 )
             }
         }
-        return results
+        return sortProcessedResultsForDisplay(results)
     }
 
     @Suppress("DEPRECATION")
@@ -443,77 +521,13 @@ private class ProcessedResultsRepository(private val context: Context) {
                         }
                 )
             }
-            ?.sortedWith(
-                compareByDescending<ProcessedResult> { it.createdAtMillis }
-                    .thenBy { it.fileName }
-            )
             ?.toList()
+            ?.let(::sortProcessedResultsForDisplay)
             .orEmpty()
     }
 
     private fun processedResultType(fileName: String): ProcessedResultType =
-        if (
-            fileName.endsWith(".png", ignoreCase = true) ||
-            fileName.endsWith(".jpeg", ignoreCase = true)
-        ) {
-            processedResultType("${fileName.substringBeforeLast('.')}.jpg")
-        } else when {
-            fileName.startsWith("StackedDarkAligned_") &&
-                fileName.endsWith(".jpg", ignoreCase = true) ->
-                ProcessedResultType.DARK_ALIGNED_STACK
-            fileName.startsWith("StackedAligned_") &&
-                fileName.endsWith(".jpg", ignoreCase = true) ->
-                ProcessedResultType.ALIGNED_STACK
-            fileName.startsWith("StackedDark_") &&
-                fileName.endsWith(".jpg", ignoreCase = true) ->
-                ProcessedResultType.DARK_STACK
-            fileName.startsWith("Stacked_") &&
-                fileName.endsWith(".jpg", ignoreCase = true) ->
-                ProcessedResultType.STACK
-            fileName.startsWith("MasterDark_") &&
-                fileName.endsWith(".jpg", ignoreCase = true) ->
-                ProcessedResultType.MASTER_DARK
-            fileName.startsWith("MedianAligned_") &&
-                fileName.endsWith(".jpg", ignoreCase = true) ->
-                ProcessedResultType.MEDIAN_ALIGNED_STACK
-            fileName.startsWith("Median_") &&
-                fileName.endsWith(".jpg", ignoreCase = true) ->
-                ProcessedResultType.MEDIAN_STACK
-            fileName.startsWith("SigmaAligned_") &&
-                fileName.endsWith(".jpg", ignoreCase = true) ->
-                ProcessedResultType.SIGMA_ALIGNED_STACK
-            fileName.startsWith("Sigma_") &&
-                fileName.endsWith(".jpg", ignoreCase = true) ->
-                ProcessedResultType.SIGMA_STACK
-            fileName.startsWith("DeepSkyAligned_") &&
-                fileName.endsWith(".jpg", ignoreCase = true) ->
-                ProcessedResultType.DEEP_SKY_ALIGNED
-            fileName.startsWith("DeepSky_") &&
-                fileName.endsWith(".jpg", ignoreCase = true) ->
-                ProcessedResultType.DEEP_SKY
-            fileName.startsWith("UrbanSkyStrong_") &&
-                fileName.endsWith(".jpg", ignoreCase = true) ->
-                ProcessedResultType.URBAN_SKY_STRONG
-            fileName.startsWith("UrbanSky_") &&
-                fileName.endsWith(".jpg", ignoreCase = true) ->
-                ProcessedResultType.URBAN_SKY
-            fileName.startsWith("MaxStars_") &&
-                fileName.endsWith(".jpg", ignoreCase = true) ->
-                ProcessedResultType.MAX_STARS
-            fileName.startsWith("RecoveredStars_") &&
-                fileName.endsWith(".jpg", ignoreCase = true) ->
-                ProcessedResultType.RECOVERED_STARS
-            fileName.startsWith("BackgroundRemoved_") &&
-                fileName.endsWith(".jpg", ignoreCase = true) ->
-                ProcessedResultType.BACKGROUND_REMOVED
-            fileName.startsWith("StarsOnlyPreview_") &&
-                fileName.endsWith(".jpg", ignoreCase = true) ->
-                ProcessedResultType.STARS_ONLY_PREVIEW
-            fileName.startsWith("Edited_") &&
-                fileName.endsWith(".jpg", ignoreCase = true) ->
-                ProcessedResultType.EDITED
-            else -> ProcessedResultType.UNKNOWN
-        }
+        processedResultTypeForFileName(fileName)
 
     private fun isSupportedProcessedImage(
         fileName: String,

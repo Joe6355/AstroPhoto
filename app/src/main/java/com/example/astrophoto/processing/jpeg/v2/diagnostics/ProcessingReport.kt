@@ -272,7 +272,15 @@ data class ProcessingReport(
     val reportFallbackUsed: Boolean = false,
     val staleRunRecoveryInformation: String? = null,
     val processingRunId: String? = null,
-    val artifactSessionId: String? = null
+    val artifactSessionId: String? = null,
+    val enhancedAttempted: Boolean = false,
+    val enhancedCreated: Boolean = false,
+    val enhancedValidationStatus: String = "NOT_ATTEMPTED",
+    val enhancedOutputFileName: String? = null,
+    val enhancedGain: Float = 0f,
+    val enhancedRejectionReasons: List<String> = emptyList(),
+    val enhancedValidationWarnings: List<String> = emptyList(),
+    val enhancedValidationMetrics: Map<String, Float> = emptyMap()
 ) {
     fun toJson(): String = buildString {
         append("{\n")
@@ -481,6 +489,14 @@ data class ProcessingReport(
         nullableProperty("staleRunRecoveryInformation", staleRunRecoveryInformation)
         nullableProperty("processingRunId", processingRunId)
         nullableProperty("artifactSessionId", artifactSessionId)
+        property("enhancedAttempted", enhancedAttempted)
+        property("enhancedCreated", enhancedCreated)
+        property("enhancedValidationStatus", enhancedValidationStatus)
+        nullableProperty("enhancedOutputFileName", enhancedOutputFileName)
+        property("enhancedGain", enhancedGain)
+        append("  \"enhancedRejectionReasons\": ${stringArray(enhancedRejectionReasons)},\n")
+        append("  \"enhancedValidationWarnings\": ${stringArray(enhancedValidationWarnings)},\n")
+        append("  \"enhancedValidationMetrics\": ${floatMapJson(enhancedValidationMetrics)},\n")
         property("selectedCandidateType", selectedCandidateType)
         property("fallbackUsed", fallbackUsed)
         nullableProperty("fallbackReason", fallbackReason)
