@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.PackageManager
 import android.graphics.Matrix
+import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.SurfaceTexture
 import android.graphics.ImageFormat
@@ -15,9 +16,11 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.CaptureFailure
 import android.hardware.camera2.DngCreator
 import android.hardware.camera2.TotalCaptureResult
+import android.hardware.camera2.params.MeteringRectangle
 import android.media.Image
 import android.media.ImageReader
 import android.media.MediaScannerConnection
@@ -30,7 +33,9 @@ import android.util.AttributeSet
 import android.util.Log
 import android.util.Size
 import android.view.Surface
+import android.view.MotionEvent
 import android.view.TextureView
+import android.view.ViewConfiguration
 import androidx.activity.ComponentActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.DefaultLifecycleObserver
@@ -49,6 +54,7 @@ data class ManualCameraCapabilities(
     val minimumFocusDistance: Float?,
     val supportsManualSensor: Boolean,
     val supportsManualFocus: Boolean,
+    val supportsTapToFocus: Boolean,
     val supportsJpegCapture: Boolean,
     val supportsRawCapture: Boolean
 )
@@ -66,6 +72,19 @@ enum class CameraFocusMode {
     MF,
     INFINITY
 }
+
+enum class TapFocusStatus {
+    FOCUSING,
+    FOCUSED,
+    FAILED,
+    UNAVAILABLE
+}
+
+data class TapFocusEvent(
+    val normalizedX: Float,
+    val normalizedY: Float,
+    val status: TapFocusStatus
+)
 
 enum class CameraCaptureStage {
     CAPTURING,
@@ -85,7 +104,8 @@ class CameraPreviewView @JvmOverloads constructor(
     private val onCapabilitiesAvailable: (ManualCameraCapabilities) -> Unit = {},
     private val onCameraStatus: (String) -> Unit = {},
     private val onExposureAnalysis: (ExposureAnalysis) -> Unit = {},
-    private val onExposureAnalyzerUnavailable: (String) -> Unit = {}
+    private val onExposureAnalyzerUnavailable: (String) -> Unit = {},
+    private val onTapFocusEvent: (TapFocusEvent) -> Unit = {}
 ) : TextureView(context, attrs), DefaultLifecycleObserver {
 
     private val cameraManager = context.getSystemService(CameraManager::class.java)
@@ -100,6 +120,15 @@ class CameraPreviewView @JvmOverloads constructor(
     private var previewSurface: Surface? = null
     private var previewSize: Size? = null
     private var sensorOrientation = 0
+    private var activeTapFocusRegion: MeteringRectangle? = null
+    private var activeTapFocusPoint: Pair<Float, Float>? = null
+    private var tapFocusGeneration = 0
+    private var tapFocusWaiting = false
+    private var tapFocusTimeout: Runnable? = null
+    private var touchDownX = 0f
+    private var touchDownY = 0f
+    private var touchDownTime = 0L
+    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
     private var cameraCharacteristics: CameraCharacteristics? = null
     private var manualCapabilities: ManualCameraCapabilities? = null
     private var manualParameters = ManualCameraParameters(
@@ -133,6 +162,8 @@ class CameraPreviewView @JvmOverloads constructor(
     )
 
     init {
+        isClickable = true
+        setOnTouchListener { _, event -> handlePreviewTouch(event) }
         surfaceTextureListener = object : SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(
                 surface: SurfaceTexture,
@@ -160,6 +191,37 @@ class CameraPreviewView @JvmOverloads constructor(
 
             override fun onSurfaceTextureUpdated(surface: SurfaceTexture) = Unit
         }
+    }
+
+    override fun performClick(): Boolean {
+        super.performClick()
+        return true
+    }
+
+    private fun handlePreviewTouch(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                touchDownX = event.x
+                touchDownY = event.y
+                touchDownTime = event.eventTime
+                return true
+            }
+
+            MotionEvent.ACTION_UP -> {
+                val dx = event.x - touchDownX
+                val dy = event.y - touchDownY
+                val isTap = dx * dx + dy * dy <= touchSlop * touchSlop &&
+                    event.eventTime - touchDownTime <= MAX_TAP_FOCUS_TOUCH_DURATION_MS
+                if (isTap) {
+                    performClick()
+                    requestTapFocus(event.x, event.y)
+                }
+                return true
+            }
+
+            MotionEvent.ACTION_CANCEL -> return true
+        }
+        return true
     }
 
     override fun onAttachedToWindow() {
@@ -229,6 +291,212 @@ class CameraPreviewView @JvmOverloads constructor(
         jpegQuality = quality.coerceIn(1, 100)
     }
 
+    private fun requestTapFocus(viewX: Float, viewY: Float) {
+        val normalizedX = if (width > 0) (viewX / width).coerceIn(0f, 1f) else 0.5f
+        val normalizedY = if (height > 0) (viewY / height).coerceIn(0f, 1f) else 0.5f
+        val capabilities = manualCapabilities
+        val characteristics = cameraCharacteristics
+        val size = previewSize
+        val activeArray = characteristics?.get(
+            CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE
+        )
+        val handler = backgroundHandler
+        if (
+            captureInProgress ||
+            capabilities?.supportsTapToFocus != true ||
+            characteristics == null ||
+            size == null ||
+            activeArray == null ||
+            handler == null ||
+            width <= 0 ||
+            height <= 0
+        ) {
+            dispatchTapFocusEvent(normalizedX, normalizedY, TapFocusStatus.UNAVAILABLE)
+            reportStatus("tap focus unavailable")
+            return
+        }
+
+        val sensorRect = runCatching {
+            calculateTapToFocusRect(
+                viewWidth = width,
+                viewHeight = height,
+                touchX = viewX,
+                touchY = viewY,
+                previewWidth = size.width,
+                previewHeight = size.height,
+                activeArray = activeArray.toCameraSensorRect(),
+                relativeRotationDegrees = calculateJpegOrientation()
+            )
+        }.getOrElse {
+            dispatchTapFocusEvent(normalizedX, normalizedY, TapFocusStatus.UNAVAILABLE)
+            reportStatus("tap focus mapping failed")
+            return
+        }
+        val meteringRegion = MeteringRectangle(
+            Rect(sensorRect.left, sensorRect.top, sensorRect.right, sensorRect.bottom),
+            TAP_FOCUS_METERING_WEIGHT
+        )
+        dispatchTapFocusEvent(normalizedX, normalizedY, TapFocusStatus.FOCUSING)
+        handler.post {
+            startTapFocus(
+                meteringRegion = meteringRegion,
+                normalizedX = normalizedX,
+                normalizedY = normalizedY
+            )
+        }
+    }
+
+    private fun startTapFocus(
+        meteringRegion: MeteringRectangle,
+        normalizedX: Float,
+        normalizedY: Float
+    ) {
+        val session = captureSession
+        val requestBuilder = previewRequestBuilder
+        val handler = backgroundHandler
+        if (session == null || requestBuilder == null || handler == null || !active) {
+            dispatchTapFocusEvent(normalizedX, normalizedY, TapFocusStatus.UNAVAILABLE)
+            reportStatus("tap focus unavailable: preview not ready")
+            return
+        }
+
+        clearTapFocusState()
+        tapFocusGeneration++
+        val generation = tapFocusGeneration
+        tapFocusWaiting = true
+        activeTapFocusRegion = meteringRegion
+        activeTapFocusPoint = normalizedX to normalizedY
+        val callback = tapFocusCaptureCallback(generation)
+        try {
+            session.stopRepeating()
+            requestBuilder.set(
+                CaptureRequest.CONTROL_AF_MODE,
+                CaptureRequest.CONTROL_AF_MODE_AUTO
+            )
+            requestBuilder.set(
+                CaptureRequest.CONTROL_AF_REGIONS,
+                arrayOf(meteringRegion)
+            )
+            requestBuilder.set(
+                CaptureRequest.CONTROL_AF_TRIGGER,
+                CaptureRequest.CONTROL_AF_TRIGGER_CANCEL
+            )
+            session.capture(requestBuilder.build(), null, handler)
+            requestBuilder.set(
+                CaptureRequest.CONTROL_AF_TRIGGER,
+                CaptureRequest.CONTROL_AF_TRIGGER_START
+            )
+            session.capture(requestBuilder.build(), callback, handler)
+            requestBuilder.set(
+                CaptureRequest.CONTROL_AF_TRIGGER,
+                CaptureRequest.CONTROL_AF_TRIGGER_IDLE
+            )
+            session.setRepeatingRequest(requestBuilder.build(), callback, handler)
+            tapFocusTimeout = Runnable {
+                finishTapFocus(generation, TapFocusStatus.FAILED, "timeout")
+            }.also {
+                handler.postDelayed(it, TAP_FOCUS_TIMEOUT_MS)
+            }
+            reportStatus(
+                "tap focus started x=${meteringRegion.rect.centerX()} " +
+                    "y=${meteringRegion.rect.centerY()}"
+            )
+        } catch (exception: Exception) {
+            finishTapFocus(generation, TapFocusStatus.FAILED, "request failed")
+            Log.w("AstroPhotoCamera", "Tap focus request failed", exception)
+        }
+    }
+
+    private fun tapFocusCaptureCallback(
+        generation: Int
+    ): CameraCaptureSession.CaptureCallback =
+        object : CameraCaptureSession.CaptureCallback() {
+            override fun onCaptureCompleted(
+                session: CameraCaptureSession,
+                request: CaptureRequest,
+                result: TotalCaptureResult
+            ) {
+                when (result.get(CaptureResult.CONTROL_AF_STATE)) {
+                    CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED ->
+                        finishTapFocus(generation, TapFocusStatus.FOCUSED, "focused")
+
+                    CaptureResult.CONTROL_AF_STATE_NOT_FOCUSED_LOCKED ->
+                        finishTapFocus(generation, TapFocusStatus.FAILED, "not focused")
+                }
+            }
+
+            override fun onCaptureFailed(
+                session: CameraCaptureSession,
+                request: CaptureRequest,
+                failure: CaptureFailure
+            ) {
+                finishTapFocus(generation, TapFocusStatus.FAILED, "capture failed")
+            }
+
+            override fun onCaptureSequenceAborted(
+                session: CameraCaptureSession,
+                sequenceId: Int
+            ) {
+                finishTapFocus(generation, TapFocusStatus.FAILED, "sequence aborted")
+            }
+        }
+
+    private fun finishTapFocus(
+        generation: Int,
+        status: TapFocusStatus,
+        reason: String
+    ) {
+        if (generation != tapFocusGeneration || !tapFocusWaiting) return
+        tapFocusWaiting = false
+        tapFocusTimeout?.let { backgroundHandler?.removeCallbacks(it) }
+        tapFocusTimeout = null
+        val point = activeTapFocusPoint
+        val requestBuilder = previewRequestBuilder
+        val session = captureSession
+        val handler = backgroundHandler
+        if (requestBuilder != null && session != null && handler != null) {
+            runCatching {
+                applyManualParameters(requestBuilder, forPreview = true)
+                requestBuilder.set(
+                    CaptureRequest.CONTROL_AF_TRIGGER,
+                    CaptureRequest.CONTROL_AF_TRIGGER_IDLE
+                )
+                session.setRepeatingRequest(requestBuilder.build(), null, handler)
+            }.onFailure {
+                Log.w("AstroPhotoCamera", "Unable to restore preview after tap focus", it)
+            }
+        }
+        if (point != null) {
+            dispatchTapFocusEvent(point.first, point.second, status)
+        }
+        reportStatus("tap focus ${status.name.lowercase(Locale.US)}: $reason")
+    }
+
+    private fun clearTapFocusState() {
+        tapFocusGeneration++
+        tapFocusWaiting = false
+        tapFocusTimeout?.let { backgroundHandler?.removeCallbacks(it) }
+        tapFocusTimeout = null
+        activeTapFocusRegion = null
+        activeTapFocusPoint = null
+    }
+
+    private fun dispatchTapFocusEvent(
+        normalizedX: Float,
+        normalizedY: Float,
+        status: TapFocusStatus
+    ) {
+        post {
+            onTapFocusEvent(
+                TapFocusEvent(
+                    normalizedX = normalizedX.coerceIn(0f, 1f),
+                    normalizedY = normalizedY.coerceIn(0f, 1f),
+                    status = status
+                )
+            )
+        }
+    }
+
     private fun startExposureAnalyzerIfNeeded() {
         if (exposureAnalysisEnabled && active && isAvailable && previewStarted) {
             exposureAnalyzer.start()
@@ -237,7 +505,11 @@ class CameraPreviewView @JvmOverloads constructor(
 
     private val previewUpdateRunnable = Runnable {
         val requestBuilder = previewRequestBuilder ?: return@Runnable
+        if (manualParameters.focusMode != CameraFocusMode.AF) {
+            clearTapFocusState()
+        }
         applyManualParameters(requestBuilder, forPreview = true)
+        if (tapFocusWaiting) return@Runnable
         submitRepeatingRequest(requestBuilder)
     }
 
@@ -559,6 +831,12 @@ class CameraPreviewView @JvmOverloads constructor(
             val minimumFocusDistance = characteristics.get(
                 CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE
             )
+            val availableAfModes = characteristics.get(
+                CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES
+            ) ?: intArrayOf()
+            val maxAfRegions = characteristics.get(
+                CameraCharacteristics.CONTROL_MAX_REGIONS_AF
+            ) ?: 0
             sensorOrientation = characteristics.get(
                 CameraCharacteristics.SENSOR_ORIENTATION
             ) ?: 0
@@ -589,6 +867,8 @@ class CameraPreviewView @JvmOverloads constructor(
                     CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR
                 ) == true,
                 supportsManualFocus = (minimumFocusDistance ?: 0f) > 0f,
+                supportsTapToFocus = maxAfRegions > 0 &&
+                    availableAfModes.contains(CaptureRequest.CONTROL_AF_MODE_AUTO),
                 supportsJpegCapture = jpegCaptureAvailable,
                 supportsRawCapture = rawCaptureAvailable
             )
@@ -779,10 +1059,22 @@ class CameraPreviewView @JvmOverloads constructor(
         val minimumFocusDistance = capabilities.minimumFocusDistance
         when (parameters.focusMode) {
             CameraFocusMode.AF -> {
-                requestBuilder.set(
-                    CaptureRequest.CONTROL_AF_MODE,
-                    CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
-                )
+                val tapRegion = activeTapFocusRegion
+                if (tapRegion != null && capabilities.supportsTapToFocus) {
+                    requestBuilder.set(
+                        CaptureRequest.CONTROL_AF_MODE,
+                        CaptureRequest.CONTROL_AF_MODE_AUTO
+                    )
+                    requestBuilder.set(
+                        CaptureRequest.CONTROL_AF_REGIONS,
+                        arrayOf(tapRegion)
+                    )
+                } else {
+                    requestBuilder.set(
+                        CaptureRequest.CONTROL_AF_MODE,
+                        CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
+                    )
+                }
             }
 
             CameraFocusMode.MF -> {
@@ -1236,6 +1528,7 @@ class CameraPreviewView @JvmOverloads constructor(
         previewStarted = false
         exposureAnalyzer.stop()
         backgroundHandler?.removeCallbacks(previewUpdateRunnable)
+        clearTapFocusState()
         if (activeCaptureType == CaptureType.TEST_JPEG) {
             finishTestCapture(
                 Result.failure(IllegalStateException("Пробный кадр остановлен"))
@@ -1283,6 +1576,9 @@ class CameraPreviewView @JvmOverloads constructor(
     }
 }
 
+private fun Rect.toCameraSensorRect(): CameraSensorRect =
+    CameraSensorRect(left, top, right, bottom)
+
 private fun Context.findActivity(): ComponentActivity? {
     var currentContext = this
     while (currentContext is ContextWrapper) {
@@ -1291,3 +1587,6 @@ private fun Context.findActivity(): ComponentActivity? {
     }
     return currentContext as? ComponentActivity
 }
+
+private const val MAX_TAP_FOCUS_TOUCH_DURATION_MS = 500L
+private const val TAP_FOCUS_TIMEOUT_MS = 4_000L

@@ -44,30 +44,33 @@ internal fun sigmaClipArgbPixel(
     iterations: Int,
     redValues: IntArray,
     greenValues: IntArray,
-    blueValues: IntArray
+    blueValues: IntArray,
+    count: Int = colors.size
 ): Int {
-    require(colors.isNotEmpty()) { "Sigma clipping requires at least one pixel sample" }
+    require(count in 1..colors.size) {
+        "Sigma clipping requires at least one pixel sample"
+    }
     require(sigmaThreshold.isFinite() && sigmaThreshold > 0.0) {
         "Sigma threshold must be finite and positive"
     }
     require(iterations > 0) { "Sigma iteration count must be positive" }
     require(
-        redValues.size >= colors.size &&
-            greenValues.size >= colors.size &&
-            blueValues.size >= colors.size
+        redValues.size >= count &&
+            greenValues.size >= count &&
+            blueValues.size >= count
     ) {
         "Sigma channel buffers are shorter than the pixel samples"
     }
 
-    colors.indices.forEach { index ->
+    for (index in 0 until count) {
         val color = colors[index]
         redValues[index] = color ushr 16 and 0xFF
         greenValues[index] = color ushr 8 and 0xFF
         blueValues[index] = color and 0xFF
     }
-    val red = sigmaClipChannel(redValues, colors.size, sigmaThreshold, iterations)
-    val green = sigmaClipChannel(greenValues, colors.size, sigmaThreshold, iterations)
-    val blue = sigmaClipChannel(blueValues, colors.size, sigmaThreshold, iterations)
+    val red = sigmaClipChannel(redValues, count, sigmaThreshold, iterations)
+    val green = sigmaClipChannel(greenValues, count, sigmaThreshold, iterations)
+    val blue = sigmaClipChannel(blueValues, count, sigmaThreshold, iterations)
     return OPAQUE_ALPHA or (red shl 16) or (green shl 8) or blue
 }
 

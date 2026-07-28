@@ -40,7 +40,8 @@ fun averageArgbFrames(frames: List<AveragePixelFrame>): AveragePixelFrame {
 
 internal class ArgbAverageAccumulator(
     private val pixelCount: Int,
-    private val maximumFrameCount: Int
+    private val maximumFrameCount: Int,
+    perPixelWeighting: Boolean = false
 ) {
     private val validatedPixelCount = pixelCount.also {
         require(it >= 0) { "Average accumulator pixel count must not be negative" }
@@ -64,10 +65,14 @@ internal class ArgbAverageAccumulator(
     private val redRemainders = if (packedRemainders == null) IntArray(validatedPixelCount) else null
     private val greenRemainders = if (packedRemainders == null) IntArray(validatedPixelCount) else null
     private val blueRemainders = if (packedRemainders == null) IntArray(validatedPixelCount) else null
+    private val validSampleCounts = if (perPixelWeighting) ShortArray(validatedPixelCount) else null
 
     init {
         require(maximumFrameCount >= 1) {
             "Average accumulator frame count must be positive"
+        }
+        require(!perPixelWeighting || maximumFrameCount <= Short.MAX_VALUE) {
+            "Per-pixel Average supports at most ${Short.MAX_VALUE} frames"
         }
     }
 
@@ -113,6 +118,56 @@ internal class ArgbAverageAccumulator(
                 pixelCount = pixelCount
             )
         }
+    }
+
+    fun addValidSamples(
+        averagePixels: IntArray,
+        nextPixels: IntArray,
+        validSamples: BooleanArray,
+        accumulatorOffset: Int,
+        pixelCount: Int
+    ) {
+        val counts = requireNotNull(validSampleCounts) {
+            "Per-pixel weighting was not enabled for this accumulator"
+        }
+        require(accumulatorOffset >= 0 && pixelCount >= 0)
+        require(accumulatorOffset.toLong() + pixelCount <= this.pixelCount.toLong())
+        require(
+            averagePixels.size >= pixelCount &&
+                nextPixels.size >= pixelCount &&
+                validSamples.size >= pixelCount
+        )
+        val packed = packedRemainders
+        if (packed != null) {
+            addValidPacked(
+                packed,
+                counts,
+                averagePixels,
+                nextPixels,
+                validSamples,
+                accumulatorOffset,
+                pixelCount
+            )
+        } else {
+            addValidUnpacked(
+                checkNotNull(redRemainders),
+                checkNotNull(greenRemainders),
+                checkNotNull(blueRemainders),
+                counts,
+                averagePixels,
+                nextPixels,
+                validSamples,
+                accumulatorOffset,
+                pixelCount
+            )
+        }
+    }
+
+    fun validSampleCountAt(pixelIndex: Int): Int {
+        require(pixelIndex in 0 until pixelCount)
+        return requireNotNull(validSampleCounts) {
+            "Per-pixel weighting was not enabled for this accumulator"
+        }[pixelIndex].toInt()
     }
 
     private fun addPacked(
@@ -201,6 +256,118 @@ internal class ArgbAverageAccumulator(
         }
     }
 
+    private fun addValidPacked(
+        packed: IntArray,
+        counts: ShortArray,
+        averagePixels: IntArray,
+        nextPixels: IntArray,
+        validSamples: BooleanArray,
+        accumulatorOffset: Int,
+        pixelCount: Int
+    ) {
+        for (pixelIndex in 0 until pixelCount) {
+            if (!validSamples[pixelIndex]) continue
+            val accumulatorIndex = accumulatorOffset + pixelIndex
+            val previousCount = counts[accumulatorIndex].toInt()
+            val nextColor = nextPixels[pixelIndex]
+            if (previousCount == 0) {
+                averagePixels[pixelIndex] = OPAQUE_ALPHA or (nextColor and RGB_MASK)
+                packed[accumulatorIndex] = 0
+                counts[accumulatorIndex] = 1
+                continue
+            }
+            val nextCount = previousCount + 1
+            require(nextCount <= maximumFrameCount)
+            val remainders = packed[accumulatorIndex]
+            val oldColor = averagePixels[pixelIndex]
+            val redTotal = exactChannelTotal(
+                oldColor ushr 16 and 0xFF,
+                unpackRemainder(remainders, RED_REMAINDER_SHIFT),
+                nextColor ushr 16 and 0xFF,
+                nextCount
+            )
+            val greenTotal = exactChannelTotal(
+                oldColor ushr 8 and 0xFF,
+                unpackRemainder(remainders, remainderBits),
+                nextColor ushr 8 and 0xFF,
+                nextCount
+            )
+            val blueTotal = exactChannelTotal(
+                oldColor and 0xFF,
+                unpackRemainder(remainders, remainderBits * 2),
+                nextColor and 0xFF,
+                nextCount
+            )
+            val red = roundedAverageChannel(redTotal, nextCount)
+            val green = roundedAverageChannel(greenTotal, nextCount)
+            val blue = roundedAverageChannel(blueTotal, nextCount)
+            averagePixels[pixelIndex] =
+                OPAQUE_ALPHA or (red shl 16) or (green shl 8) or blue
+            packed[accumulatorIndex] =
+                packRemainder(redTotal, red, nextCount, RED_REMAINDER_SHIFT) or
+                packRemainder(greenTotal, green, nextCount, remainderBits) or
+                packRemainder(blueTotal, blue, nextCount, remainderBits * 2)
+            counts[accumulatorIndex] = nextCount.toShort()
+        }
+    }
+
+    private fun addValidUnpacked(
+        redRemainders: IntArray,
+        greenRemainders: IntArray,
+        blueRemainders: IntArray,
+        counts: ShortArray,
+        averagePixels: IntArray,
+        nextPixels: IntArray,
+        validSamples: BooleanArray,
+        accumulatorOffset: Int,
+        pixelCount: Int
+    ) {
+        for (pixelIndex in 0 until pixelCount) {
+            if (!validSamples[pixelIndex]) continue
+            val accumulatorIndex = accumulatorOffset + pixelIndex
+            val previousCount = counts[accumulatorIndex].toInt()
+            val nextColor = nextPixels[pixelIndex]
+            if (previousCount == 0) {
+                averagePixels[pixelIndex] = OPAQUE_ALPHA or (nextColor and RGB_MASK)
+                redRemainders[accumulatorIndex] = 0
+                greenRemainders[accumulatorIndex] = 0
+                blueRemainders[accumulatorIndex] = 0
+                counts[accumulatorIndex] = 1
+                continue
+            }
+            val nextCount = previousCount + 1
+            require(nextCount <= maximumFrameCount)
+            val oldColor = averagePixels[pixelIndex]
+            val redTotal = exactChannelTotal(
+                oldColor ushr 16 and 0xFF,
+                redRemainders[accumulatorIndex],
+                nextColor ushr 16 and 0xFF,
+                nextCount
+            )
+            val greenTotal = exactChannelTotal(
+                oldColor ushr 8 and 0xFF,
+                greenRemainders[accumulatorIndex],
+                nextColor ushr 8 and 0xFF,
+                nextCount
+            )
+            val blueTotal = exactChannelTotal(
+                oldColor and 0xFF,
+                blueRemainders[accumulatorIndex],
+                nextColor and 0xFF,
+                nextCount
+            )
+            val red = roundedAverageChannel(redTotal, nextCount)
+            val green = roundedAverageChannel(greenTotal, nextCount)
+            val blue = roundedAverageChannel(blueTotal, nextCount)
+            averagePixels[pixelIndex] =
+                OPAQUE_ALPHA or (red shl 16) or (green shl 8) or blue
+            redRemainders[accumulatorIndex] = exactRemainder(redTotal, red, nextCount)
+            greenRemainders[accumulatorIndex] = exactRemainder(greenTotal, green, nextCount)
+            blueRemainders[accumulatorIndex] = exactRemainder(blueTotal, blue, nextCount)
+            counts[accumulatorIndex] = nextCount.toShort()
+        }
+    }
+
     private fun unpackRemainder(packed: Int, shift: Int): Int {
         val encoded = (packed ushr shift) and remainderMask
         return if (encoded and remainderSignBit == 0) {
@@ -234,6 +401,21 @@ internal fun updateRunningAverageArgb(
     averagePixels = averagePixels,
     nextPixels = nextPixels,
     frameNumber = frameNumber,
+    accumulatorOffset = accumulatorOffset,
+    pixelCount = pixelCount
+)
+
+internal fun updateRunningAverageArgbValidSamples(
+    accumulator: ArgbAverageAccumulator,
+    averagePixels: IntArray,
+    nextPixels: IntArray,
+    validSamples: BooleanArray,
+    pixelCount: Int,
+    accumulatorOffset: Int = 0
+) = accumulator.addValidSamples(
+    averagePixels = averagePixels,
+    nextPixels = nextPixels,
+    validSamples = validSamples,
     accumulatorOffset = accumulatorOffset,
     pixelCount = pixelCount
 )

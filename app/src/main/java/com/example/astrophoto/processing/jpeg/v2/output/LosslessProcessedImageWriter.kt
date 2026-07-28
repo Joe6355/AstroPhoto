@@ -142,6 +142,44 @@ internal data class ValidatedPng(
     val chunkCount: Int
 )
 
+internal data class MediaStorePngPublicationResult(
+    val encodedBytes: Long,
+    val publishedSizeBytes: Long?
+)
+
+internal object MediaStorePngPublicationCoordinator {
+    fun publish(
+        encodePending: () -> Long,
+        validatePending: () -> Unit,
+        publishPending: () -> Unit,
+        queryPublishedSize: () -> Long?
+    ): MediaStorePngPublicationResult {
+        val encodedBytes = encodePending()
+        require(encodedBytes > 0L) { "PNG output is empty" }
+        validatePending()
+        publishPending()
+        val publishedSize = runCatching(queryPublishedSize).getOrNull()
+        return MediaStorePngPublicationResult(encodedBytes, publishedSize)
+    }
+}
+
+internal class CountingOutputStream(private val delegate: OutputStream) : OutputStream() {
+    var bytesWritten: Long = 0L
+        private set
+
+    override fun write(value: Int) {
+        delegate.write(value)
+        bytesWritten++
+    }
+
+    override fun write(buffer: ByteArray, offset: Int, length: Int) {
+        delegate.write(buffer, offset, length)
+        bytesWritten += length
+    }
+
+    override fun flush() = delegate.flush()
+}
+
 internal fun requireValidPngDimensions(width: Int, height: Int) {
     require(width in 1..MAX_SAFE_PNG_DIMENSION) { "PNG width is outside the safe range" }
     require(height in 1..MAX_SAFE_PNG_DIMENSION) { "PNG height is outside the safe range" }
@@ -389,39 +427,65 @@ internal class LosslessProcessedImageWriter(private val context: Context) {
             ) ?: error("Не удалось создать PNG результат")
             var published = false
             try {
-                resolver.openOutputStream(uri, "w")?.use { output ->
-                    PngStreamEncoder.encode(source, output) { coroutineContext.ensureActive() }
-                } ?: error("Не удалось записать PNG результат")
-                resolver.openInputStream(uri)?.use { input ->
-                    PngStructureValidator.validate(
-                        input,
-                        expectedWidth = source.width,
-                        expectedHeight = source.height
-                    )
-                } ?: error("Unable to validate encoded PNG")
-                val size = resolver.query(
-                    uri,
-                    arrayOf(MediaStore.Images.Media.SIZE),
-                    null,
-                    null,
-                    null
-                )?.use { cursor ->
-                    if (cursor.moveToFirst()) cursor.getLong(0).coerceAtLeast(0L) else 0L
-                } ?: 0L
-                require(size > 0L) { "PNG результат пуст" }
-                val saved = retainedMediaStoreImage(destination, finalFileName, uri.toString())
-                val updated = resolver.update(
-                    uri,
-                    ContentValues().apply {
-                        put(MediaStore.Images.Media.DISPLAY_NAME, finalFileName)
-                        put(MediaStore.Images.Media.IS_PENDING, 0)
+                val publication = MediaStorePngPublicationCoordinator.publish(
+                    encodePending = {
+                        resolver.openOutputStream(uri, "w")?.use { output ->
+                            val counting = CountingOutputStream(output)
+                            PngStreamEncoder.encode(source, counting) {
+                                coroutineContext.ensureActive()
+                            }
+                            counting.bytesWritten
+                        } ?: error("Не удалось записать PNG результат")
                     },
-                    null,
-                    null
+                    validatePending = {
+                        resolver.openInputStream(uri)?.use { input ->
+                            PngStructureValidator.validate(
+                                input,
+                                expectedWidth = source.width,
+                                expectedHeight = source.height
+                            )
+                        } ?: error("Unable to validate encoded PNG")
+                    },
+                    publishPending = {
+                        val updated = resolver.update(
+                            uri,
+                            ContentValues().apply {
+                                put(MediaStore.Images.Media.DISPLAY_NAME, finalFileName)
+                                put(MediaStore.Images.Media.IS_PENDING, 0)
+                            },
+                            null,
+                            null
+                        )
+                        require(updated == 1) {
+                            "PNG MediaStore publication did not update exactly one row"
+                        }
+                        published = true
+                    },
+                    queryPublishedSize = {
+                        resolver.query(
+                            uri,
+                            arrayOf(MediaStore.Images.Media.SIZE),
+                            null,
+                            null,
+                            null
+                        )?.use { cursor ->
+                            if (cursor.moveToFirst()) cursor.getLong(0).coerceAtLeast(0L) else null
+                        }
+                    }
                 )
-                require(updated == 1) { "PNG MediaStore publication did not update exactly one row" }
-                published = true
-                Log.i(OUTPUT_TAG, "pngOutput=${saved.displayPath} pngFileSize=$size")
+                val saved = retainedMediaStoreImage(destination, finalFileName, uri.toString())
+                if (publication.publishedSizeBytes == null || publication.publishedSizeBytes <= 0L) {
+                    Log.w(
+                        OUTPUT_TAG,
+                        "Published MediaStore SIZE is unavailable; " +
+                            "using validated encodedBytes=${publication.encodedBytes}"
+                    )
+                }
+                Log.i(
+                    OUTPUT_TAG,
+                    "pngOutput=${saved.displayPath} pngFileSize=${publication.encodedBytes} " +
+                        "publishedMediaStoreSize=${publication.publishedSizeBytes ?: -1L}"
+                )
                 return saved
             } catch (error: Throwable) {
                 if (!published) {

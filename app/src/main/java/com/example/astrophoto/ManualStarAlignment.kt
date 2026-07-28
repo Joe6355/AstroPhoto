@@ -1,5 +1,7 @@
 package com.example.astrophoto
 
+import kotlin.math.ceil
+
 internal data class ManualAlignmentDiagnostic(
     val shift: AlignmentShift,
     val starsDetected: Int,
@@ -8,6 +10,25 @@ internal data class ManualAlignmentDiagnostic(
     val method: String,
     val fallbackReason: String?
 )
+
+internal fun manualAlignmentShiftLimitPx(
+    frameNumber: Int,
+    totalFrames: Int,
+    imageWidth: Int,
+    imageHeight: Int
+): Int {
+    require(totalFrames >= 2) { "Manual alignment needs at least two frames" }
+    require(frameNumber in 1..totalFrames) { "Frame number is outside the series" }
+    require(imageWidth > 0 && imageHeight > 0) { "Image dimensions must be positive" }
+    val dimensionLimit = ceil(
+        maxOf(imageWidth, imageHeight) * MAX_MANUAL_ALIGNMENT_DIMENSION_FRACTION
+    ).toInt().coerceIn(BASE_MANUAL_ALIGNMENT_SHIFT_PX, MAX_MANUAL_ALIGNMENT_SHIFT_PX)
+    val progress = (frameNumber - 1).toFloat() / (totalFrames - 1)
+    return ceil(
+        BASE_MANUAL_ALIGNMENT_SHIFT_PX +
+            (dimensionLimit - BASE_MANUAL_ALIGNMENT_SHIFT_PX) * progress
+    ).toInt()
+}
 
 internal fun alignManualImages(
     reference: ArgbPixelImage,
@@ -86,3 +107,6 @@ internal fun alignManualImages(
 }
 
 private const val MAX_MANUAL_ALIGNMENT_STAR_RADIUS = 2.2f
+private const val BASE_MANUAL_ALIGNMENT_SHIFT_PX = 30
+private const val MAX_MANUAL_ALIGNMENT_SHIFT_PX = 96
+private const val MAX_MANUAL_ALIGNMENT_DIMENSION_FRACTION = 0.05f

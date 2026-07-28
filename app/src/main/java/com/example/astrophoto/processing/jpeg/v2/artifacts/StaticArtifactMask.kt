@@ -16,7 +16,9 @@ data class StaticArtifactRegion(
     val radius: Float,
     val type: StaticArtifactType,
     val confidence: Float,
-    val reason: String
+    val reason: String,
+    val recurrence: Int = 0,
+    val frameCount: Int = 0
 )
 
 data class StaticArtifactMask(

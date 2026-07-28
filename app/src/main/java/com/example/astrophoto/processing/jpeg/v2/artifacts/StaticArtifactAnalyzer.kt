@@ -53,7 +53,9 @@ class StaticArtifactAnalyzer(
                     StaticArtifactType.SINGLE_CHANNEL_SPIKE -> "stationary_sensor_color_spike"
                     StaticArtifactType.REFLECTION_PATCH -> "stationary_camera_space_reflection_patch"
                     StaticArtifactType.FIXED_PATTERN_POINT -> "stationary_fixed_pattern_point"
-                }
+                },
+                recurrence = track.observations.size,
+                frameCount = frames.size
             )
         }
         val confidence = regions.map { it.confidence }.average()

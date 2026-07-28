@@ -159,6 +159,59 @@ class EnhancedPngStorageHardeningTest {
         assertEquals("Enhanced_20260727_120000_02.png", selected)
     }
 
+    @Test
+    fun miuiPendingSizeZeroDoesNotBlockValidatedPublication() {
+        var published = false
+        var pendingReportedSize = 0L
+
+        val result = MediaStorePngPublicationCoordinator.publish(
+            encodePending = { 4096L },
+            validatePending = {
+                assertFalse(published)
+                assertEquals(0L, pendingReportedSize)
+            },
+            publishPending = {
+                assertEquals(0L, pendingReportedSize)
+                published = true
+                pendingReportedSize = 4096L
+            },
+            queryPublishedSize = { pendingReportedSize }
+        )
+
+        assertTrue(published)
+        assertEquals(4096L, result.encodedBytes)
+        assertEquals(4096L, result.publishedSizeBytes)
+    }
+
+    @Test
+    fun publishedSizeZeroRemainsOptionalAfterByteAndStructureValidation() {
+        val result = MediaStorePngPublicationCoordinator.publish(
+            encodePending = { 2048L },
+            validatePending = {},
+            publishPending = {},
+            queryPublishedSize = { 0L }
+        )
+
+        assertEquals(2048L, result.encodedBytes)
+        assertEquals(0L, result.publishedSizeBytes)
+    }
+
+    @Test
+    fun zeroActuallyWrittenBytesAreRejectedBeforePublication() {
+        var published = false
+
+        assertThrows(IllegalArgumentException::class.java) {
+            MediaStorePngPublicationCoordinator.publish(
+                encodePending = { 0L },
+                validatePending = {},
+                publishPending = { published = true },
+                queryPublishedSize = { 0L }
+            )
+        }
+
+        assertFalse(published)
+    }
+
     private fun source(): PngImageSource = ArgbArrayPngSource(
         width = 3,
         height = 2,

@@ -75,6 +75,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -708,6 +709,7 @@ private fun CameraScreen(
     var saveLocationStatus by remember { mutableStateOf<String?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var cameraStatus by remember { mutableStateOf("camera starting") }
+    var tapFocusEvent by remember { mutableStateOf<TapFocusEvent?>(null) }
     var captureStatus by remember { mutableStateOf<String?>(null) }
     var pendingCaptureType by remember { mutableStateOf<UiCaptureType?>(null) }
     var pendingSeriesStart by remember { mutableStateOf(false) }
@@ -1710,6 +1712,16 @@ private fun CameraScreen(
         )
     }
 
+    LaunchedEffect(tapFocusEvent) {
+        val event = tapFocusEvent ?: return@LaunchedEffect
+        if (event.status != TapFocusStatus.FOCUSING) {
+            delay(TAP_FOCUS_INDICATOR_VISIBLE_MS)
+            if (tapFocusEvent == event) {
+                tapFocusEvent = null
+            }
+        }
+    }
+
     Box(
         modifier = Modifier.fillMaxSize()
     ) {
@@ -1742,6 +1754,12 @@ private fun CameraScreen(
                         liveExposureAnalysis = null
                         histogramError = message
                         histogramEnabled = false
+                    },
+                    onTapFocusEvent = { event ->
+                        if (event.status != TapFocusStatus.UNAVAILABLE) {
+                            focusMode = CameraFocusMode.AF
+                        }
+                        tapFocusEvent = event
                     }
                 ).also { previewViewHolder[0] = it }
             },
@@ -1758,6 +1776,42 @@ private fun CameraScreen(
             },
             modifier = Modifier.fillMaxSize()
         )
+
+        tapFocusEvent?.let { event ->
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val center = Offset(
+                    x = size.width * event.normalizedX,
+                    y = size.height * event.normalizedY
+                )
+                val color = when (event.status) {
+                    TapFocusStatus.FOCUSING -> Color(0xFFFFD54F)
+                    TapFocusStatus.FOCUSED -> Color(0xFF66BB6A)
+                    TapFocusStatus.FAILED,
+                    TapFocusStatus.UNAVAILABLE -> Color(0xFFEF5350)
+                }
+                val radius = 30.dp.toPx()
+                val strokeWidth = 2.dp.toPx()
+                val crossHalf = 7.dp.toPx()
+                drawCircle(
+                    color = color,
+                    radius = radius,
+                    center = center,
+                    style = Stroke(width = strokeWidth)
+                )
+                drawLine(
+                    color = color,
+                    start = Offset(center.x - crossHalf, center.y),
+                    end = Offset(center.x + crossHalf, center.y),
+                    strokeWidth = strokeWidth
+                )
+                drawLine(
+                    color = color,
+                    start = Offset(center.x, center.y - crossHalf),
+                    end = Offset(center.x, center.y + crossHalf),
+                    strokeWidth = strokeWidth
+                )
+            }
+        }
 
         Surface(
             modifier = Modifier
@@ -3724,6 +3778,8 @@ private fun notifySeriesFeedback(
         }
     }
 }
+
+private const val TAP_FOCUS_INDICATOR_VISIBLE_MS = 1_400L
 
 @Preview(showBackground = true)
 @Composable

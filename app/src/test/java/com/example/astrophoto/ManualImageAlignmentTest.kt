@@ -128,6 +128,12 @@ class ManualImageAlignmentTest {
     }
 
     @Test
+    fun expandedShiftDoesNotBypassSafeQualityGate() {
+        val uncertain = AlignmentShift(dx = 55, dy = -48, score = 60.0, confidence = 0.01)
+        assertEquals(AlignmentShift.Zero, selectManualAlignment(uncertain, safeMode = true))
+    }
+
+    @Test
     fun smallImagesDoNotCrashOrInventShift() {
         val image = SyntheticImageTestData.texture(3, 3)
         assertEquals(AlignmentShift.Zero, alignArgbImages(image, image, safeMode = true))

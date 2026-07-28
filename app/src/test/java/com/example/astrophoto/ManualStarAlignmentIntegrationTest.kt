@@ -136,6 +136,26 @@ class ManualStarAlignmentIntegrationTest {
         assertArrayEquals(candidateSnapshot, candidate.pixels)
     }
 
+    @Test
+    fun thirtyFrameSeriesExpandsSearchRangeWithoutRemovingInitialBound() {
+        assertEquals(30, manualAlignmentShiftLimitPx(1, 30, 1440, 1920))
+        assertTrue(manualAlignmentShiftLimitPx(16, 30, 1440, 1920) in 63..65)
+        assertEquals(96, manualAlignmentShiftLimitPx(30, 30, 1440, 1920))
+        assertEquals(48, manualAlignmentShiftLimitPx(30, 30, 720, 960))
+    }
+
+    @Test
+    fun expandedRangeFindsLargeStellarShiftThroughExistingQualityGate() {
+        val reference = largeShiftScene(0, 0)
+        val candidate = largeShiftScene(55, 40)
+        val result = alignManualImages(reference, candidate, safeMode = true, maxShiftPx = 64)
+
+        assertEquals("stars", result.method)
+        assertEquals(55 to 40, result.shift.dx to result.shift.dy)
+        assertTrue(result.matches >= 4)
+        assertTrue(result.confidence >= 0.25f)
+    }
+
     private fun scene(starDx: Int, starDy: Int): ArgbPixelImage {
         val width = 64
         val height = 64
@@ -165,6 +185,20 @@ class ManualStarAlignmentIntegrationTest {
             pixels[y * 72 + x] = gray(20 + (x * 17 + y * 29 + x * y) % 41)
         }
         return ArgbPixelImage(72, 64, pixels)
+    }
+
+    private fun largeShiftScene(starDx: Int, starDy: Int): ArgbPixelImage {
+        val width = 180
+        val height = 140
+        val points = listOf(10 to 10, 26 to 22, 45 to 14, 67 to 31, 91 to 20, 108 to 42)
+        val pixels = IntArray(width * height) { gray(12) }
+        for (y in 105 until height) for (x in 0 until width) {
+            pixels[y * width + x] = gray(70 + (x * 13 + y * 7) % 150)
+        }
+        points.forEachIndexed { index, (x, y) ->
+            pixels[(y + starDy) * width + x + starDx] = gray(125 + index * 18)
+        }
+        return ArgbPixelImage(width, height, pixels)
     }
 
     private fun frame(name: String, cropped: Boolean) = SessionFrame(

@@ -1,0 +1,25 @@
+# id,class,x,y,coordinate_space,support_frames,sky_residual_px,camera_residual_px,confidence,notes
+star-01,star,241.185,348.618,sky,30,0.189,20.487,0.93,Coherent sky-space track on all frames
+star-02,star,417.507,360.620,sky,30,0.221,19.083,0.55,Weak coherent sky-space track on all frames
+defect-01,sensor_defect,538.000,343.000,camera,30,18.790,0.000,0.96,Compact peak fixed in open-sky camera coordinates
+defect-02,sensor_defect,664.000,414.000,camera,30,18.790,0.000,0.94,Compact peak fixed in open-sky camera coordinates
+uncertain-01,uncertain,622.000,152.000,unknown,27,,0.000,0.45,Camera-stable peak with variable intensity
+uncertain-02,uncertain,688.591,171.548,unknown,29,0.149,0.384,0.40,Stationary point adjacent to window reflection
+candidate-x21900-y05600,uncertain,219,56,unknown,4,2.348009,0,0.2,Обнаружен только на reference frame
+candidate-x21700-y07200,uncertain,217,72,unknown,6,2.21306,0,0.2,Обнаружен только на reference frame
+candidate-x22100-y08800,uncertain,221,88,unknown,2,1.972963,0,0.2,Обнаружен только на reference frame
+candidate-x60700-y16800,uncertain,607,168,unknown,1,0.98071,0,0.2,Обнаружен только на reference frame
+candidate-x57900-y19400,uncertain,579,194,unknown,2,0.384027,0.707107,0.2,Недостаточная или противоречивая temporal evidence
+candidate-x55810-y22220,star,558.101013,222.20343,sky,20,1.742265,2.764402,0.756664,Когерентный sky-space трек отделён от camera-space recurrence
+candidate-x56100-y27400,uncertain,561,274,unknown,19,1.707813,1.414214,0.316667,Недостаточная или противоречивая temporal evidence
+candidate-x57000-y36200,uncertain,570,362,unknown,23,1.834561,2.236068,0.383333,Недостаточная или противоречивая temporal evidence
+candidate-x42300-y41900,uncertain,423,419,unknown,2,1.436694,0,0.2,Недостаточная или противоречивая temporal evidence
+candidate-x42300-y43500,uncertain,423,435,unknown,30,1.467145,2.236068,0.49,Недостаточная или противоречивая temporal evidence
+candidate-x21500-y44700,uncertain,215,447,unknown,2,2.441736,0,0.2,Обнаружен только на reference frame
+candidate-x61100-y48300,uncertain,611,483,unknown,18,1.917057,2.236068,0.3,Недостаточная или противоречивая temporal evidence
+candidate-x51700-y52400,uncertain,517,524,unknown,23,1.63955,2.828427,0.383333,Недостаточная или противоречивая temporal evidence
+candidate-x57600-y64000,uncertain,576,640,unknown,1,0,0,0.2,Обнаружен только на reference frame
+candidate-x44900-y71700,uncertain,449,717,unknown,3,2.183033,0,0.2,Обнаружен только на reference frame
+candidate-x43800-y72700,uncertain,438,727,unknown,9,2.135188,0,0.2,Обнаружен только на reference frame
+candidate-x49500-y72700,uncertain,495,727,unknown,2,0,0,0.2,Обнаружен только на reference frame
+candidate-x56925-y74428,uncertain,569.248413,744.280273,unknown,19,1.827805,1.484582,0.316667,Недостаточная или противоречивая temporal evidence

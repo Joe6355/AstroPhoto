@@ -27,29 +27,30 @@ internal fun medianArgbPixel(
     colors: IntArray,
     redValues: IntArray,
     greenValues: IntArray,
-    blueValues: IntArray
+    blueValues: IntArray,
+    count: Int = colors.size
 ): Int {
-    require(colors.isNotEmpty()) { "Median requires at least one pixel sample" }
+    require(count in 1..colors.size) { "Median requires at least one pixel sample" }
     require(
-        redValues.size >= colors.size &&
-            greenValues.size >= colors.size &&
-            blueValues.size >= colors.size
+        redValues.size >= count &&
+            greenValues.size >= count &&
+            blueValues.size >= count
     ) {
         "Median channel buffers are shorter than the pixel samples"
     }
 
-    colors.indices.forEach { index ->
+    for (index in 0 until count) {
         val color = colors[index]
         redValues[index] = color ushr 16 and 0xFF
         greenValues[index] = color ushr 8 and 0xFF
         blueValues[index] = color and 0xFF
     }
-    java.util.Arrays.sort(redValues, 0, colors.size)
-    java.util.Arrays.sort(greenValues, 0, colors.size)
-    java.util.Arrays.sort(blueValues, 0, colors.size)
-    val red = medianChannel(redValues, colors.size)
-    val green = medianChannel(greenValues, colors.size)
-    val blue = medianChannel(blueValues, colors.size)
+    java.util.Arrays.sort(redValues, 0, count)
+    java.util.Arrays.sort(greenValues, 0, count)
+    java.util.Arrays.sort(blueValues, 0, count)
+    val red = medianChannel(redValues, count)
+    val green = medianChannel(greenValues, count)
+    val blue = medianChannel(blueValues, count)
     return OPAQUE_ALPHA or (red shl 16) or (green shl 8) or blue
 }
 

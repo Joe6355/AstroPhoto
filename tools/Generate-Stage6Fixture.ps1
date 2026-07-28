@@ -5,8 +5,9 @@ param(
     [int]$CropY = 0,
     [int]$CropWidth = 0,
     [int]$CropHeight = 0,
-    [ValidateRange(2, 15)][int]$MaxFrames = 15,
-    [ValidateRange(128, 960)][int]$MaxDimension = 640,
+    [ValidateRange(2, 30)][int]$MaxFrames = 30,
+    [ValidateRange(0, 29)][int]$ReferenceFrameIndex = 0,
+    [ValidateRange(128, 1920)][int]$MaxDimension = 640,
     [ValidateRange(60, 95)][int]$JpegQuality = 82
 )
 
@@ -26,6 +27,9 @@ $files = Get-ChildItem -LiteralPath $inputRoot -File |
     Select-Object -First $MaxFrames
 if ($files.Count -lt 2) {
     throw 'At least two JPEG frames are required.'
+}
+if ($ReferenceFrameIndex -ge $files.Count) {
+    throw "ReferenceFrameIndex $ReferenceFrameIndex is outside the selected $($files.Count)-frame series."
 }
 
 $codec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() |
@@ -78,14 +82,19 @@ try {
 }
 
 $manifest = @(
-    'name=local-stage6-real-series'
+    'name=urban-window-30'
     "frames=$($outputNames -join ',')"
-    "referenceFrame=$($outputNames[0])"
-    'referenceStars=reference-stars.csv'
+    "referenceFrame=$($outputNames[$ReferenceFrameIndex])"
+    'groundTruth=ground-truth.csv'
 )
 [System.IO.File]::WriteAllLines([System.IO.Path]::Combine($outputRoot, 'manifest.properties'), $manifest)
-[System.IO.File]::WriteAllLines(
-    [System.IO.Path]::Combine($outputRoot, 'reference-stars.csv'),
-    @('# x,y,flux,background,contrast,width,ellipticity,confidence')
-)
+$groundTruthPath = [System.IO.Path]::Combine($outputRoot, 'ground-truth.csv')
+if (-not [System.IO.File]::Exists($groundTruthPath)) {
+    [System.IO.File]::WriteAllLines(
+        $groundTruthPath,
+        @('# id,class,x,y,coordinate_space,support_frames,sky_residual_px,camera_residual_px,confidence,notes')
+    )
+} else {
+    Write-Host "Preserved existing manual ground truth: $groundTruthPath"
+}
 Write-Host "Generated $($outputNames.Count) anonymized fixture frames in $outputRoot"
