@@ -5,57 +5,46 @@ import java.io.File
 import java.util.Properties
 import javax.imageio.ImageIO
 
-enum class ProvisionalSourceClass {
-    STAR,
-    SENSOR_DEFECT,
-    UNCERTAIN
-}
-
-enum class ProvisionalCoordinateSpace {
-    SKY,
-    CAMERA,
-    UNKNOWN
-}
-
-data class ProvisionalSourceLabel(
-    val id: String,
-    val classification: ProvisionalSourceClass,
-    val x: Float,
-    val y: Float,
-    val coordinateSpace: ProvisionalCoordinateSpace,
-    val supportFrames: Int,
-    val skyResidualPx: Float?,
-    val cameraResidualPx: Float?,
-    val confidence: Float,
-    val notes: String
-)
-
-data class Stage6RegressionFixture(
+internal data class Stage6RegressionFixture(
     val name: String,
     val frames: List<ArgbPixelImage>,
     val referenceFrameIndex: Int,
-    val groundTruth: List<ProvisionalSourceLabel>
+    val groundTruth: List<ProvisionalSourceLabel>,
+    val groundTruthMetadata: GroundTruthMetadata
 ) {
-    val referenceStars: List<DetectedStar> = groundTruth
-        .filter { it.classification == ProvisionalSourceClass.STAR }
+    val strictReferenceStarLabels: List<ProvisionalSourceLabel> = groundTruth
+        .filter {
+            GroundTruthEligibility.isEligible(it, StrictGroundTruthMetric.STAR_RETENTION)
+        }
+
+    val referenceStars: List<DetectedStar> = strictReferenceStarLabels
         .map {
             DetectedStar(
-                x = it.x,
-                y = it.y,
+                x = it.x.toFloat(),
+                y = it.y.toFloat(),
                 flux = 500f,
                 localBackground = 20f,
                 localContrast = 60f,
                 width = 1.8f,
                 ellipticity = 0.1f,
-                confidence = it.confidence
+                confidence = it.processingConfidence
             )
         }
 
-    val scoredGroundTruth: List<ProvisionalSourceLabel> = groundTruth
-        .filterNot { it.classification == ProvisionalSourceClass.UNCERTAIN }
+    val provisionalReferenceStars: List<ProvisionalSourceLabel> = groundTruth
+        .filter { it.classification == ProvisionalSourceClass.STAR }
+
+    val strictSensorDefects: List<ProvisionalSourceLabel> = groundTruth
+        .filter {
+            GroundTruthEligibility.isEligible(it, StrictGroundTruthMetric.SENSOR_DEFECT)
+        }
+
+    val scoredGroundTruth: List<ProvisionalSourceLabel> = GroundTruthEligibility.eligible(groundTruth)
+
+    val groundTruthSummary: GroundTruthEligibilitySummary = GroundTruthEligibility.summary(groundTruth)
 }
 
-object Stage6RegressionFixtureLoader {
+internal object Stage6RegressionFixtureLoader {
     const val LOCAL_DIRECTORY_PROPERTY = "astrophoto.stage6.fixtureDir"
 
     fun configuredDirectory(): File? = System.getProperty(LOCAL_DIRECTORY_PROPERTY)
@@ -90,9 +79,13 @@ object Stage6RegressionFixtureLoader {
         val referenceName = properties.getProperty("referenceFrame", frameNames.first())
         val referenceIndex = frameNames.indexOf(referenceName)
         require(referenceIndex >= 0) { "referenceFrame must be present in frames" }
+        val metadata = GroundTruthMetadata.load(
+            properties.getProperty("groundTruthMetadata")
+                ?.let(directory::resolve)
+        )
         val groundTruthName = properties.getProperty("groundTruth")
         val groundTruth = if (groundTruthName != null) {
-            readGroundTruth(directory.resolve(groundTruthName))
+            GroundTruthCsv.read(directory.resolve(groundTruthName), metadata.provenance)
         } else {
             readLegacyReferenceStars(
                 directory.resolve(properties.getProperty("referenceStars", "reference-stars.csv"))
@@ -105,58 +98,36 @@ object Stage6RegressionFixtureLoader {
             "Provisional ground-truth ids must be unique"
         }
         groundTruth.forEach { label ->
-            require(label.x >= 0f && label.x < frames.first().width.toFloat()) {
+            require(label.x >= 0.0 && label.x < frames.first().width.toDouble()) {
                 "Ground-truth x is outside the fixture: $label"
             }
-            require(label.y >= 0f && label.y < frames.first().height.toFloat()) {
+            require(label.y >= 0.0 && label.y < frames.first().height.toDouble()) {
                 "Ground-truth y is outside the fixture: $label"
             }
             require(label.supportFrames in 1..frames.size) {
                 "Ground-truth support is outside the series: $label"
             }
-            require(label.confidence in 0f..1f) {
+            require(label.confidence == null || label.confidence in 0.0..1.0) {
                 "Ground-truth confidence is outside 0..1: $label"
             }
+        }
+        metadata.fixtureWidth?.let {
+            require(it == frames.first().width) { "ground-truth metadata width differs from fixture" }
+        }
+        metadata.fixtureHeight?.let {
+            require(it == frames.first().height) { "ground-truth metadata height differs from fixture" }
+        }
+        metadata.referenceFrameIndex?.let {
+            require(it == referenceIndex) { "ground-truth metadata reference index differs from fixture" }
         }
         return Stage6RegressionFixture(
             properties.getProperty("name", directory.name),
             frames,
             referenceIndex,
-            groundTruth
+            groundTruth,
+            metadata
         )
     }
-
-    private fun readGroundTruth(file: File): List<ProvisionalSourceLabel> = file.readLines()
-        .asSequence()
-        .map(String::trim)
-        .filter { it.isNotEmpty() && !it.startsWith('#') }
-        .map { line ->
-            val values = line.split(',', limit = 10).map(String::trim)
-            require(values.size >= 9) { "Invalid provisional ground-truth row: $line" }
-            val classification = enumValueOf<ProvisionalSourceClass>(values[1].uppercase())
-            val coordinateSpace = enumValueOf<ProvisionalCoordinateSpace>(values[4].uppercase())
-            require(
-                classification != ProvisionalSourceClass.STAR ||
-                    coordinateSpace == ProvisionalCoordinateSpace.SKY
-            ) { "A star must use sky coordinates: $line" }
-            require(
-                classification != ProvisionalSourceClass.SENSOR_DEFECT ||
-                    coordinateSpace == ProvisionalCoordinateSpace.CAMERA
-            ) { "A sensor defect must use camera coordinates: $line" }
-            ProvisionalSourceLabel(
-                id = values[0],
-                classification = classification,
-                x = values[2].toFloat(),
-                y = values[3].toFloat(),
-                coordinateSpace = coordinateSpace,
-                supportFrames = values[5].toInt(),
-                skyResidualPx = values[6].toFloatOrNull(),
-                cameraResidualPx = values[7].toFloatOrNull(),
-                confidence = values[8].toFloat(),
-                notes = values.getOrElse(9) { "" }
-            )
-        }
-        .toList()
 
     private fun readLegacyReferenceStars(file: File): List<ProvisionalSourceLabel> =
         file.readLines()
@@ -169,13 +140,17 @@ object Stage6RegressionFixtureLoader {
                 ProvisionalSourceLabel(
                     id = "legacy-star-${index + 1}",
                     classification = ProvisionalSourceClass.STAR,
-                    x = values[0].toFloat(),
-                    y = values[1].toFloat(),
+                    x = values[0].toDouble(),
+                    y = values[1].toDouble(),
                     coordinateSpace = ProvisionalCoordinateSpace.SKY,
                     supportFrames = 1,
                     skyResidualPx = null,
                     cameraResidualPx = null,
-                    confidence = values.getOrNull(7)?.toFloatOrNull() ?: 0.95f,
+                    confidence = values.getOrNull(7)?.toDoubleOrNull() ?: 0.95,
+                    annotationSource = GroundTruthAnnotationSource.UNKNOWN,
+                    reviewStatus = GroundTruthReviewStatus.NEEDS_REVIEW,
+                    reviewedBy = "",
+                    reviewedAt = "",
                     notes = "Legacy reference-star row"
                 )
             }

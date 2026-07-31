@@ -13,9 +13,23 @@ regression fixture. To regenerate it from the original exported series on Window
 
 The crop retains weak stars, city glow, a window reflection, a building edge,
 wires, JPEG noise, and fixed camera-space artifacts. Review every generated image.
-Classify sources in `ground-truth.csv` as `star`, `sensor_defect`, or `uncertain`.
-Stars use sky coordinates; sensor defects use camera coordinates. `uncertain` rows
-must not participate in recall or retention metrics.
+Classify sources in versioned `ground-truth.csv` as `star`, `sensor_defect`, or
+`uncertain`; keep coordinate definitions in `ground-truth-metadata.properties`.
+Stars use sky coordinates and sensor defects use camera coordinates. Strict
+retention/recall metrics include only `confirmed` rows whose
+`annotation_source` is `manual` or `catalog`. Automatic, unreviewed, rejected,
+unknown, and `uncertain` rows remain diagnostic-only.
+
+Generate the offline review package with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File .\tools\Generate-GroundTruthReview.ps1
+```
+
+Edit the generated `review-queue.csv`, then import explicit decisions into a new
+build-output CSV with `tools\Import-GroundTruthReview.ps1`. The importer never
+overwrites the source ground truth.
 
 Run a local fixture test with:
 
@@ -31,6 +45,7 @@ frame-000.jpg
 frame-001.jpg
 ...
 ground-truth.csv
+ground-truth-metadata.properties
 ```
 
 No absolute private path is stored in the manifest or test code.

@@ -488,7 +488,16 @@ class JpegV2Stage6Test {
         directory.resolve("reference-stars.csv").writeText("3,2,500,20,60,1.8,0.1,0.95\n")
         val fixture = Stage6RegressionFixtureLoader.load(directory)
         assertEquals(2, fixture.frames.size)
-        assertEquals(1, fixture.referenceStars.size)
+        assertEquals(0, fixture.referenceStars.size)
+        assertEquals(1, fixture.provisionalReferenceStars.size)
+        assertEquals(
+            GroundTruthAnnotationSource.UNKNOWN,
+            fixture.provisionalReferenceStars.single().annotationSource
+        )
+        assertEquals(
+            GroundTruthReviewStatus.NEEDS_REVIEW,
+            fixture.provisionalReferenceStars.single().reviewStatus
+        )
         assertEquals(8, fixture.frames.first().width)
     }
 

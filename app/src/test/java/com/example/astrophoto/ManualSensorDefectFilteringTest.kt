@@ -272,9 +272,7 @@ class ManualSensorDefectFilteringTest {
             assertEquals(mask.regions.size, coverage.report.regionCount)
             assertEquals(mask.maskedPixelCount, coverage.report.maskedSourcePixelCount)
         }
-        val defects = fixture.groundTruth.filter {
-            it.classification == ProvisionalSourceClass.SENSOR_DEFECT
-        }
+        val defects = fixture.strictSensorDefects
         defects.forEach { defect ->
             assertTrue(
                 "${defect.id} missing from production source mask: ${mask.regions}",
@@ -304,9 +302,7 @@ class ManualSensorDefectFilteringTest {
             assertTrue("${defect.id}: before=$before after=$after", after < before * 0.65)
             defect.id to (before to after)
         }
-        val starMetrics = fixture.groundTruth.filter {
-            it.classification == ProvisionalSourceClass.STAR
-        }.associate { star ->
+        val starMetrics = fixture.strictReferenceStarLabels.associate { star ->
             val before = localPeakContrast(baseline, star.x, star.y)
             val after = localPeakContrast(filtered, star.x, star.y)
             assertTrue("${star.id}: before=$before after=$after", after >= before * 0.80)
@@ -385,6 +381,9 @@ class ManualSensorDefectFilteringTest {
         return best
     }
 
+    private fun localPeakContrast(image: ArgbPixelImage, x: Double, y: Double): Double =
+        localPeakContrast(image, x.toFloat(), y.toFloat())
+
     private fun localContrast(image: ArgbPixelImage, x: Float, y: Float): Double {
         val centerX = x.roundToInt().coerceIn(3, image.width - 4)
         val centerY = y.roundToInt().coerceIn(3, image.height - 4)
@@ -401,6 +400,9 @@ class ManualSensorDefectFilteringTest {
         }.sorted()
         return center - ring[ring.size / 2]
     }
+
+    private fun localContrast(image: ArgbPixelImage, x: Double, y: Double): Double =
+        localContrast(image, x.toFloat(), y.toFloat())
 
     private fun luminance(color: Int): Double =
         (color ushr 16 and 0xFF) * 0.299 +
@@ -483,6 +485,15 @@ class ManualSensorDefectFilteringTest {
     private fun channel(color: Int): Int = color and 0xFF
 
     private fun distanceSquared(x1: Float, y1: Float, x2: Float, y2: Float): Float {
+        val dx = x1 - x2
+        val dy = y1 - y2
+        return dx * dx + dy * dy
+    }
+
+    private fun distanceSquared(x1: Float, y1: Float, x2: Double, y2: Double): Double =
+        distanceSquared(x1.toDouble(), y1.toDouble(), x2, y2)
+
+    private fun distanceSquared(x1: Double, y1: Double, x2: Double, y2: Double): Double {
         val dx = x1 - x2
         val dy = y1 - y2
         return dx * dx + dy * dy

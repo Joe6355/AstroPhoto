@@ -171,6 +171,9 @@ class Stage6RealDeviceFixtureTest {
         return best
     }
 
+    private fun localPeakContrast(image: ArgbPixelImage, x: Double, y: Double): Float =
+        localPeakContrast(image, x.toFloat(), y.toFloat())
+
     private fun sampledContrast(image: ArgbPixelImage, x: Float, y: Float): Float {
         val centerX = x.roundToInt().coerceIn(3, image.width - 4)
         val centerY = y.roundToInt().coerceIn(3, image.height - 4)
@@ -196,6 +199,15 @@ class Stage6RealDeviceFixtureTest {
     }
 
     private fun squaredDistance(x1: Float, y1: Float, x2: Float, y2: Float): Float {
+        val dx = x1 - x2
+        val dy = y1 - y2
+        return dx * dx + dy * dy
+    }
+
+    private fun squaredDistance(x1: Float, y1: Float, x2: Double, y2: Double): Double =
+        squaredDistance(x1.toDouble(), y1.toDouble(), x2, y2)
+
+    private fun squaredDistance(x1: Double, y1: Double, x2: Double, y2: Double): Double {
         val dx = x1 - x2
         val dy = y1 - y2
         return dx * dx + dy * dy

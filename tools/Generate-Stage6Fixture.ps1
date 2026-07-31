@@ -39,6 +39,8 @@ $encoder = [System.Drawing.Imaging.Encoder]::Quality
 $parameters = [System.Drawing.Imaging.EncoderParameters]::new(1)
 $parameters.Param[0] = [System.Drawing.Imaging.EncoderParameter]::new($encoder, [long]$JpegQuality)
 $outputNames = [System.Collections.Generic.List[string]]::new()
+$fixtureWidth = 0
+$fixtureHeight = 0
 
 try {
     for ($index = 0; $index -lt $files.Count; $index++) {
@@ -54,6 +56,12 @@ try {
             $scale = [Math]::Min(1.0, $MaxDimension / [double][Math]::Max($width, $height))
             $targetWidth = [Math]::Max(1, [int][Math]::Round($width * $scale))
             $targetHeight = [Math]::Max(1, [int][Math]::Round($height * $scale))
+            if ($fixtureWidth -eq 0) {
+                $fixtureWidth = $targetWidth
+                $fixtureHeight = $targetHeight
+            } elseif ($fixtureWidth -ne $targetWidth -or $fixtureHeight -ne $targetHeight) {
+                throw 'All generated fixture frames must have identical dimensions.'
+            }
             $bitmap = [System.Drawing.Bitmap]::new($targetWidth, $targetHeight)
             try {
                 $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
@@ -86,15 +94,37 @@ $manifest = @(
     "frames=$($outputNames -join ',')"
     "referenceFrame=$($outputNames[$ReferenceFrameIndex])"
     'groundTruth=ground-truth.csv'
+    'groundTruthMetadata=ground-truth-metadata.properties'
 )
 [System.IO.File]::WriteAllLines([System.IO.Path]::Combine($outputRoot, 'manifest.properties'), $manifest)
 $groundTruthPath = [System.IO.Path]::Combine($outputRoot, 'ground-truth.csv')
 if (-not [System.IO.File]::Exists($groundTruthPath)) {
     [System.IO.File]::WriteAllLines(
         $groundTruthPath,
-        @('# id,class,x,y,coordinate_space,support_frames,sky_residual_px,camera_residual_px,confidence,notes')
+        @(
+            '# schemaVersion=astrophoto.ground-truth/2'
+            'id,x,y,class,confidence,annotation_source,review_status,reviewed_by,reviewed_at,notes,coordinate_space,support_frames,sky_residual_px,camera_residual_px'
+        )
     )
 } else {
     Write-Host "Preserved existing manual ground truth: $groundTruthPath"
+}
+$metadataPath = [System.IO.Path]::Combine($outputRoot, 'ground-truth-metadata.properties')
+if (-not [System.IO.File]::Exists($metadataPath)) {
+    [System.IO.File]::WriteAllLines(
+        $metadataPath,
+        @(
+            'schemaVersion=astrophoto.ground-truth/2'
+            "fixtureWidth=$fixtureWidth"
+            "fixtureHeight=$fixtureHeight"
+            "referenceFrameIndex=$ReferenceFrameIndex"
+            'fixtureCoordinates=decoded fixture pixels, origin top-left'
+            "referenceCoordinates=$($outputNames[$ReferenceFrameIndex]) pixels, identical to fixture coordinates"
+            'cameraCoordinates=source frame pixels before sky transform'
+            'outputCoordinates=aligned output pixels in reference-frame geometry'
+            'confirmedManualIds='
+            'automaticIdPrefixes=candidate-'
+        )
+    )
 }
 Write-Host "Generated $($outputNames.Count) anonymized fixture frames in $outputRoot"

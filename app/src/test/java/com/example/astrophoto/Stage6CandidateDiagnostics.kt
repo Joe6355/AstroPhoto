@@ -4,6 +4,7 @@ import com.example.astrophoto.processing.jpeg.v2.analysis.JpegFrameAnalyzer
 import com.example.astrophoto.processing.jpeg.v2.artifacts.ArtifactFrameObservation
 import com.example.astrophoto.processing.jpeg.v2.artifacts.StaticArtifactAnalyzer
 import com.example.astrophoto.processing.jpeg.v2.artifacts.StaticArtifactRegion
+import com.example.astrophoto.processing.jpeg.v2.artifacts.SensorDefectMask
 import com.example.astrophoto.processing.jpeg.v2.integration.FrameWeightCalculator
 import com.example.astrophoto.processing.jpeg.v2.integration.FrameWeightInput
 import com.example.astrophoto.processing.jpeg.v2.masking.SkyMaskEstimator
@@ -96,6 +97,8 @@ internal data class Stage6CandidateDiagnostic(
     val shape: Stage6CandidateShape,
     val cameraSpaceRecurrence: Int,
     val skySpaceRecurrence: Int,
+    val cameraObservedFrameIndices: List<Int>,
+    val skyObservedFrameIndices: List<Int>,
     val medianLocalContrast: Double,
     val chromaResidual: Double,
     val estimatedMotionX: Double,
@@ -163,7 +166,8 @@ internal data class Stage6DiagnosticBundle(
     val manualAlignedStack: ArgbPixelImage,
     val cleanStack: ArgbPixelImage,
     val enhancedProfile: ArgbPixelImage,
-    val skyMask: SkyMask
+    val skyMask: SkyMask,
+    val sensorDefectMask: SensorDefectMask?
 ) {
     val candidateCounts: Map<ProvisionalSourceClass, Int>
         get() = ProvisionalSourceClass.entries.associateWith { classification ->
@@ -322,7 +326,8 @@ internal class Stage6CandidateDiagnosticRunner {
             manualAlignedStack = manualStack,
             cleanStack = cleanStack,
             enhancedProfile = enhanced,
-            skyMask = referenceMask
+            skyMask = referenceMask,
+            sensorDefectMask = manualPlan.sensorDefectMask
         )
     }
 
@@ -554,13 +559,17 @@ internal class Stage6CandidateDiagnosticRunner {
         referenceMask: SkyMask
     ): List<Stage6CandidateDiagnostic> {
         val seeds = mutableListOf<CandidateSeed>()
-        fixture.groundTruth.filterNot { isGeneratedCandidateId(it.id) }.forEach { label ->
+        fixture.groundTruth.filterNot {
+            isGeneratedCandidateId(it.id) &&
+                it.annotationSource == GroundTruthAnnotationSource.AUTOMATIC
+        }.forEach { label ->
             val origins = linkedSetOf("preserved_ground_truth")
             when (label.classification) {
                 ProvisionalSourceClass.STAR -> origins += "sky_space_temporal_motion"
                 ProvisionalSourceClass.SENSOR_DEFECT ->
                     origins += "camera_space_temporal_persistence"
-                ProvisionalSourceClass.UNCERTAIN -> Unit
+                ProvisionalSourceClass.UNCERTAIN,
+                ProvisionalSourceClass.UNKNOWN -> Unit
             }
             seeds += CandidateSeed(
                 id = label.id,
@@ -731,6 +740,7 @@ internal class Stage6CandidateDiagnosticRunner {
                 ProvisionalSourceClass.STAR -> 3
                 ProvisionalSourceClass.SENSOR_DEFECT -> 2
                 ProvisionalSourceClass.UNCERTAIN -> 1
+                ProvisionalSourceClass.UNKNOWN -> 0
             }
         }.thenBy { max(it.cameraSpaceRecurrence, it.skySpaceRecurrence) }
             .thenBy { it.origins.size }
@@ -801,7 +811,7 @@ internal class Stage6CandidateDiagnosticRunner {
             else -> ProvisionalSourceClass.UNCERTAIN
         }
         val confidence = when {
-            preserved != null -> preserved.confidence.toDouble()
+            preserved != null -> preserved.confidence ?: 0.0
             classification == ProvisionalSourceClass.STAR -> (
                 0.30 +
                     0.30 * checkNotNull(seed.track).presenceRatio +
@@ -836,11 +846,12 @@ internal class Stage6CandidateDiagnosticRunner {
                 "Обнаружен только на reference frame"
             else -> "Недостаточная или противоречивая temporal evidence"
         }
-        val id = seed.id ?: stableId(seed.x, seed.y)
+        val id = seed.id ?: GroundTruthStableIds.candidate(seed.x, seed.y)
         val selectedPath = when (classification) {
             ProvisionalSourceClass.STAR -> sky
             ProvisionalSourceClass.SENSOR_DEFECT -> camera
-            ProvisionalSourceClass.UNCERTAIN -> if (sky.recurrence >= camera.recurrence) sky else camera
+            ProvisionalSourceClass.UNCERTAIN,
+            ProvisionalSourceClass.UNKNOWN -> if (sky.recurrence >= camera.recurrence) sky else camera
         }
         return Stage6CandidateDiagnostic(
             id = id,
@@ -850,6 +861,8 @@ internal class Stage6CandidateDiagnosticRunner {
             shape = localShape.shape,
             cameraSpaceRecurrence = camera.recurrence,
             skySpaceRecurrence = sky.recurrence,
+            cameraObservedFrameIndices = camera.observedFrameIndices,
+            skyObservedFrameIndices = sky.observedFrameIndices,
             medianLocalContrast = preserved?.let {
                 max(camera.medianContrast, sky.medianContrast)
             } ?: selectedPath.medianContrast,
@@ -858,13 +871,15 @@ internal class Stage6CandidateDiagnosticRunner {
                 ProvisionalSourceClass.STAR -> seed.track?.velocityX?.toDouble()
                     ?: registration.model.velocityX.toDouble()
                 ProvisionalSourceClass.SENSOR_DEFECT -> 0.0
-                ProvisionalSourceClass.UNCERTAIN -> seed.track?.velocityX?.toDouble() ?: 0.0
+                ProvisionalSourceClass.UNCERTAIN,
+                ProvisionalSourceClass.UNKNOWN -> seed.track?.velocityX?.toDouble() ?: 0.0
             },
             estimatedMotionY = when (classification) {
                 ProvisionalSourceClass.STAR -> seed.track?.velocityY?.toDouble()
                     ?: registration.model.velocityY.toDouble()
                 ProvisionalSourceClass.SENSOR_DEFECT -> 0.0
-                ProvisionalSourceClass.UNCERTAIN -> seed.track?.velocityY?.toDouble() ?: 0.0
+                ProvisionalSourceClass.UNCERTAIN,
+                ProvisionalSourceClass.UNKNOWN -> seed.track?.velocityY?.toDouble() ?: 0.0
             },
             registrationResidual = seed.track?.fitResidual?.toDouble()
                 ?: registration.model.residual.toDouble(),
@@ -1309,55 +1324,49 @@ internal class Stage6CandidateDiagnosticRunner {
         existingGroundTruth: Path,
         output: Path
     ) {
-        val existingLines = Files.readAllLines(existingGroundTruth, StandardCharsets.UTF_8)
-        val retainedLines = existingLines.filter { line ->
-            val trimmed = line.trim()
-            trimmed.isEmpty() ||
-                trimmed.startsWith('#') ||
-                !isGeneratedCandidateId(trimmed.substringBefore(','))
+        val existing = GroundTruthCsv.read(existingGroundTruth.toFile())
+        val retained = existing.filterNot {
+            it.annotationSource == GroundTruthAnnotationSource.AUTOMATIC &&
+                isGeneratedCandidateId(it.id)
         }
-        val existingIds = retainedLines.asSequence()
-            .map(String::trim)
-            .filter { it.isNotEmpty() && !it.startsWith('#') }
-            .map { it.substringBefore(',') }
-            .toSet()
-        val appended = bundle.candidates.filterNot { it.id in existingIds }.map { candidate ->
-            val coordinateSpace = when (candidate.provisionalClass) {
-                ProvisionalSourceClass.STAR -> "sky"
-                ProvisionalSourceClass.SENSOR_DEFECT -> "camera"
-                ProvisionalSourceClass.UNCERTAIN -> "unknown"
+        val retainedIds = retained.mapTo(mutableSetOf()) { it.id }
+        val appended = bundle.candidates
+            .filterNot { it.id in retainedIds }
+            .map { candidate ->
+                val coordinateSpace = when (candidate.provisionalClass) {
+                    ProvisionalSourceClass.STAR -> ProvisionalCoordinateSpace.SKY
+                    ProvisionalSourceClass.SENSOR_DEFECT -> ProvisionalCoordinateSpace.CAMERA
+                    ProvisionalSourceClass.UNCERTAIN,
+                    ProvisionalSourceClass.UNKNOWN -> ProvisionalCoordinateSpace.UNKNOWN
+                }
+                val support = when (candidate.provisionalClass) {
+                    ProvisionalSourceClass.STAR -> candidate.skySpaceRecurrence
+                    ProvisionalSourceClass.SENSOR_DEFECT -> candidate.cameraSpaceRecurrence
+                    ProvisionalSourceClass.UNCERTAIN,
+                    ProvisionalSourceClass.UNKNOWN ->
+                        max(candidate.cameraSpaceRecurrence, candidate.skySpaceRecurrence)
+                }.coerceIn(1, EXPECTED_FRAME_COUNT)
+                ProvisionalSourceLabel(
+                    id = candidate.id,
+                    classification = candidate.provisionalClass,
+                    x = candidate.referenceX,
+                    y = candidate.referenceY,
+                    coordinateSpace = coordinateSpace,
+                    supportFrames = support,
+                    skyResidualPx = candidate.skyResidual,
+                    cameraResidualPx = candidate.cameraResidual,
+                    confidence = candidate.confidence,
+                    annotationSource = GroundTruthAnnotationSource.AUTOMATIC,
+                    reviewStatus = GroundTruthReviewStatus.UNREVIEWED,
+                    reviewedBy = "",
+                    reviewedAt = "",
+                    notes = candidate.classificationReason
+                )
             }
-            val support = when (candidate.provisionalClass) {
-                ProvisionalSourceClass.STAR -> candidate.skySpaceRecurrence
-                ProvisionalSourceClass.SENSOR_DEFECT -> candidate.cameraSpaceRecurrence
-                ProvisionalSourceClass.UNCERTAIN ->
-                    max(candidate.cameraSpaceRecurrence, candidate.skySpaceRecurrence)
-            }.coerceIn(1, EXPECTED_FRAME_COUNT)
-            listOf(
-                candidate.id,
-                candidate.provisionalClass.name.lowercase(),
-                number(candidate.referenceX),
-                number(candidate.referenceY),
-                coordinateSpace,
-                support,
-                number(candidate.skyResidual),
-                number(candidate.cameraResidual),
-                number(candidate.confidence),
-                candidate.classificationReason.replace(',', ';')
-            ).joinToString(",")
-        }
-        Files.createDirectories(checkNotNull(output.parent))
-        Files.write(
-            output,
-            (retainedLines + appended).joinToString(
-                System.lineSeparator(),
-                postfix = System.lineSeparator()
-            )
-                .toByteArray(StandardCharsets.UTF_8)
-        )
+        GroundTruthCsv.write(output, retained + appended)
     }
 
-    private fun writeCandidateContactSheet(bundle: Stage6DiagnosticBundle, output: Path) {
+    internal fun writeCandidateContactSheet(bundle: Stage6DiagnosticBundle, output: Path) {
         val columns = CONTACT_COLUMNS
         val rows = ceil(bundle.candidates.size.toDouble() / columns).toInt().coerceAtLeast(1)
         val image = BufferedImage(columns * CONTACT_CELL_WIDTH, rows * CONTACT_CELL_HEIGHT, BufferedImage.TYPE_INT_RGB)
@@ -1406,7 +1415,7 @@ internal class Stage6CandidateDiagnosticRunner {
         image.flush()
     }
 
-    private fun writeTrailContactSheet(bundle: Stage6DiagnosticBundle, output: Path) {
+    internal fun writeTrailContactSheet(bundle: Stage6DiagnosticBundle, output: Path) {
         val rows = bundle.trails.size.coerceAtLeast(1)
         val image = BufferedImage(
             TRAIL_LABEL_WIDTH + TRAIL_COLUMNS * TRAIL_CELL_SIZE,
@@ -1618,6 +1627,7 @@ internal class Stage6CandidateDiagnosticRunner {
         ProvisionalSourceClass.STAR -> Color(90, 210, 255)
         ProvisionalSourceClass.SENSOR_DEFECT -> Color(255, 95, 120)
         ProvisionalSourceClass.UNCERTAIN -> Color(255, 210, 90)
+        ProvisionalSourceClass.UNKNOWN -> Color(180, 180, 180)
     }
 
     private fun signal(color: Int): PixelSignal {
@@ -1626,10 +1636,6 @@ internal class Stage6CandidateDiagnosticRunner {
         val blue = (color and 0xFF).toDouble()
         return PixelSignal(red, green, blue, red * 0.299 + green * 0.587 + blue * 0.114)
     }
-
-    private fun stableId(x: Double, y: Double): String =
-        "candidate-x${(x * 100).roundToInt().toString().padStart(5, '0')}" +
-            "-y${(y * 100).roundToInt().toString().padStart(5, '0')}"
 
     private fun isGeneratedCandidateId(id: String): Boolean =
         id.startsWith(GENERATED_CANDIDATE_PREFIX)

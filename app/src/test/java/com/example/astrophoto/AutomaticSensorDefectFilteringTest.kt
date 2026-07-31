@@ -467,9 +467,7 @@ class AutomaticSensorDefectFilteringTest {
                     "${region.stableRegionId}@${region.sourceX},${region.sourceY}"
                 }
         )
-        fixture.groundTruth.filter {
-            it.classification == ProvisionalSourceClass.SENSOR_DEFECT
-        }.forEach { defect ->
+        fixture.strictSensorDefects.forEach { defect ->
             println(
                 "AUTOMATIC_SENSOR_MASK_ANNOTATED_DEFECT " +
                     "${defect.id}@${defect.x},${defect.y} " +
@@ -489,9 +487,7 @@ class AutomaticSensorDefectFilteringTest {
                 )
             )
         }
-        fixture.groundTruth.filter {
-            it.classification == ProvisionalSourceClass.STAR
-        }.forEach { star ->
+        fixture.provisionalReferenceStars.forEach { star ->
             assertFalse(
                 automaticMask.mask.contains(star.x.roundToInt(), star.y.roundToInt())
             )
@@ -526,9 +522,7 @@ class AutomaticSensorDefectFilteringTest {
                 "filteredStars=${referenceAnalysis.stars.size} " +
                 "registrationStaticRegions=${registrationArtifactMask.regions.size}"
         )
-        fixture.groundTruth.filter {
-            it.classification == ProvisionalSourceClass.SENSOR_DEFECT
-        }.forEach { defect ->
+        fixture.strictSensorDefects.forEach { defect ->
             val nearest = referenceAnalysis.stars.minByOrNull { star ->
                 kotlin.math.hypot(star.x - defect.x, star.y - defect.y)
             }
@@ -568,9 +562,7 @@ class AutomaticSensorDefectFilteringTest {
         assertTrue(filtered.filtering.excludedSampleCount > 0)
 
         val trailMetrics = mutableListOf<String>()
-        fixture.groundTruth.filter {
-            it.classification == ProvisionalSourceClass.SENSOR_DEFECT
-        }.forEach { defect ->
+        fixture.strictSensorDefects.forEach { defect ->
             val path = plan.frames.filter { it.accepted }.map { decision ->
                 (defect.x - decision.shift.dx) to (defect.y - decision.shift.dy)
             }.distinctBy { it.first.roundToInt() to it.second.roundToInt() }
@@ -601,9 +593,7 @@ class AutomaticSensorDefectFilteringTest {
         }
 
         val starMetrics = mutableListOf<String>()
-        fixture.groundTruth.filter {
-            it.classification == ProvisionalSourceClass.STAR
-        }.forEach { star ->
+        fixture.strictReferenceStarLabels.forEach { star ->
             val before = compactSourceMetrics(baseline.image, star.x, star.y)
             val after = compactSourceMetrics(filtered.image, star.x, star.y)
             val centroidShift = kotlin.math.hypot(
@@ -921,6 +911,12 @@ class AutomaticSensorDefectFilteringTest {
         )
     }
 
+    private fun compactSourceMetrics(
+        image: ArgbPixelImage,
+        x: Double,
+        y: Double
+    ): CompactSourceMetrics = compactSourceMetrics(image, x.toFloat(), y.toFloat())
+
     private data class BackgroundMetrics(val mad: Double, val rms: Double)
 
     private fun backgroundMetrics(
@@ -963,6 +959,9 @@ class AutomaticSensorDefectFilteringTest {
         }.sorted()
         return center - ring[ring.size / 2]
     }
+
+    private fun localContrast(image: ArgbPixelImage, x: Double, y: Double): Double =
+        localContrast(image, x.toFloat(), y.toFloat())
 
     private fun luminance(color: Int): Double =
         (color ushr 16 and 0xFF) * 0.299 +
@@ -1220,8 +1219,7 @@ class AutomaticSensorDefectFilteringTest {
         }
         assertArrayEquals(selection.selected.image.pixels, publishedImage.pixels)
 
-        val defectPaths = fixture.groundTruth
-            .filter { it.classification == ProvisionalSourceClass.SENSOR_DEFECT }
+        val defectPaths = fixture.strictSensorDefects
             .associateWith { defect ->
                 plan.frames.filter { it.accepted }.map { decision ->
                     (defect.x - decision.shift.dx) to (defect.y - decision.shift.dy)
@@ -1239,8 +1237,7 @@ class AutomaticSensorDefectFilteringTest {
                 publishedPositive < baselinePositive
             )
         }
-        fixture.groundTruth
-            .filter { it.classification == ProvisionalSourceClass.STAR }
+        fixture.strictReferenceStarLabels
             .forEach { star ->
                 val baselineMetrics = compactSourceMetrics(
                     unmaskedSelected,
