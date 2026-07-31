@@ -5,6 +5,9 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
+import java.util.zip.ZipFile
+import javax.imageio.ImageIO
+import kotlin.math.roundToInt
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -296,7 +299,15 @@ class GroundTruthReviewWorkflowTest {
             "sky-space-aligned.png",
             "alignment-before-after.png",
             "sensor-mask-overlay.png",
-            "index.html"
+            "index.html",
+            "human-review/index.html",
+            "human-review/README_RU.md",
+            "human-review/review-decisions-template.csv",
+            "human-review/candidate-summary.csv",
+            "human-review/contact-sheet.png",
+            "human-review/evidence-manifest.json",
+            "human-review/manual-review-bundle.zip",
+            "human-review/sensor-mask-global.png"
         ).forEach { assertTrue("Missing $it", Files.isRegularFile(first.manifest.parent.resolve(it))) }
         assertTrue(Files.isDirectory(first.manifest.parent.resolve("crops/native")))
         assertTrue(Files.isDirectory(first.manifest.parent.resolve("crops/nearest")))
@@ -307,6 +318,13 @@ class GroundTruthReviewWorkflowTest {
         assertFalse(packageHashes(first.manifest.parent).keys.any {
             it.endsWith(".jpg") || it.endsWith(".jpeg") || it.endsWith(".dng")
         })
+        ZipFile(first.manifest.parent.resolve("human-review/manual-review-bundle.zip").toFile()).use { archive ->
+            val names = archive.entries().asSequence().map { it.name.lowercase() }.toList()
+            assertTrue(names.isNotEmpty())
+            assertFalse(names.any {
+                it.endsWith(".jpg") || it.endsWith(".jpeg") || it.endsWith(".dng") || it.endsWith(".apk")
+            })
+        }
     }
 
     @Test fun reviewQueueOrderMatchesDeterministicCandidateOrder() {
@@ -330,6 +348,189 @@ class GroundTruthReviewWorkflowTest {
         assertEquals(expected, ids)
         assertEquals(ids.distinct(), ids)
     }
+
+    @Test fun automaticMaskArtifactUsesPersistentEvidenceAndReferenceMapping() {
+        val fixture = fixture()
+        val bundle = diagnosticBundle()
+        val mask = requireNotNull(bundle.sensorDefectMask)
+
+        assertTrue(mask.enabled)
+        assertEquals(fixture.frames.first().width, mask.width)
+        assertEquals(fixture.frames.first().height, mask.height)
+        assertEquals(10, mask.regions.size)
+        assertEquals(210, mask.footprintPixels.size)
+        fixture.strictSensorDefects.forEach { defect ->
+            assertTrue(mask.contains(defect.x.roundToInt(), defect.y.roundToInt()))
+        }
+        val reference = bundle.frames[bundle.referenceFrameIndex]
+        assertTrue(reference.cleanAccepted)
+        assertEquals(
+            com.example.astrophoto.processing.jpeg.v2.model.ReferenceToSourceTransform.Identity,
+            reference.cleanTransform
+        )
+
+        val packageRoot = generatedPackage("mask-mapping")
+        val human = packageRoot.resolve("human-review")
+        val manifest = Files.readString(human.resolve("evidence-manifest.json"), StandardCharsets.UTF_8)
+        assertTrue(manifest.contains("\"maskActive\": true"))
+        assertTrue(manifest.contains("\"maskRegionCount\": 10"))
+        val global = ImageIO.read(human.resolve("sensor-mask-global.png").toFile())
+        assertEquals(mask.width, global.width)
+        assertEquals(mask.height, global.height)
+        fixture.strictSensorDefects.forEach { defect ->
+            assertEquals(0xFFFFFF, global.getRGB(defect.x.roundToInt(), defect.y.roundToInt()) and 0xFFFFFF)
+        }
+    }
+
+    @Test fun rawEvidenceUsesUnannotatedPixelsAndExactTransforms() {
+        val fixture = fixture()
+        val bundle = diagnosticBundle()
+        val packageRoot = generatedPackage("raw-transform")
+        val human = packageRoot.resolve("human-review")
+        val candidates = automaticReviewCandidates()
+        val candidate = candidates.first()
+        val directory = human.resolve("candidates/${candidate.id}")
+        val raw = ImageIO.read(directory.resolve("raw-reference.png").toFile())
+        assertEquals(GroundTruthReviewEvidenceGenerator.CROP_SIZE, raw.width)
+        assertEquals(GroundTruthReviewEvidenceGenerator.CROP_SIZE, raw.height)
+        assertTrue(raw.width % 2 == 1 && raw.height % 2 == 1)
+        val radius = GroundTruthReviewEvidenceGenerator.CROP_SIZE / 2
+        for (y in 0 until raw.height) for (x in 0 until raw.width) {
+            val sourceX = (candidate.referenceX + x - radius).roundToInt()
+            val sourceY = (candidate.referenceY + y - radius).roundToInt()
+            assertEquals(
+                fixture.frames[fixture.referenceFrameIndex].pixelAt(sourceX, sourceY),
+                raw.getRGB(x, y)
+            )
+        }
+
+        val summary = summaryRows(human.resolve("candidate-summary.csv"))
+        val row = summary.first { it[column(summary, "id")] == candidate.id }
+        val selected = row[column(summary, "selected_accepted_frames")]
+            .split(';').map(String::toInt)
+        assertEquals(GroundTruthReviewEvidenceGenerator.FRAME_SELECTION_COUNT, selected.size)
+        assertTrue(selected.all { bundle.frames[it - 1].cleanAccepted })
+        assertEquals(1, selected.first())
+        assertTrue(bundle.referenceFrameIndex + 1 in selected)
+        assertEquals(25, selected.last())
+
+        val cameraSprite = ImageIO.read(directory.resolve("camera-space-raw-sprite.png").toFile())
+        val skySprite = ImageIO.read(directory.resolve("sky-space-raw-sprite.png").toFile())
+        selected.forEachIndexed { tile, frameIndex ->
+            val frame = fixture.frames[frameIndex - 1]
+            val cameraExpected = frame.pixelAt(
+                candidate.referenceX.roundToInt(),
+                candidate.referenceY.roundToInt()
+            )
+            assertEquals(cameraExpected, cameraSprite.getRGB(tile * raw.width + radius, radius))
+            val mapped = bundle.frames[frameIndex - 1].cleanTransform.mapOutputToSource(
+                candidate.referenceX.toFloat(),
+                candidate.referenceY.toFloat()
+            )
+            val skyExpected = frame.pixelAt(mapped.x.roundToInt(), mapped.y.roundToInt())
+            assertEquals(skyExpected, skySprite.getRGB(tile * raw.width + radius, radius))
+        }
+    }
+
+    @Test fun unavailableMaskIsExplicitAndNeverRenderedAsNegativeEvidence() {
+        val fixture = fixture()
+        val bundle = diagnosticBundle().copy(sensorDefectMask = null)
+        val candidates = bundle.candidates.sortedWith(
+            compareBy<Stage6CandidateDiagnostic> { it.referenceY }
+                .thenBy { it.referenceX }
+                .thenBy { it.id }
+        )
+        val labelsById = fixture.groundTruth.associateBy { it.id }
+        val labels = candidates.map { checkNotNull(labelsById[it.id]) }
+        val result = GroundTruthReviewEvidenceGenerator().generate(
+            fixture,
+            bundle,
+            candidates,
+            labels,
+            reportDirectory("mask-unavailable").resolve("human-review")
+        )
+
+        assertFalse(result.maskActive)
+        assertEquals("bundle_sensor_defect_mask_null", result.maskUnavailableReason)
+        val html = Files.readString(result.outputRoot.resolve("index.html"), StandardCharsets.UTF_8)
+        val manifest = Files.readString(result.manifest, StandardCharsets.UTF_8)
+        assertTrue(html.contains("MASK DATA UNAVAILABLE"))
+        assertTrue(manifest.contains("\"maskActive\": false"))
+        assertTrue(Files.isRegularFile(result.outputRoot.resolve("mask-data-unavailable.png")))
+        automaticReviewCandidates().forEach { candidate ->
+            assertTrue(
+                Files.isRegularFile(
+                    result.outputRoot.resolve("candidates/${candidate.id}/mask-unavailable.png")
+                )
+            )
+        }
+    }
+
+    @Test fun interactiveHtmlExportsOnlyExplicitDecisions() {
+        val fixture = fixture()
+        val beforeHash = sha256(fixtureDirectory().toPath().resolve("ground-truth.csv"))
+        val packageRoot = generatedPackage("interactive-html")
+        val human = packageRoot.resolve("human-review")
+        val html = Files.readString(human.resolve("index.html"), StandardCharsets.UTF_8)
+        val template = CsvCodec.parse(
+            Files.readString(human.resolve("review-decisions-template.csv"), StandardCharsets.UTF_8)
+        )
+
+        assertTrue(html.contains("STAR:['star','confirmed']"))
+        assertTrue(html.contains("SENSOR_DEFECT:['sensor_defect','confirmed']"))
+        assertTrue(html.contains("UNCERTAIN:['uncertain','needs_review']"))
+        assertTrue(html.contains("REJECTED:['uncertain','rejected']"))
+        assertTrue(html.contains("reviewed_at:new Date().toISOString()"))
+        assertTrue(html.contains("replaceAll('\\\"','\\\"\\\"')"))
+        assertTrue(html.contains("if(!d){rows.push([id,'','','','',''])"))
+        assertEquals(19, template.size)
+        assertEquals(
+            listOf("id", "final_class", "review_status", "reviewed_by", "reviewed_at", "notes"),
+            template.first()
+        )
+        template.drop(1).forEach { row -> assertTrue(row.drop(1).all(String::isBlank)) }
+        assertEquals(beforeHash, sha256(fixtureDirectory().toPath().resolve("ground-truth.csv")))
+        assertEquals(2, fixture.groundTruthSummary.eligibleConfirmedStars)
+        assertEquals(2, fixture.groundTruthSummary.eligibleConfirmedSensorDefects)
+        assertEquals(18, fixture.groundTruth.count {
+            it.annotationSource == GroundTruthAnnotationSource.AUTOMATIC &&
+                it.reviewStatus == GroundTruthReviewStatus.UNREVIEWED
+        })
+        assertFalse(fixture.groundTruth.any {
+            it.annotationSource == GroundTruthAnnotationSource.AUTOMATIC &&
+                it.reviewStatus == GroundTruthReviewStatus.CONFIRMED
+        })
+    }
+
+    private fun generatedPackage(name: String): Path {
+        val fixture = fixture()
+        return GroundTruthReviewPackageGenerator().generate(
+            fixture,
+            diagnosticBundle(),
+            fixtureDirectory().toPath().resolve("ground-truth.csv"),
+            reportDirectory(name)
+        ).manifest.parent
+    }
+
+    private fun automaticReviewCandidates(): List<Stage6CandidateDiagnostic> {
+        val labels = fixture().groundTruth.associateBy { it.id }
+        return diagnosticBundle().candidates.sortedWith(
+            compareBy<Stage6CandidateDiagnostic> { it.referenceY }
+                .thenBy { it.referenceX }
+                .thenBy { it.id }
+        ).filter { candidate ->
+            val label = checkNotNull(labels[candidate.id])
+            label.annotationSource == GroundTruthAnnotationSource.AUTOMATIC &&
+                label.reviewStatus == GroundTruthReviewStatus.UNREVIEWED
+        }
+    }
+
+    private fun summaryRows(path: Path): List<List<String>> = CsvCodec.parse(
+        Files.readString(path, StandardCharsets.UTF_8)
+    )
+
+    private fun column(rows: List<List<String>>, name: String): Int =
+        rows.first().indexOf(name).also { require(it >= 0) }
 
     private fun queue(
         ids: List<String>,

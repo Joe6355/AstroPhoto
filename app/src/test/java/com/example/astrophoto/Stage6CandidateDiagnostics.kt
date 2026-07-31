@@ -2,9 +2,12 @@ package com.example.astrophoto
 
 import com.example.astrophoto.processing.jpeg.v2.analysis.JpegFrameAnalyzer
 import com.example.astrophoto.processing.jpeg.v2.artifacts.ArtifactFrameObservation
+import com.example.astrophoto.processing.jpeg.v2.artifacts.PersistentSensorCandidateDetector
+import com.example.astrophoto.processing.jpeg.v2.artifacts.PersistentSensorFrameObservation
 import com.example.astrophoto.processing.jpeg.v2.artifacts.StaticArtifactAnalyzer
 import com.example.astrophoto.processing.jpeg.v2.artifacts.StaticArtifactRegion
 import com.example.astrophoto.processing.jpeg.v2.artifacts.SensorDefectMask
+import com.example.astrophoto.processing.jpeg.v2.artifacts.buildAutomaticSensorDefectMask
 import com.example.astrophoto.processing.jpeg.v2.integration.FrameWeightCalculator
 import com.example.astrophoto.processing.jpeg.v2.integration.FrameWeightInput
 import com.example.astrophoto.processing.jpeg.v2.masking.SkyMaskEstimator
@@ -180,9 +183,18 @@ internal class Stage6CandidateDiagnosticRunner {
         require(fixture.frames.size == EXPECTED_FRAME_COUNT)
         val analyzer = JpegFrameAnalyzer()
         val maskEstimator = SkyMaskEstimator()
+        val persistentDetector = PersistentSensorCandidateDetector()
+        val persistentObservations = mutableListOf<PersistentSensorFrameObservation>()
         val rawAnalyses = fixture.frames.mapIndexed { index, image ->
             val id = frameId(index)
-            analyzer.analyze(id, id, image, maskEstimator.estimate(image))
+            val skyMask = maskEstimator.estimate(image)
+            persistentObservations += persistentDetector.observe(
+                frameId = id,
+                originalCaptureIndex = index + 1,
+                image = image,
+                skyMask = skyMask.mask
+            )
+            analyzer.analyze(id, id, image, skyMask)
         }
         val artifactAnalyzer = StaticArtifactAnalyzer()
         val artifactMask = artifactAnalyzer.analyze(
@@ -243,6 +255,14 @@ internal class Stage6CandidateDiagnosticRunner {
                 )
             )
         }
+        val automaticSensorDefectMask = buildAutomaticSensorDefectMask(
+            observations = persistentObservations,
+            outputWidth = reference.width,
+            outputHeight = reference.height
+        ) { originalCaptureIndex ->
+            registration.model.predictedTransform(originalCaptureIndex)
+        }
+        require(automaticSensorDefectMask.originalFrameIndices == (1..fixture.frames.size).toList())
         val cleanStack = integrate(
             fixture.frames,
             frameDiagnostics.map { it.cleanTransform },
@@ -327,7 +347,7 @@ internal class Stage6CandidateDiagnosticRunner {
             cleanStack = cleanStack,
             enhancedProfile = enhanced,
             skyMask = referenceMask,
-            sensorDefectMask = manualPlan.sensorDefectMask
+            sensorDefectMask = automaticSensorDefectMask.mask
         )
     }
 

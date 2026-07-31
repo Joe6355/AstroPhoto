@@ -82,6 +82,13 @@ internal class GroundTruthReviewPackageGenerator {
             reviewHtml(fixture, candidates, reviewLabels),
             StandardCharsets.UTF_8
         )
+        GroundTruthReviewEvidenceGenerator().generate(
+            fixture = fixture,
+            bundle = bundle,
+            candidates = candidates,
+            labels = reviewLabels,
+            outputRoot = outputRoot.resolve("human-review")
+        )
 
         val outputFiles = listFiles(outputRoot)
         val manifest = outputRoot.resolve("review-manifest.json")
