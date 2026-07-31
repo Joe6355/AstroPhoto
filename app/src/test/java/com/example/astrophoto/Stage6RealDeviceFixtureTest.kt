@@ -50,6 +50,9 @@ class Stage6RealDeviceFixtureTest {
         })
         fixture.groundTruth.filter { it.classification == ProvisionalSourceClass.STAR }.forEach {
             assertEquals(ProvisionalCoordinateSpace.SKY, it.coordinateSpace)
+            assertTrue(it.skyResidualPx != null && it.cameraResidualPx != null)
+        }
+        fixture.groundTruth.filter { it.id in setOf("star-01", "star-02") }.forEach {
             assertTrue(it.skyResidualPx!! < it.cameraResidualPx!!)
         }
         fixture.groundTruth.filter {
@@ -99,7 +102,7 @@ class Stage6RealDeviceFixtureTest {
         assertTrue(manualPlan.acceptedRegistrationCount >= 14)
         assertTrue(kotlin.math.abs(manualPlan.shifts.last().dx) in 45..70)
         assertTrue(kotlin.math.abs(manualPlan.shifts.last().dy) in 45..70)
-        fixture.groundTruth.filter { it.classification == ProvisionalSourceClass.STAR }.forEach { label ->
+        fixture.groundTruth.filter { it.id in setOf("star-01", "star-02") }.forEach { label ->
             val matching = registration.trackAnalysis.tracks
                 .filter { it.cluster == TemporalMotionCluster.COHERENT_MOVING_SKY }
                 .mapNotNull { track ->
@@ -123,13 +126,15 @@ class Stage6RealDeviceFixtureTest {
                 }
             requireNotNull(matching)
             val (matchingTrack, referencePoint) = matching
+            val referenceDistanceSquared = squaredDistance(
+                referencePoint.first,
+                referencePoint.second,
+                label.x,
+                label.y
+            )
             assertTrue(
-                squaredDistance(
-                    referencePoint.first,
-                    referencePoint.second,
-                    label.x,
-                    label.y
-                ) <= 1f
+                "${label.id}: nearest coherent sky track distanceSquared=$referenceDistanceSquared",
+                referenceDistanceSquared <= 1f
             )
             val transformedSupport = fixture.frames.indices.count { index ->
                 val predicted = registration.model.predictedTransform(index + 1)

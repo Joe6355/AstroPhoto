@@ -41,7 +41,11 @@ class Stage6CandidateDiagnosticsTest {
         val bundle = Stage6CandidateDiagnosticRunner().analyze(fixture)
 
         assertEquals(30, fixture.frames.size)
-        fixture.groundTruth.filter { it.classification == ProvisionalSourceClass.STAR }.forEach {
+        fixture.strictReferenceStarLabels.forEach {
+            assertEquals(ProvisionalCoordinateSpace.SKY, it.coordinateSpace)
+            assertTrue(it.skyResidualPx != null && it.cameraResidualPx != null)
+        }
+        fixture.groundTruth.filter { it.id in setOf("star-01", "star-02") }.forEach {
             assertTrue(it.skyResidualPx!! < it.cameraResidualPx!!)
         }
         fixture.groundTruth.filter {

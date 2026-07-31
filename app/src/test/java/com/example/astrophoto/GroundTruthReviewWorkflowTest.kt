@@ -148,18 +148,20 @@ class GroundTruthReviewWorkflowTest {
         assertThrows(IllegalArgumentException::class.java) { GroundTruthCsv.read(encoded) }
     }
 
-    @Test fun fixtureMigrationHasExpectedProvenanceAndStrictDenominators() {
+    @Test fun fixtureManualImportHasExpectedProvenanceAndStrictDenominators() {
         val fixture = fixture()
         val summary = fixture.groundTruthSummary
         val groundTruthPath = fixtureDirectory().toPath().resolve("ground-truth.csv")
 
         assertEquals(24, summary.totalRows)
-        assertEquals(18, summary.excludedAutomaticRows)
-        assertEquals(19, summary.excludedUncertainRows)
-        assertEquals(18, summary.excludedUnreviewedRows)
-        assertEquals(2, summary.eligibleConfirmedStars)
+        assertEquals(0, summary.excludedAutomaticRows)
+        assertEquals(12, summary.excludedUncertainRows)
+        assertEquals(0, summary.excludedUnreviewedRows)
+        assertEquals(2, summary.excludedNeedsReviewRows)
+        assertEquals(8, summary.excludedRejectedRows)
+        assertEquals(10, summary.eligibleConfirmedStars)
         assertEquals(2, summary.eligibleConfirmedSensorDefects)
-        assertEquals(6, fixture.groundTruth.count {
+        assertEquals(14, fixture.groundTruth.count {
             it.annotationSource == GroundTruthAnnotationSource.MANUAL &&
                 it.reviewStatus == GroundTruthReviewStatus.CONFIRMED
         })
@@ -169,12 +171,12 @@ class GroundTruthReviewWorkflowTest {
         )
     }
 
-    @Test fun automaticStarIsNotInFixtureStrictDenominator() {
+    @Test fun manuallyConfirmedCandidateStarIsInFixtureStrictDenominator() {
         val fixture = fixture()
 
         assertTrue(fixture.provisionalReferenceStars.any { it.id == "candidate-x55810-y22220" })
-        assertFalse(fixture.strictReferenceStarLabels.any { it.id == "candidate-x55810-y22220" })
-        assertEquals(listOf("star-01", "star-02"), fixture.strictReferenceStarLabels.map { it.id })
+        assertTrue(fixture.strictReferenceStarLabels.any { it.id == "candidate-x55810-y22220" })
+        assertEquals(10, fixture.strictReferenceStarLabels.size)
     }
 
     @Test fun reviewImporterRejectsDuplicateAndUnknownIds() {
@@ -230,18 +232,31 @@ class GroundTruthReviewWorkflowTest {
         val input = directory.resolve("input.csv")
         val automatic = label(
             "candidate-1",
+            classification = ProvisionalSourceClass.UNCERTAIN,
             source = GroundTruthAnnotationSource.AUTOMATIC,
             status = GroundTruthReviewStatus.UNREVIEWED
-        )
+        ).copy(coordinateSpace = ProvisionalCoordinateSpace.UNKNOWN)
         GroundTruthCsv.write(input, listOf(automatic))
         val queue = directory.resolve("queue.csv")
-        Files.writeString(queue, queue(listOf("candidate-1")), StandardCharsets.UTF_8)
+        Files.writeString(
+            queue,
+            queue(
+                listOf("candidate-1"),
+                coordinateSpace = "unknown",
+                proposalClass = "uncertain"
+            ),
+            StandardCharsets.UTF_8
+        )
         val importer = GroundTruthReviewImporter()
         val first = importer.importReview(input, queue, directory.resolve("first.csv"))
-        val second = importer.importReview(input, queue, directory.resolve("second.csv"))
+        val second = importer.importReview(first.output, queue, directory.resolve("second.csv"))
 
         assertArrayEquals(Files.readAllBytes(first.output), Files.readAllBytes(second.output))
+        assertEquals(1, first.importedDecisionCount)
+        assertEquals(0, second.importedDecisionCount)
         val imported = GroundTruthCsv.read(first.output.toFile()).single()
+        assertEquals(ProvisionalSourceClass.STAR, imported.classification)
+        assertEquals(ProvisionalCoordinateSpace.SKY, imported.coordinateSpace)
         assertEquals(GroundTruthAnnotationSource.MANUAL, imported.annotationSource)
         assertEquals(GroundTruthReviewStatus.CONFIRMED, imported.reviewStatus)
         assertEquals("fixture-reviewer", imported.reviewedBy)
@@ -268,22 +283,8 @@ class GroundTruthReviewWorkflowTest {
     }
 
     @Test fun reviewPackageIsCompleteDeterministicAndContainsNoSourcePhotos() {
-        val fixture = fixture()
-        val bundle = diagnosticBundle()
-        val generator = GroundTruthReviewPackageGenerator()
-        val groundTruth = fixtureDirectory().toPath().resolve("ground-truth.csv")
-        val first = generator.generate(
-            fixture,
-            bundle,
-            groundTruth,
-            reportDirectory("package-a")
-        )
-        val second = generator.generate(
-            fixture,
-            bundle,
-            groundTruth,
-            reportDirectory("package-b")
-        )
+        val first = generatedPackageResult("package-a")
+        val second = generatedPackageResult("package-b")
 
         assertEquals(first.manifestSha256, second.manifestSha256)
         assertEquals(first.queueSha256, second.queueSha256)
@@ -328,14 +329,8 @@ class GroundTruthReviewWorkflowTest {
     }
 
     @Test fun reviewQueueOrderMatchesDeterministicCandidateOrder() {
-        val fixture = fixture()
         val bundle = diagnosticBundle()
-        val result = GroundTruthReviewPackageGenerator().generate(
-            fixture,
-            bundle,
-            fixtureDirectory().toPath().resolve("ground-truth.csv"),
-            reportDirectory("queue-order")
-        )
+        val result = generatedPackageResult("queue-order")
         val records = CsvCodec.parse(Files.readString(result.queue, StandardCharsets.UTF_8))
             .filterNot { it.firstOrNull()?.startsWith('#') == true }
         val ids = records.drop(1).map { it.first() }
@@ -433,7 +428,7 @@ class GroundTruthReviewWorkflowTest {
     }
 
     @Test fun unavailableMaskIsExplicitAndNeverRenderedAsNegativeEvidence() {
-        val fixture = fixture()
+        val fixture = reviewFixture()
         val bundle = diagnosticBundle().copy(sensorDefectMask = null)
         val candidates = bundle.candidates.sortedWith(
             compareBy<Stage6CandidateDiagnostic> { it.referenceY }
@@ -490,11 +485,17 @@ class GroundTruthReviewWorkflowTest {
         )
         template.drop(1).forEach { row -> assertTrue(row.drop(1).all(String::isBlank)) }
         assertEquals(beforeHash, sha256(fixtureDirectory().toPath().resolve("ground-truth.csv")))
-        assertEquals(2, fixture.groundTruthSummary.eligibleConfirmedStars)
+        assertEquals(10, fixture.groundTruthSummary.eligibleConfirmedStars)
         assertEquals(2, fixture.groundTruthSummary.eligibleConfirmedSensorDefects)
-        assertEquals(18, fixture.groundTruth.count {
+        assertEquals(0, fixture.groundTruth.count {
             it.annotationSource == GroundTruthAnnotationSource.AUTOMATIC &&
                 it.reviewStatus == GroundTruthReviewStatus.UNREVIEWED
+        })
+        assertEquals(8, fixture.groundTruth.count {
+            it.reviewStatus == GroundTruthReviewStatus.REJECTED
+        })
+        assertEquals(2, fixture.groundTruth.count {
+            it.reviewStatus == GroundTruthReviewStatus.NEEDS_REVIEW
         })
         assertFalse(fixture.groundTruth.any {
             it.annotationSource == GroundTruthAnnotationSource.AUTOMATIC &&
@@ -503,17 +504,24 @@ class GroundTruthReviewWorkflowTest {
     }
 
     private fun generatedPackage(name: String): Path {
-        val fixture = fixture()
+        return generatedPackageResult(name).manifest.parent
+    }
+
+    private fun generatedPackageResult(name: String): GroundTruthReviewPackageResult {
+        val fixture = reviewFixture()
+        val reportRoot = reportDirectory(name)
+        val groundTruth = reportRoot.resolve("pre-review-ground-truth.csv")
+        GroundTruthCsv.write(groundTruth, fixture.groundTruth)
         return GroundTruthReviewPackageGenerator().generate(
             fixture,
             diagnosticBundle(),
-            fixtureDirectory().toPath().resolve("ground-truth.csv"),
-            reportDirectory(name)
-        ).manifest.parent
+            groundTruth,
+            reportRoot.resolve("package")
+        )
     }
 
     private fun automaticReviewCandidates(): List<Stage6CandidateDiagnostic> {
-        val labels = fixture().groundTruth.associateBy { it.id }
+        val labels = reviewFixture().groundTruth.associateBy { it.id }
         return diagnosticBundle().candidates.sortedWith(
             compareBy<Stage6CandidateDiagnostic> { it.referenceY }
                 .thenBy { it.referenceX }
@@ -523,6 +531,16 @@ class GroundTruthReviewWorkflowTest {
             label.annotationSource == GroundTruthAnnotationSource.AUTOMATIC &&
                 label.reviewStatus == GroundTruthReviewStatus.UNREVIEWED
         }
+    }
+
+    private fun reviewFixture(): Stage6RegressionFixture {
+        val fixture = fixture()
+        val automatic = diagnosticBundle().candidates
+            .filter { it.id.startsWith("candidate-") }
+            .associate { it.id to it.asAutomaticLabel() }
+        return fixture.copy(
+            groundTruth = fixture.groundTruth.map { automatic[it.id] ?: it }
+        )
     }
 
     private fun summaryRows(path: Path): List<List<String>> = CsvCodec.parse(
@@ -535,6 +553,8 @@ class GroundTruthReviewWorkflowTest {
     private fun queue(
         ids: List<String>,
         x: String = "10",
+        coordinateSpace: String = "sky",
+        proposalClass: String = "star",
         finalClass: String = "star",
         reviewer: String = "fixture-reviewer",
         reviewedAt: String = "2026-07-31T12:00:00Z"
@@ -556,8 +576,8 @@ class GroundTruthReviewWorkflowTest {
                         id,
                         x,
                         "20",
-                        "sky",
-                        "star",
+                        coordinateSpace,
+                        proposalClass,
                         "0.9",
                         if (automatic) "automatic" else "manual",
                         if (automatic) "unreviewed" else "confirmed",

@@ -408,34 +408,6 @@ internal class GroundTruthReviewPackageGenerator {
         image.flush()
     }
 
-    private fun Stage6CandidateDiagnostic.asAutomaticLabel(): ProvisionalSourceLabel =
-        ProvisionalSourceLabel(
-            id = id,
-            classification = provisionalClass,
-            x = referenceX,
-            y = referenceY,
-            coordinateSpace = when (provisionalClass) {
-                ProvisionalSourceClass.STAR -> ProvisionalCoordinateSpace.SKY
-                ProvisionalSourceClass.SENSOR_DEFECT -> ProvisionalCoordinateSpace.CAMERA
-                ProvisionalSourceClass.UNCERTAIN,
-                ProvisionalSourceClass.UNKNOWN -> ProvisionalCoordinateSpace.UNKNOWN
-            },
-            supportFrames = when (provisionalClass) {
-                ProvisionalSourceClass.STAR -> skySpaceRecurrence
-                ProvisionalSourceClass.SENSOR_DEFECT -> cameraSpaceRecurrence
-                ProvisionalSourceClass.UNCERTAIN,
-                ProvisionalSourceClass.UNKNOWN -> maxOf(cameraSpaceRecurrence, skySpaceRecurrence)
-            }.coerceAtLeast(1),
-            skyResidualPx = skyResidual,
-            cameraResidualPx = cameraResidual,
-            confidence = confidence,
-            annotationSource = GroundTruthAnnotationSource.AUTOMATIC,
-            reviewStatus = GroundTruthReviewStatus.UNREVIEWED,
-            reviewedBy = "",
-            reviewedAt = "",
-            notes = classificationReason
-        )
-
     private fun nearest(
         candidate: Stage6CandidateDiagnostic,
         labels: List<ProvisionalSourceLabel>
@@ -552,6 +524,34 @@ internal class GroundTruthReviewPackageGenerator {
     }
 }
 
+internal fun Stage6CandidateDiagnostic.asAutomaticLabel(): ProvisionalSourceLabel =
+    ProvisionalSourceLabel(
+        id = id,
+        classification = provisionalClass,
+        x = referenceX,
+        y = referenceY,
+        coordinateSpace = when (provisionalClass) {
+            ProvisionalSourceClass.STAR -> ProvisionalCoordinateSpace.SKY
+            ProvisionalSourceClass.SENSOR_DEFECT -> ProvisionalCoordinateSpace.CAMERA
+            ProvisionalSourceClass.UNCERTAIN,
+            ProvisionalSourceClass.UNKNOWN -> ProvisionalCoordinateSpace.UNKNOWN
+        },
+        supportFrames = when (provisionalClass) {
+            ProvisionalSourceClass.STAR -> skySpaceRecurrence
+            ProvisionalSourceClass.SENSOR_DEFECT -> cameraSpaceRecurrence
+            ProvisionalSourceClass.UNCERTAIN,
+            ProvisionalSourceClass.UNKNOWN -> maxOf(cameraSpaceRecurrence, skySpaceRecurrence)
+        }.coerceAtLeast(1),
+        skyResidualPx = skyResidual,
+        cameraResidualPx = cameraResidual,
+        confidence = confidence,
+        annotationSource = GroundTruthAnnotationSource.AUTOMATIC,
+        reviewStatus = GroundTruthReviewStatus.UNREVIEWED,
+        reviewedBy = "",
+        reviewedAt = "",
+        notes = classificationReason
+    )
+
 internal data class GroundTruthImportResult(
     val output: Path,
     val auditLog: Path,
@@ -584,11 +584,12 @@ internal class GroundTruthReviewImporter {
         val replacements = linkedMapOf<String, ProvisionalSourceLabel>()
         explicit.forEach { decision ->
             val current = checkNotNull(labelsById[decision.id])
-            validateReadOnlyFields(current, decision)
             val finalClass = parseReviewClass(decision.finalClass)
             val finalStatus = parseReviewStatus(decision.reviewStatus)
             require(decision.reviewer.isNotBlank()) { "Reviewer is required for ${decision.id}" }
             require(isIso8601(decision.reviewedAt)) { "reviewed_at must be ISO-8601 for ${decision.id}" }
+            if (isAlreadyApplied(current, decision, finalClass, finalStatus)) return@forEach
+            validateReadOnlyFields(current, decision)
             if (
                 current.reviewStatus == GroundTruthReviewStatus.CONFIRMED &&
                 current.annotationSource in setOf(
@@ -635,7 +636,7 @@ internal class GroundTruthReviewImporter {
         GroundTruthCsv.writeAtomically(output, updated)
         writeStringAtomically(auditLog.toAbsolutePath().normalize(), audit)
         require(sha256(output) == outputHash) { "Imported ground-truth hash differs after write" }
-        return GroundTruthImportResult(output, auditLog, explicit.size, outputHash)
+        return GroundTruthImportResult(output, auditLog, replacements.size, outputHash)
     }
 
     private fun parseReviewQueue(path: Path): List<ReviewDecision> {
@@ -686,6 +687,49 @@ internal class GroundTruthReviewImporter {
         require(current.reviewStatus.name.equals(decision.currentReviewStatus, ignoreCase = true)) {
             "Review current status differs for ${decision.id}"
         }
+    }
+
+    private fun isAlreadyApplied(
+        current: ProvisionalSourceLabel,
+        decision: ReviewDecision,
+        finalClass: ProvisionalSourceClass,
+        finalStatus: GroundTruthReviewStatus
+    ): Boolean {
+        if (current.x != decision.x || current.y != decision.y) return false
+        if (current.confidence != decision.proposalConfidence) return false
+        val proposalClass = ProvisionalSourceClass.entries.firstOrNull {
+            it.name.equals(decision.proposalClass, ignoreCase = true)
+        } ?: return false
+        val proposalSpace = ProvisionalCoordinateSpace.entries.firstOrNull {
+            it.name.equals(decision.coordinateSpace, ignoreCase = true)
+        } ?: return false
+        val proposalSource = GroundTruthAnnotationSource.entries.firstOrNull {
+            it.name.equals(decision.annotationSource, ignoreCase = true)
+        } ?: return false
+        val expectedSpace = if (finalClass == proposalClass) {
+            proposalSpace
+        } else {
+            when (finalClass) {
+                ProvisionalSourceClass.STAR -> ProvisionalCoordinateSpace.SKY
+                ProvisionalSourceClass.SENSOR_DEFECT -> ProvisionalCoordinateSpace.CAMERA
+                ProvisionalSourceClass.UNCERTAIN -> ProvisionalCoordinateSpace.UNKNOWN
+                ProvisionalSourceClass.UNKNOWN -> return false
+            }
+        }
+        val expectedSource = if (
+            proposalSource == GroundTruthAnnotationSource.CATALOG && finalClass == proposalClass
+        ) {
+            GroundTruthAnnotationSource.CATALOG
+        } else {
+            GroundTruthAnnotationSource.MANUAL
+        }
+        return current.classification == finalClass &&
+            current.coordinateSpace == expectedSpace &&
+            current.annotationSource == expectedSource &&
+            current.reviewStatus == finalStatus &&
+            current.reviewedBy == decision.reviewer &&
+            current.reviewedAt == decision.reviewedAt &&
+            (decision.reviewNotes.isBlank() || current.notes == decision.reviewNotes)
     }
 
     private fun parseReviewClass(value: String): ProvisionalSourceClass {
