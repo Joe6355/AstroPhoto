@@ -63,7 +63,7 @@ class ManualSequenceRejectedFrameFilterTest {
 
             val report = requireNotNull(
                 manualSequenceIntegrationReport(
-                    plan,
+                    sequenceSelection(plan),
                     mode,
                     work.map { it.originalFrameIndex }
                 )
@@ -74,6 +74,10 @@ class ManualSequenceRejectedFrameFilterTest {
                 it.originalFrameNumber
             })
             assertEquals(expectedAccepted, report.integratedOriginalFrameIndices.map { it + 1 })
+            assertEquals(
+                ManualAlignmentPath.SEQUENCE_AWARE,
+                report.alignmentPathReport.manualAlignmentPath
+            )
         }
     }
 
@@ -197,6 +201,23 @@ class ManualSequenceRejectedFrameFilterTest {
         registrationResidualPx = if (accepted) 0.1f else null,
         registrationConfidence = if (accepted) 0.9f else 0f
     )
+
+    private fun sequenceSelection(plan: ManualSequenceAlignmentPlan) =
+        ManualAlignmentSelection(
+            inputFrameCount = plan.frames.size,
+            sequencePlan = plan,
+            report = ManualAlignmentPathReport(
+                manualAlignmentPath = ManualAlignmentPath.SEQUENCE_AWARE,
+                manualAlignmentPathReason =
+                    ManualAlignmentPathReason.SEQUENCE_AWARE_SELECTED,
+                manualAlignmentAttempted = true,
+                legacyFallbackAllowed = false,
+                legacyFallbackUsed = false,
+                processingOutcome = ManualAlignmentProcessingOutcome.IN_PROGRESS,
+                outputPublished = false,
+                cleanupCompleted = false
+            )
+        )
 
     private fun gray(value: Int): Int =
         0xFF000000.toInt() or (value shl 16) or (value shl 8) or value

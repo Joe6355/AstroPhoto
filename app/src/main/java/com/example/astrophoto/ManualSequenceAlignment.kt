@@ -12,6 +12,7 @@ import com.example.astrophoto.processing.jpeg.v2.model.FrameAnalysis
 import com.example.astrophoto.processing.jpeg.v2.model.SensorDefectFilteringReport
 import com.example.astrophoto.processing.jpeg.v2.registration.SequenceAwareRegistrationEngine
 import com.example.astrophoto.processing.jpeg.v2.registration.TemporalFeatureFrame
+import kotlinx.coroutines.CancellationException
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.roundToInt
@@ -51,6 +52,107 @@ internal enum class ManualAlignedStackMode(
     DARK_SUBTRACTED_AVERAGE("dark_subtracted_average_aligned", 2)
 }
 
+internal enum class ManualAlignmentPath {
+    SEQUENCE_AWARE,
+    LEGACY,
+    UNKNOWN;
+
+    companion object {
+        fun fromSerialized(value: String?): ManualAlignmentPath =
+            entries.firstOrNull { it.name == value } ?: UNKNOWN
+    }
+}
+
+internal enum class ManualAlignmentPathReason(
+    val legacyFallbackAllowed: Boolean
+) {
+    SEQUENCE_AWARE_SELECTED(false),
+    LEGACY_SHORT_SEQUENCE(true),
+    LEGACY_TOO_FEW_REFERENCE_STARS(true),
+    LEGACY_SEQUENCE_QUALITY_GATE(true),
+    LEGACY_SEQUENCE_RESIDUAL_GATE(true),
+    LEGACY_DYNAMIC_SHIFT_GATE(true),
+    SEQUENCE_PLANNER_INSUFFICIENT_ACCEPTED_FRAMES(false),
+    SEQUENCE_PLANNER_UNSUPPORTED_INPUT(false),
+    SEQUENCE_PLANNER_INVALID_REFERENCE(false),
+    SEQUENCE_PLANNER_INTERNAL_ERROR(false),
+    UNKNOWN(false);
+
+    companion object {
+        fun fromSerialized(value: String?): ManualAlignmentPathReason =
+            entries.firstOrNull { it.name == value } ?: UNKNOWN
+    }
+}
+
+internal enum class ManualAlignmentProcessingOutcome {
+    IN_PROGRESS,
+    SUCCESS,
+    FAILED,
+    UNKNOWN;
+
+    companion object {
+        fun fromSerialized(value: String?): ManualAlignmentProcessingOutcome =
+            entries.firstOrNull { it.name == value } ?: UNKNOWN
+    }
+}
+
+internal data class ManualAlignmentPathReport(
+    val manualAlignmentPath: ManualAlignmentPath,
+    val manualAlignmentPathReason: ManualAlignmentPathReason,
+    val manualAlignmentAttempted: Boolean,
+    val legacyFallbackAllowed: Boolean,
+    val legacyFallbackUsed: Boolean,
+    val sequencePlannerFailureType: String? = null,
+    val sequencePlannerFailureMessage: String? = null,
+    val processingOutcome: ManualAlignmentProcessingOutcome,
+    val outputPublished: Boolean,
+    val cleanupCompleted: Boolean
+) {
+    fun publishedSuccessfully(): ManualAlignmentPathReport = copy(
+        processingOutcome = ManualAlignmentProcessingOutcome.SUCCESS,
+        outputPublished = true,
+        cleanupCompleted = true
+    )
+
+    companion object {
+        const val SCHEMA_VERSION = "astrophoto.manual.alignment/1"
+    }
+}
+
+internal data class ManualAlignmentSelection(
+    val inputFrameCount: Int,
+    val sequencePlan: ManualSequenceAlignmentPlan?,
+    val report: ManualAlignmentPathReport
+) {
+    init {
+        require(inputFrameCount >= 0)
+        require(
+            (report.manualAlignmentPath == ManualAlignmentPath.SEQUENCE_AWARE) ==
+                (sequencePlan != null)
+        )
+    }
+}
+
+internal enum class ManualAlignmentFailureInjectionPoint {
+    BEFORE_SEQUENCE_PLANNER,
+    AFTER_SEQUENCE_PLANNER_RESULT,
+    BEFORE_INTEGRATION
+}
+
+internal fun interface ManualAlignmentFailureInjector {
+    fun checkpoint(
+        point: ManualAlignmentFailureInjectionPoint,
+        mode: ManualAlignedStackMode
+    )
+}
+
+internal object NoOpManualAlignmentFailureInjector : ManualAlignmentFailureInjector {
+    override fun checkpoint(
+        point: ManualAlignmentFailureInjectionPoint,
+        mode: ManualAlignedStackMode
+    ) = Unit
+}
+
 internal data class ManualSequenceFrameWork<T>(
     val originalFrameIndex: Int,
     val compactFrameIndex: Int,
@@ -76,6 +178,7 @@ internal data class ManualSequenceIntegrationReport(
     val acceptedFrameCount: Int,
     val rejectedFrames: List<ManualSequenceRejectedFrame>,
     val integratedOriginalFrameIndices: List<Int>,
+    val alignmentPathReport: ManualAlignmentPathReport,
     val sensorDefectFiltering: SensorDefectFilteringReport? = null
 ) {
     val rejectedFrameCount: Int get() = rejectedFrames.size
@@ -86,7 +189,7 @@ internal sealed interface ManualSequenceAlignmentPlanningResult {
     data class Ready(val plan: ManualSequenceAlignmentPlan) :
         ManualSequenceAlignmentPlanningResult
 
-    data class Unavailable(val reason: String) :
+    data class Unavailable(val reason: ManualAlignmentPathReason) :
         ManualSequenceAlignmentPlanningResult
 
     data class InsufficientAcceptedFrames(
@@ -111,8 +214,35 @@ internal sealed interface ManualSequenceAlignmentPlanningResult {
     }
 }
 
-internal class ManualSequenceInsufficientFramesException(message: String) :
-    IllegalStateException(message)
+internal abstract class ManualAlignmentReportedException(
+    val alignmentReport: ManualAlignmentPathReport,
+    message: String,
+    cause: Throwable? = null
+) : IllegalStateException(message, cause)
+
+internal class ManualSequenceInsufficientFramesException(
+    message: String,
+    report: ManualAlignmentPathReport = failedManualAlignmentReport(
+        reason = ManualAlignmentPathReason.SEQUENCE_PLANNER_INSUFFICIENT_ACCEPTED_FRAMES,
+        failureType = "ManualSequenceInsufficientFramesException",
+        failureMessage = message
+    )
+) : ManualAlignmentReportedException(report, message)
+
+internal class ManualAlignmentProcessingException(
+    report: ManualAlignmentPathReport,
+    cause: Throwable? = null
+) : ManualAlignmentReportedException(
+    alignmentReport = report,
+    message = buildString {
+        append("Sequence-aware alignment failed; legacy fallback was not used")
+        report.sequencePlannerFailureMessage?.takeIf(String::isNotBlank)?.let {
+            append(": ")
+            append(it)
+        }
+    },
+    cause = cause
+)
 
 internal fun resolveManualSequencePlanningResult(
     result: ManualSequenceAlignmentPlanningResult
@@ -121,6 +251,181 @@ internal fun resolveManualSequencePlanningResult(
     is ManualSequenceAlignmentPlanningResult.Unavailable -> null
     is ManualSequenceAlignmentPlanningResult.InsufficientAcceptedFrames ->
         throw ManualSequenceInsufficientFramesException(result.message)
+}
+
+internal suspend fun selectManualAlignmentPath(
+    inputFrameCount: Int,
+    mode: ManualAlignedStackMode,
+    failureInjector: ManualAlignmentFailureInjector = NoOpManualAlignmentFailureInjector,
+    planner: suspend () -> ManualSequenceAlignmentPlanningResult
+): ManualAlignmentSelection {
+    require(inputFrameCount >= 0)
+    return try {
+        val selection = if (inputFrameCount < MIN_MANUAL_SEQUENCE_FRAMES) {
+            legacyManualAlignmentSelection(
+                inputFrameCount,
+                ManualAlignmentPathReason.LEGACY_SHORT_SEQUENCE
+            )
+        } else {
+            failureInjector.checkpoint(
+                ManualAlignmentFailureInjectionPoint.BEFORE_SEQUENCE_PLANNER,
+                mode
+            )
+            val planning = planner()
+            failureInjector.checkpoint(
+                ManualAlignmentFailureInjectionPoint.AFTER_SEQUENCE_PLANNER_RESULT,
+                mode
+            )
+            when (planning) {
+                is ManualSequenceAlignmentPlanningResult.Ready ->
+                    sequenceAwareManualAlignmentSelection(inputFrameCount, planning.plan)
+
+                is ManualSequenceAlignmentPlanningResult.Unavailable -> {
+                    if (planning.reason.legacyFallbackAllowed) {
+                        legacyManualAlignmentSelection(inputFrameCount, planning.reason)
+                    } else {
+                        throw ManualAlignmentProcessingException(
+                            failedManualAlignmentReport(
+                                reason = planning.reason,
+                                failureType = "ManualSequenceAlignmentPlanningResult.Unavailable",
+                                failureMessage = planning.reason.name
+                            )
+                        )
+                    }
+                }
+
+                is ManualSequenceAlignmentPlanningResult.InsufficientAcceptedFrames ->
+                    throw ManualSequenceInsufficientFramesException(planning.message)
+            }
+        }
+        failureInjector.checkpoint(
+            ManualAlignmentFailureInjectionPoint.BEFORE_INTEGRATION,
+            mode
+        )
+        selection
+    } catch (error: CancellationException) {
+        throw error
+    } catch (error: ManualAlignmentReportedException) {
+        throw error
+    } catch (error: Exception) {
+        throw ManualAlignmentProcessingException(
+            report = failedManualAlignmentReport(
+                reason = ManualAlignmentPathReason.SEQUENCE_PLANNER_INTERNAL_ERROR,
+                failureType = error::class.java.name,
+                failureMessage = safeManualAlignmentFailureMessage(error)
+            ),
+            cause = error
+        )
+    }
+}
+
+internal suspend fun <T> runManualStackingOperation(
+    onAlignmentFailure: suspend (ManualAlignmentPathReport) -> Unit,
+    operation: suspend () -> T
+): Result<T> = try {
+    Result.success(operation())
+} catch (error: CancellationException) {
+    throw error
+} catch (error: ManualAlignmentReportedException) {
+    val completedReport = error.alignmentReport.copy(cleanupCompleted = true)
+    try {
+        onAlignmentFailure(completedReport)
+    } catch (reportError: CancellationException) {
+        error.addSuppressed(reportError)
+        throw reportError
+    } catch (reportError: Exception) {
+        error.addSuppressed(reportError)
+    }
+    Result.failure(error)
+} catch (error: Exception) {
+    Result.failure(error)
+}
+
+internal fun ManualAlignmentPathReport.toStableFields(): Map<String, String> = linkedMapOf(
+    "manualAlignmentReportSchema" to ManualAlignmentPathReport.SCHEMA_VERSION,
+    "manualAlignmentPath" to manualAlignmentPath.name,
+    "manualAlignmentPathReason" to manualAlignmentPathReason.name,
+    "manualAlignmentAttempted" to manualAlignmentAttempted.toString(),
+    "legacyFallbackAllowed" to legacyFallbackAllowed.toString(),
+    "legacyFallbackUsed" to legacyFallbackUsed.toString(),
+    "sequencePlannerFailureType" to sequencePlannerFailureType.orEmpty(),
+    "sequencePlannerFailureMessage" to sequencePlannerFailureMessage.orEmpty(),
+    "processingOutcome" to processingOutcome.name,
+    "outputPublished" to outputPublished.toString(),
+    "cleanupCompleted" to cleanupCompleted.toString()
+)
+
+internal fun manualAlignmentPathReportJson(
+    mode: ManualAlignedStackMode,
+    report: ManualAlignmentPathReport
+): String = buildString {
+    append("{\n")
+    append("  \"schemaVersion\": \"")
+    append(ManualAlignmentPathReport.SCHEMA_VERSION)
+    append("\",\n")
+    append("  \"manualSequenceMode\": \"")
+    append(escapeManualAlignmentJson(mode.reportName))
+    append("\",\n")
+    report.toStableFields()
+        .filterKeys { it != "manualAlignmentReportSchema" }
+        .entries
+        .forEachIndexed { index, (name, value) ->
+            append("  \"")
+            append(name)
+            append("\": ")
+            when (name) {
+                "manualAlignmentAttempted",
+                "legacyFallbackAllowed",
+                "legacyFallbackUsed",
+                "outputPublished",
+                "cleanupCompleted" -> append(value)
+
+                "sequencePlannerFailureType",
+                "sequencePlannerFailureMessage" -> if (value.isBlank()) {
+                    append("null")
+                } else {
+                    append('"')
+                    append(escapeManualAlignmentJson(value))
+                    append('"')
+                }
+
+                else -> {
+                    append('"')
+                    append(escapeManualAlignmentJson(value))
+                    append('"')
+                }
+            }
+            if (index < report.toStableFields().size - 2) append(',')
+            append('\n')
+        }
+    append("}\n")
+}
+
+internal fun manualAlignmentPathReportFromFields(
+    fields: Map<String, String>
+): ManualAlignmentPathReport? {
+    val serializedPath = fields["manualAlignmentPath"] ?: return null
+    return ManualAlignmentPathReport(
+        manualAlignmentPath = ManualAlignmentPath.fromSerialized(serializedPath),
+        manualAlignmentPathReason = ManualAlignmentPathReason.fromSerialized(
+            fields["manualAlignmentPathReason"]
+        ),
+        manualAlignmentAttempted = fields["manualAlignmentAttempted"]
+            ?.toBooleanStrictOrNull() ?: false,
+        legacyFallbackAllowed = fields["legacyFallbackAllowed"]
+            ?.toBooleanStrictOrNull() ?: false,
+        legacyFallbackUsed = fields["legacyFallbackUsed"]
+            ?.toBooleanStrictOrNull() ?: false,
+        sequencePlannerFailureType = fields["sequencePlannerFailureType"]
+            ?.takeIf(String::isNotBlank),
+        sequencePlannerFailureMessage = fields["sequencePlannerFailureMessage"]
+            ?.takeIf(String::isNotBlank),
+        processingOutcome = ManualAlignmentProcessingOutcome.fromSerialized(
+            fields["processingOutcome"]
+        ),
+        outputPublished = fields["outputPublished"]?.toBooleanStrictOrNull() ?: false,
+        cleanupCompleted = fields["cleanupCompleted"]?.toBooleanStrictOrNull() ?: false
+    )
 }
 
 internal fun <T> manualSequenceFrameWork(
@@ -159,21 +464,25 @@ internal fun <T> manualSequenceFrameWork(
 }
 
 internal fun manualSequenceIntegrationReport(
-    plan: ManualSequenceAlignmentPlan?,
+    alignmentSelection: ManualAlignmentSelection?,
     mode: ManualAlignedStackMode,
     integratedOriginalFrameIndices: List<Int>,
     sensorDefectFiltering: SensorDefectFilteringReport? = null
 ): ManualSequenceIntegrationReport? {
-    if (plan == null) return null
-    val acceptedIndices = plan.frames.filter { it.accepted }.map { it.originalFrameIndex }
+    if (alignmentSelection == null) return null
+    val plan = alignmentSelection.sequencePlan
+    val acceptedIndices = plan?.frames
+        ?.filter { it.accepted }
+        ?.map { it.originalFrameIndex }
+        ?: (0 until alignmentSelection.inputFrameCount).toList()
     require(integratedOriginalFrameIndices == acceptedIndices) {
-        "Integrated frame indices do not match the accepted sequence frames"
+        "Integrated frame indices do not match the selected alignment path"
     }
     return ManualSequenceIntegrationReport(
         mode = mode,
-        inputFrameCount = plan.frames.size,
+        inputFrameCount = alignmentSelection.inputFrameCount,
         acceptedFrameCount = acceptedIndices.size,
-        rejectedFrames = plan.frames.filterNot { it.accepted }.map { decision ->
+        rejectedFrames = plan?.frames.orEmpty().filterNot { it.accepted }.map { decision ->
             ManualSequenceRejectedFrame(
                 originalFrameIndex = decision.originalFrameIndex,
                 frameId = decision.frameId,
@@ -181,9 +490,14 @@ internal fun manualSequenceIntegrationReport(
             )
         },
         integratedOriginalFrameIndices = integratedOriginalFrameIndices,
+        alignmentPathReport = alignmentSelection.report,
         sensorDefectFiltering = sensorDefectFiltering
     )
 }
+
+internal fun ManualSequenceIntegrationReport.publishedSuccessfully() = copy(
+    alignmentPathReport = alignmentPathReport.publishedSuccessfully()
+)
 
 internal fun planManualSequenceAlignment(
     frames: List<ArgbPixelImage>,
@@ -247,7 +561,9 @@ internal fun evaluateManualSequenceAlignmentFromAnalyses(
     persistentArtifactObservations: List<ArtifactFrameObservation>? = null
 ): ManualSequenceAlignmentPlanningResult {
     if (analyses.size < MIN_MANUAL_SEQUENCE_FRAMES) {
-        return ManualSequenceAlignmentPlanningResult.Unavailable("too_few_sequence_frames")
+        return ManualSequenceAlignmentPlanningResult.Unavailable(
+            ManualAlignmentPathReason.LEGACY_SHORT_SEQUENCE
+        )
     }
     if (
         analyses.any {
@@ -257,7 +573,7 @@ internal fun evaluateManualSequenceAlignmentFromAnalyses(
         }
     ) {
         return ManualSequenceAlignmentPlanningResult.Unavailable(
-            "invalid_or_mismatched_sequence_frames"
+            ManualAlignmentPathReason.SEQUENCE_PLANNER_UNSUPPORTED_INPUT
         )
     }
     require(outputWidth > 0 && outputHeight > 0)
@@ -277,7 +593,9 @@ internal fun evaluateManualSequenceAlignmentFromAnalyses(
     }
     val reference = ReferenceFrameSelector().select(filtered.map { it.first }).analysis
     if (reference.reliableStarCount < MIN_MANUAL_SEQUENCE_REFERENCE_STARS) {
-        return ManualSequenceAlignmentPlanningResult.Unavailable("too_few_reference_stars")
+        return ManualSequenceAlignmentPlanningResult.Unavailable(
+            ManualAlignmentPathReason.LEGACY_TOO_FEW_REFERENCE_STARS
+        )
     }
 
     val registration = SequenceAwareRegistrationEngine().register(
@@ -318,7 +636,9 @@ internal fun evaluateManualSequenceAlignmentFromAnalyses(
         !registration.model.motionObservable ||
         registration.model.score < MIN_MANUAL_SEQUENCE_MODEL_SCORE
     ) {
-        return ManualSequenceAlignmentPlanningResult.Unavailable("sequence_quality_gate")
+        return ManualSequenceAlignmentPlanningResult.Unavailable(
+            ManualAlignmentPathReason.LEGACY_SEQUENCE_QUALITY_GATE
+        )
     }
 
     val scaleX = outputWidth.toFloat() / reference.width.coerceAtLeast(1)
@@ -326,7 +646,9 @@ internal fun evaluateManualSequenceAlignmentFromAnalyses(
     val residualScale = (scaleX + scaleY) * 0.5f
     val fullResidual = registration.model.residual * residualScale
     if (fullResidual > MAX_MANUAL_SEQUENCE_MODEL_RESIDUAL_PX) {
-        return ManualSequenceAlignmentPlanningResult.Unavailable("sequence_residual_gate")
+        return ManualSequenceAlignmentPlanningResult.Unavailable(
+            ManualAlignmentPathReason.LEGACY_SEQUENCE_RESIDUAL_GATE
+        )
     }
 
     val decisions = analyses.mapIndexed { index, analysis ->
@@ -343,7 +665,9 @@ internal fun evaluateManualSequenceAlignmentFromAnalyses(
             imageHeight = outputHeight
         )
         if (abs(dx) > limit || abs(dy) > limit) {
-            return ManualSequenceAlignmentPlanningResult.Unavailable("dynamic_shift_gate")
+            return ManualSequenceAlignmentPlanningResult.Unavailable(
+                ManualAlignmentPathReason.LEGACY_DYNAMIC_SHIFT_GATE
+            )
         }
         ManualSequenceFrameDecision(
             originalFrameIndex = index,
@@ -392,7 +716,9 @@ internal fun evaluateManualSequenceAlignmentFromAnalyses(
         !decisions[referenceIndex].shift.isZero ||
         !decisions[referenceIndex].accepted
     ) {
-        return ManualSequenceAlignmentPlanningResult.Unavailable("invalid_reference_frame")
+        return ManualSequenceAlignmentPlanningResult.Unavailable(
+            ManualAlignmentPathReason.SEQUENCE_PLANNER_INVALID_REFERENCE
+        )
     }
     return ManualSequenceAlignmentPlanningResult.Ready(
         ManualSequenceAlignmentPlan(
@@ -406,9 +732,85 @@ internal fun evaluateManualSequenceAlignmentFromAnalyses(
     )
 }
 
-private const val MIN_MANUAL_SEQUENCE_FRAMES = 8
+private fun sequenceAwareManualAlignmentSelection(
+    inputFrameCount: Int,
+    plan: ManualSequenceAlignmentPlan
+) = ManualAlignmentSelection(
+    inputFrameCount = inputFrameCount,
+    sequencePlan = plan,
+    report = ManualAlignmentPathReport(
+        manualAlignmentPath = ManualAlignmentPath.SEQUENCE_AWARE,
+        manualAlignmentPathReason = ManualAlignmentPathReason.SEQUENCE_AWARE_SELECTED,
+        manualAlignmentAttempted = true,
+        legacyFallbackAllowed = false,
+        legacyFallbackUsed = false,
+        processingOutcome = ManualAlignmentProcessingOutcome.IN_PROGRESS,
+        outputPublished = false,
+        cleanupCompleted = false
+    )
+)
+
+private fun legacyManualAlignmentSelection(
+    inputFrameCount: Int,
+    reason: ManualAlignmentPathReason
+): ManualAlignmentSelection {
+    require(reason.legacyFallbackAllowed)
+    return ManualAlignmentSelection(
+        inputFrameCount = inputFrameCount,
+        sequencePlan = null,
+        report = ManualAlignmentPathReport(
+            manualAlignmentPath = ManualAlignmentPath.LEGACY,
+            manualAlignmentPathReason = reason,
+            manualAlignmentAttempted = true,
+            legacyFallbackAllowed = true,
+            legacyFallbackUsed = true,
+            processingOutcome = ManualAlignmentProcessingOutcome.IN_PROGRESS,
+            outputPublished = false,
+            cleanupCompleted = false
+        )
+    )
+}
+
+private fun failedManualAlignmentReport(
+    reason: ManualAlignmentPathReason,
+    failureType: String,
+    failureMessage: String
+) = ManualAlignmentPathReport(
+    manualAlignmentPath = ManualAlignmentPath.SEQUENCE_AWARE,
+    manualAlignmentPathReason = reason,
+    manualAlignmentAttempted = true,
+    legacyFallbackAllowed = false,
+    legacyFallbackUsed = false,
+    sequencePlannerFailureType = failureType,
+    sequencePlannerFailureMessage = failureMessage,
+    processingOutcome = ManualAlignmentProcessingOutcome.FAILED,
+    outputPublished = false,
+    cleanupCompleted = false
+)
+
+private fun safeManualAlignmentFailureMessage(error: Exception): String =
+    (error.message ?: error::class.java.simpleName)
+        .replace(Regex("[\\r\\n\\t]+"), " ")
+        .trim()
+        .take(MAX_MANUAL_ALIGNMENT_FAILURE_MESSAGE_LENGTH)
+
+private fun escapeManualAlignmentJson(value: String): String = buildString(value.length) {
+    value.forEach { character ->
+        when (character) {
+            '\\' -> append("\\\\")
+            '"' -> append("\\\"")
+            '\n' -> append("\\n")
+            '\r' -> append("\\r")
+            '\t' -> append("\\t")
+            else -> append(character)
+        }
+    }
+}
+
+internal const val MIN_MANUAL_SEQUENCE_FRAMES = 8
 private const val MIN_MANUAL_SEQUENCE_REFERENCE_STARS = 4
 private const val MIN_MANUAL_SEQUENCE_ACCEPTED_FRAMES = 4
 private const val MIN_MANUAL_SEQUENCE_ACCEPTED_RATIO = 0.45f
 private const val MIN_MANUAL_SEQUENCE_MODEL_SCORE = 0.45f
 private const val MAX_MANUAL_SEQUENCE_MODEL_RESIDUAL_PX = 3f
+private const val MAX_MANUAL_ALIGNMENT_FAILURE_MESSAGE_LENGTH = 240

@@ -296,7 +296,11 @@ data class JpegStackResult(
     val manualAlignmentSummary: String? = null
 )
 
-class JpegStacker(private val context: Context) {
+class JpegStacker internal constructor(
+    private val context: Context,
+    private val manualAlignmentFailureInjector: ManualAlignmentFailureInjector =
+        NoOpManualAlignmentFailureInjector
+) {
     suspend fun stack(
         session: SessionSummary,
         frames: List<SessionFrame>,
@@ -311,7 +315,15 @@ class JpegStacker(private val context: Context) {
         autoStretch: Boolean = false,
         source: ManualStackingSource = ManualStackingSource.ORIGINAL
     ): Result<JpegStackResult> = withContext(Dispatchers.IO) {
-        runCatching {
+        runManualStackingOperation(
+            onAlignmentFailure = { report ->
+                appendManualAlignmentFailureSessionInfo(
+                    session,
+                    ManualAlignedStackMode.AVERAGE,
+                    report
+                )
+            }
+        ) {
             require(frames.size >= 2) {
                 "Недостаточно JPEG кадров для стеккинга"
             }
@@ -351,16 +363,18 @@ class JpegStacker(private val context: Context) {
             var sensorDefectFallback: Bitmap? = null
             val alignmentShifts = mutableListOf<AlignmentShift>()
             try {
-                val sequencePlan = if (alignFrames) {
-                    prepareManualSequenceAlignmentPlan(
+                val alignmentSelection = if (alignFrames) {
+                    prepareManualSequenceAlignmentSelection(
                         frames = frames,
                         targetWidth = targetWidth,
                         targetHeight = targetHeight,
+                        mode = ManualAlignedStackMode.AVERAGE,
                         onProgress = onAlignment
                     )
                 } else {
                     null
                 }
+                val sequencePlan = alignmentSelection?.sequencePlan
                 val alignmentReference = if (alignFrames && sequencePlan == null) {
                     try {
                         createAlignmentReference(
@@ -496,13 +510,12 @@ class JpegStacker(private val context: Context) {
                         minimumValidSamples = ManualAlignedStackMode.AVERAGE.minimumFrameCount
                     )
                 }
-                val integrationReport = manualSequenceIntegrationReport(
-                    plan = sequencePlan,
+                var integrationReport = manualSequenceIntegrationReport(
+                    alignmentSelection = alignmentSelection,
                     mode = ManualAlignedStackMode.AVERAGE,
                     integratedOriginalFrameIndices = frameWork.map { it.originalFrameIndex },
                     sensorDefectFiltering = sensorDefectCoverage?.report
                 )
-                integrationReport?.let(::logManualSequenceIntegrationReport)
 
                 if (alignFrames) {
                     average = cropToCommonAlignedRegion(
@@ -522,6 +535,8 @@ class JpegStacker(private val context: Context) {
                 }
                 val fileName = buildProcessedResultBaseName(outputType, now)
                 val saved = saveBitmap(session, output, fileName)
+                integrationReport = integrationReport?.publishedSuccessfully()
+                integrationReport?.let(::logManualSequenceIntegrationReport)
                 val infoUpdated = runCatching {
                     appendSessionInfo(
                         session = session,
@@ -575,7 +590,15 @@ class JpegStacker(private val context: Context) {
             total: Int
         ) -> Unit
     ): Result<JpegStackResult> = withContext(Dispatchers.IO) {
-        runCatching {
+        runManualStackingOperation(
+            onAlignmentFailure = { report ->
+                appendManualAlignmentFailureSessionInfo(
+                    session,
+                    ManualAlignedStackMode.DARK_SUBTRACTED_AVERAGE,
+                    report
+                )
+            }
+        ) {
             require(lightFrames.size >= 2) { "Недостаточно light frames" }
             require(darkFrames.isNotEmpty()) { "Dark frames не найдены" }
             require(shadowOffset in setOf(0, 8, 16, 32)) {
@@ -715,6 +738,8 @@ class JpegStacker(private val context: Context) {
                     deleteSavedJpeg(savedResult)
                     throw error
                 }
+                lightIntegrationReport = lightIntegrationReport?.publishedSuccessfully()
+                lightIntegrationReport?.let(::logManualSequenceIntegrationReport)
                 val infoUpdated = runCatching {
                     appendDarkStackSessionInfo(
                         session = session,
@@ -773,7 +798,15 @@ class JpegStacker(private val context: Context) {
             total: Int
         ) -> Unit
     ): Result<JpegStackResult> = withContext(Dispatchers.IO) {
-        runCatching {
+        runManualStackingOperation(
+            onAlignmentFailure = { report ->
+                appendManualAlignmentFailureSessionInfo(
+                    session,
+                    ManualAlignedStackMode.MEDIAN,
+                    report
+                )
+            }
+        ) {
             require(frames.size >= 2) { "Недостаточно JPEG кадров" }
             require(frames.all {
                 it.category == SessionFrameCategory.LIGHTS_JPEG
@@ -813,11 +846,12 @@ class JpegStacker(private val context: Context) {
             var output: Bitmap? = null
 
             try {
-                val sequencePlan = if (alignFrames) {
-                    prepareManualSequenceAlignmentPlan(
+                val alignmentSelection = if (alignFrames) {
+                    prepareManualSequenceAlignmentSelection(
                         frames = selectedFrames,
                         targetWidth = targetWidth,
-                        targetHeight = targetHeight
+                        targetHeight = targetHeight,
+                        mode = ManualAlignedStackMode.MEDIAN
                     ) { current, total, message ->
                         withContext(Dispatchers.Main.immediate) {
                             onProgress(message, current, total)
@@ -826,6 +860,7 @@ class JpegStacker(private val context: Context) {
                 } else {
                     null
                 }
+                val sequencePlan = alignmentSelection?.sequencePlan
                 val frameWork = manualSequenceFrameWork(
                     selectedFrames,
                     sequencePlan,
@@ -907,13 +942,12 @@ class JpegStacker(private val context: Context) {
                         originalFrameIndex = index
                     )
                 }
-                val integrationReport = manualSequenceIntegrationReport(
-                    plan = sequencePlan,
+                var integrationReport = manualSequenceIntegrationReport(
+                    alignmentSelection = alignmentSelection,
                     mode = ManualAlignedStackMode.MEDIAN,
                     integratedOriginalFrameIndices = preparedFrames.map { it.originalFrameIndex },
                     sensorDefectFiltering = sensorDefectCoverage?.report
                 )
-                integrationReport?.let(::logManualSequenceIntegrationReport)
 
                 withContext(Dispatchers.Main.immediate) {
                     onProgress("Вычисление median...", 0, targetHeight)
@@ -959,6 +993,8 @@ class JpegStacker(private val context: Context) {
                     applyAstroStretchInPlace(checkNotNull(output))
                 }
                 val saved = saveBitmap(session, checkNotNull(output), fileName)
+                integrationReport = integrationReport?.publishedSuccessfully()
+                integrationReport?.let(::logManualSequenceIntegrationReport)
                 val infoUpdated = runCatching {
                     appendMedianSessionInfo(
                         session = session,
@@ -1013,7 +1049,15 @@ class JpegStacker(private val context: Context) {
             total: Int
         ) -> Unit
     ): Result<JpegStackResult> = withContext(Dispatchers.IO) {
-        runCatching {
+        runManualStackingOperation(
+            onAlignmentFailure = { report ->
+                appendManualAlignmentFailureSessionInfo(
+                    session,
+                    ManualAlignedStackMode.SIGMA,
+                    report
+                )
+            }
+        ) {
             require(frames.size >= 2) { "Недостаточно JPEG кадров" }
             require(frames.all {
                 it.category == SessionFrameCategory.LIGHTS_JPEG
@@ -1057,11 +1101,12 @@ class JpegStacker(private val context: Context) {
             var output: Bitmap? = null
 
             try {
-                val sequencePlan = if (alignFrames) {
-                    prepareManualSequenceAlignmentPlan(
+                val alignmentSelection = if (alignFrames) {
+                    prepareManualSequenceAlignmentSelection(
                         frames = selectedFrames,
                         targetWidth = targetWidth,
-                        targetHeight = targetHeight
+                        targetHeight = targetHeight,
+                        mode = ManualAlignedStackMode.SIGMA
                     ) { current, total, message ->
                         withContext(Dispatchers.Main.immediate) {
                             onProgress(message, current, total)
@@ -1070,6 +1115,7 @@ class JpegStacker(private val context: Context) {
                 } else {
                     null
                 }
+                val sequencePlan = alignmentSelection?.sequencePlan
                 val frameWork = manualSequenceFrameWork(
                     selectedFrames,
                     sequencePlan,
@@ -1151,13 +1197,12 @@ class JpegStacker(private val context: Context) {
                         originalFrameIndex = index
                     )
                 }
-                val integrationReport = manualSequenceIntegrationReport(
-                    plan = sequencePlan,
+                var integrationReport = manualSequenceIntegrationReport(
+                    alignmentSelection = alignmentSelection,
                     mode = ManualAlignedStackMode.SIGMA,
                     integratedOriginalFrameIndices = preparedFrames.map { it.originalFrameIndex },
                     sensorDefectFiltering = sensorDefectCoverage?.report
                 )
-                integrationReport?.let(::logManualSequenceIntegrationReport)
 
                 withContext(Dispatchers.Main.immediate) {
                     onProgress("Расчёт sigma clipping...", 0, targetHeight)
@@ -1204,6 +1249,8 @@ class JpegStacker(private val context: Context) {
                     applyAstroStretchInPlace(checkNotNull(output))
                 }
                 val saved = saveBitmap(session, checkNotNull(output), fileName)
+                integrationReport = integrationReport?.publishedSuccessfully()
+                integrationReport?.let(::logManualSequenceIntegrationReport)
                 val infoUpdated = runCatching {
                     appendSigmaSessionInfo(
                         session = session,
@@ -3861,109 +3908,107 @@ class JpegStacker(private val context: Context) {
         }
     }
 
-    private suspend fun prepareManualSequenceAlignmentPlan(
+    private suspend fun prepareManualSequenceAlignmentSelection(
         frames: List<SessionFrame>,
         targetWidth: Int,
         targetHeight: Int,
+        mode: ManualAlignedStackMode,
         onProgress: suspend (
             current: Int,
             total: Int,
             message: String
         ) -> Unit
-    ): ManualSequenceAlignmentPlan? {
-        if (frames.size < 8) return null
-        val scale = minOf(
-            1f,
-            PROFILE_ANALYSIS_MAX_DIMENSION.toFloat() /
-                maxOf(targetWidth, targetHeight).coerceAtLeast(1)
-        )
-        val analysisWidth = maxOf(1, (targetWidth * scale).roundToInt())
-        val analysisHeight = maxOf(1, (targetHeight * scale).roundToInt())
+    ): ManualAlignmentSelection {
         return try {
-            val analyzer = JpegFrameAnalyzer()
-            val maskEstimator = SkyMaskEstimator()
-            val persistentDetector = PersistentSensorCandidateDetector()
-            val persistentObservations = mutableListOf<ArtifactFrameObservation>()
-            val analyses = frames.mapIndexed { index, frame ->
-                currentCoroutineContext().ensureActive()
-                onProgress(
-                    index + 1,
-                    frames.size,
-                    "Анализ выравнивания ${index + 1} из ${frames.size}"
+            val selection = selectManualAlignmentPath(
+                inputFrameCount = frames.size,
+                mode = mode,
+                failureInjector = manualAlignmentFailureInjector
+            ) {
+                val scale = minOf(
+                    1f,
+                    PROFILE_ANALYSIS_MAX_DIMENSION.toFloat() /
+                        maxOf(targetWidth, targetHeight).coerceAtLeast(1)
                 )
-                val sample = decodeMedianFrame(frame, analysisWidth, analysisHeight)
-                    ?: error("Unable to decode manual alignment sample")
-                try {
-                    val image = bitmapToArgbImage(sample)
-                    val skyMask = maskEstimator.estimate(image)
-                    persistentObservations += ArtifactFrameObservation(
-                        frame.key,
-                        persistentDetector.detect(image, skyMask.mask)
+                val analysisWidth = maxOf(1, (targetWidth * scale).roundToInt())
+                val analysisHeight = maxOf(1, (targetHeight * scale).roundToInt())
+                val analyzer = JpegFrameAnalyzer()
+                val maskEstimator = SkyMaskEstimator()
+                val persistentDetector = PersistentSensorCandidateDetector()
+                val persistentObservations = mutableListOf<ArtifactFrameObservation>()
+                val analyses = frames.mapIndexed { index, frame ->
+                    currentCoroutineContext().ensureActive()
+                    onProgress(
+                        index + 1,
+                        frames.size,
+                        "Анализ выравнивания ${index + 1} из ${frames.size}"
                     )
-                    analyzer.analyze(
-                        id = frame.key,
-                        fileName = frame.fileName,
-                        image = image,
-                        skyMask = skyMask
-                    )
-                } finally {
-                    sample.recycle()
+                    val sample = decodeMedianFrame(frame, analysisWidth, analysisHeight)
+                        ?: error("Unable to decode manual alignment sample")
+                    try {
+                        val image = bitmapToArgbImage(sample)
+                        val skyMask = maskEstimator.estimate(image)
+                        persistentObservations += ArtifactFrameObservation(
+                            frame.key,
+                            persistentDetector.detect(image, skyMask.mask)
+                        )
+                        analyzer.analyze(
+                            id = frame.key,
+                            fileName = frame.fileName,
+                            image = image,
+                            skyMask = skyMask
+                        )
+                    } finally {
+                        sample.recycle()
+                    }
                 }
-            }
-            when (
-                val planning = evaluateManualSequenceAlignmentFromAnalyses(
+                evaluateManualSequenceAlignmentFromAnalyses(
                     analyses = analyses,
                     outputWidth = targetWidth,
                     outputHeight = targetHeight,
                     persistentArtifactObservations = persistentObservations
                 )
-            ) {
-                is ManualSequenceAlignmentPlanningResult.Ready -> {
-                    val plan = planning.plan
-                    Log.i(
-                        "AstroPhotoAlignment",
-                        "source=sequence method=sequencePlan " +
-                            "referenceFrame=${plan.referenceFrameIndex + 1} " +
-                            "modelScore=${formatMetric(plan.modelScore)} " +
-                            "modelResidual=${formatMetric(plan.modelResidualPx)} " +
-                            "stationaryArtifacts=${plan.stationaryArtifactCount} " +
-                            "sensorDefectRegions=${plan.sensorDefectMask?.regions?.size ?: 0} " +
-                            "sensorDefectMaskPixels=${plan.sensorDefectMask?.maskedPixelCount ?: 0} " +
-                            "sensorDefectMaskEnabled=${plan.sensorDefectMask?.enabled == true} " +
-                            "sensorDefectMaskReason=${plan.sensorDefectMask?.rejectionReason.orEmpty()} " +
-                            "inputFrames=${plan.frames.size} " +
-                            "acceptedRegistrations=${plan.acceptedRegistrationCount} " +
-                            "rejectedRegistrations=${plan.rejectedRegistrationCount} " +
-                            "rejectedOriginalIndices=${plan.frames.filterNot { it.accepted }
-                                .joinToString { it.originalFrameNumber.toString() }}"
-                    )
-                    plan
-                }
-                is ManualSequenceAlignmentPlanningResult.Unavailable -> {
-                    Log.i(
-                        "AstroPhotoAlignment",
-                        "source=sequence method=legacyFallback reason=${planning.reason}"
-                    )
-                    null
-                }
-                is ManualSequenceAlignmentPlanningResult.InsufficientAcceptedFrames -> {
-                    resolveManualSequencePlanningResult(planning)
-                }
             }
+            val plan = selection.sequencePlan
+            if (plan != null) {
+                Log.i(
+                    "AstroPhotoAlignment",
+                    "source=sequence method=sequencePlan " +
+                        "reason=${selection.report.manualAlignmentPathReason.name} " +
+                        "referenceFrame=${plan.referenceFrameIndex + 1} " +
+                        "modelScore=${formatMetric(plan.modelScore)} " +
+                        "modelResidual=${formatMetric(plan.modelResidualPx)} " +
+                        "stationaryArtifacts=${plan.stationaryArtifactCount} " +
+                        "sensorDefectRegions=${plan.sensorDefectMask?.regions?.size ?: 0} " +
+                        "sensorDefectMaskPixels=${plan.sensorDefectMask?.maskedPixelCount ?: 0} " +
+                        "sensorDefectMaskEnabled=${plan.sensorDefectMask?.enabled == true} " +
+                        "sensorDefectMaskReason=${plan.sensorDefectMask?.rejectionReason.orEmpty()} " +
+                        "inputFrames=${plan.frames.size} " +
+                        "acceptedRegistrations=${plan.acceptedRegistrationCount} " +
+                        "rejectedRegistrations=${plan.rejectedRegistrationCount} " +
+                        "rejectedOriginalIndices=${plan.frames.filterNot { it.accepted }
+                            .joinToString { it.originalFrameNumber.toString() }}"
+                )
+            } else {
+                Log.i(
+                    "AstroPhotoAlignment",
+                    "source=sequence method=legacyFallback " +
+                        "reason=${selection.report.manualAlignmentPathReason.name} " +
+                        "allowed=${selection.report.legacyFallbackAllowed}"
+                )
+            }
+            selection
         } catch (error: CancellationException) {
             throw error
-        } catch (error: ManualSequenceInsufficientFramesException) {
+        } catch (error: ManualAlignmentReportedException) {
             Log.w(
                 "AstroPhotoAlignment",
-                "source=sequence method=failed reason=${error.message.orEmpty()}"
+                "source=sequence method=failed " +
+                    "reason=${error.alignmentReport.manualAlignmentPathReason.name} " +
+                    "failureType=${error.alignmentReport.sequencePlannerFailureType.orEmpty()} " +
+                    "legacyFallbackUsed=${error.alignmentReport.legacyFallbackUsed}"
             )
             throw error
-        } catch (error: Exception) {
-            Log.w(
-                "AstroPhotoAlignment",
-                "source=sequence method=legacyFallback reason=${error.message.orEmpty()}"
-            )
-            null
         }
     }
 
@@ -4841,17 +4886,19 @@ class JpegStacker(private val context: Context) {
         val alignmentShifts = mutableListOf<AlignmentShift>()
         var sensorDefectFallback: Bitmap? = null
         try {
-            val sequencePlan = if (alignFrames) {
-                prepareManualSequenceAlignmentPlan(
+            val alignmentSelection = if (alignFrames) {
+                prepareManualSequenceAlignmentSelection(
                     frames = lightFrames,
                     targetWidth = targetWidth,
-                    targetHeight = targetHeight
+                    targetHeight = targetHeight,
+                    mode = ManualAlignedStackMode.DARK_SUBTRACTED_AVERAGE
                 ) { current, total, message ->
                     onProgress(message, current, total)
                 }
             } else {
                 null
             }
+            val sequencePlan = alignmentSelection?.sequencePlan
             val frameWork = manualSequenceFrameWork(
                 lightFrames,
                 sequencePlan,
@@ -4972,12 +5019,11 @@ class JpegStacker(private val context: Context) {
                 )
             }
             val integrationReport = manualSequenceIntegrationReport(
-                plan = sequencePlan,
+                alignmentSelection = alignmentSelection,
                 mode = ManualAlignedStackMode.DARK_SUBTRACTED_AVERAGE,
                 integratedOriginalFrameIndices = frameWork.map { it.originalFrameIndex },
                 sensorDefectFiltering = sensorDefectCoverage?.report
             )
-            integrationReport?.let(::logManualSequenceIntegrationReport)
             val result = if (alignFrames) {
                 cropToCommonAlignedRegion(output, alignmentShifts)
             } else {
@@ -5520,8 +5566,12 @@ class JpegStacker(private val context: Context) {
     private fun manualSequenceReportSummary(
         report: ManualSequenceIntegrationReport
     ): String = buildString {
+        val alignment = report.alignmentPathReport
         append(
-            "input=${report.inputFrameCount}, accepted=${report.acceptedFrameCount}, " +
+            "alignmentPath=${alignment.manualAlignmentPath.name}, " +
+                "alignmentReason=${alignment.manualAlignmentPathReason.name}, " +
+                "legacyFallbackUsed=${alignment.legacyFallbackUsed}, " +
+                "input=${report.inputFrameCount}, accepted=${report.acceptedFrameCount}, " +
                 "rejected=${report.rejectedFrameCount}"
         )
         if (report.rejectedFrames.isNotEmpty()) {
@@ -5562,6 +5612,9 @@ class JpegStacker(private val context: Context) {
         report: ManualSequenceIntegrationReport?
     ) {
         if (report == null) return
+        report.alignmentPathReport.toStableFields().forEach { (name, value) ->
+            appendLine("$name: $value")
+        }
         appendLine("manualSequenceMode: ${report.mode.reportName}")
         appendLine("manualSequenceInputFrames: ${report.inputFrameCount}")
         appendLine("manualSequenceAcceptedFrames: ${report.acceptedFrameCount}")
@@ -5617,6 +5670,46 @@ class JpegStacker(private val context: Context) {
                     }
             )
         }
+    }
+
+    private suspend fun appendManualAlignmentFailureSessionInfo(
+        session: SessionSummary,
+        mode: ManualAlignedStackMode,
+        report: ManualAlignmentPathReport
+    ) {
+        val timestamp = System.currentTimeMillis()
+        val processedAt = SimpleDateFormat(
+            "yyyy-MM-dd HH:mm:ss",
+            Locale.getDefault()
+        ).format(Date(timestamp))
+        val block = buildString {
+            appendLine()
+            appendLine("processedType: Manual alignment failure")
+            appendLine("manualSequenceMode: ${mode.reportName}")
+            report.toStableFields().forEach { (name, value) ->
+                appendLine("$name: $value")
+            }
+            appendLine("processedAt: $processedAt")
+        }
+        val sessionInfoWritten = runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                appendMediaStoreSessionInfo(session, block)
+            } else {
+                appendLegacySessionInfo(session, block)
+                true
+            }
+        }.getOrDefault(false)
+        val savedReport = ProcessingReportWriter(context).write(
+            session = session,
+            imageFileName = "ManualAlignmentFailure_$timestamp.json",
+            json = manualAlignmentPathReportJson(mode, report)
+        )
+        Log.w(
+            "AstroPhotoAlignment",
+            "manualFailureReport=${savedReport.displayPath} " +
+                "sessionInfoWritten=$sessionInfoWritten " +
+                "publicationMode=${savedReport.publicationMode}"
+        )
     }
 
     private fun appendSessionInfo(
