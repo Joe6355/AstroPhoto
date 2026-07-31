@@ -375,8 +375,8 @@ class JpegV2Stage7Test {
         listOf(
             "TemporaryPipelineFiles.create",
             "ResultCandidateStore(",
-            "stackedWriter.writeTile",
-            "FileBackedSkyForegroundComposer().compose",
+            "runAutomaticSensorMaskedIntegration(",
+            "composeCleanCandidate(",
             "FileBackedAdaptivePresetProcessor().process",
             "FileBackedResultQualityAnalyzer(",
             "StoredResultCandidate(",
@@ -384,6 +384,8 @@ class JpegV2Stage7Test {
             "finalBitmapAllocationBytes = 0L",
             "ProcessingRunJournal(context)"
         ).forEach { required -> assertTrue(required, profile.contains(required)) }
+        assertTrue(source.contains("FileBackedSkyForegroundComposer().compose"))
+        assertTrue(source.contains("stackedWriter.writeTile("))
         assertFalse(profile.contains("bitmapFromArgbImage"))
         assertFalse(profile.contains("Bitmap.createBitmap"))
         assertFalse(Regex("(?<!Stored)ResultCandidate\\(").containsMatchIn(profile))

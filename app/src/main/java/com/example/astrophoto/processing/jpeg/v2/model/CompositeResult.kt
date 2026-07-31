@@ -11,7 +11,11 @@ data class CompositeDiagnostics(
     val outputWidth: Int,
     val outputHeight: Int,
     val cropApplied: Boolean,
-    val compositionDurationMillis: Long
+    val compositionDurationMillis: Long,
+    val maskedReferenceSamplesSkipped: Long = 0L,
+    val sensorDefectAffectedOutputPixels: Int = 0,
+    val meanOriginalAlphaAtProtectedPixels: Float = 0f,
+    val sensorDefectProtectionReason: String? = null
 )
 
 data class CompositeResult(

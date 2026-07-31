@@ -1,7 +1,10 @@
 package com.example.astrophoto.processing.jpeg.v2.sampling
 
 import com.example.astrophoto.processing.jpeg.v2.model.RegistrationResult
+import com.example.astrophoto.processing.jpeg.v2.model.ReferenceToSourceTransform
+import kotlin.math.cos
 import kotlin.math.floor
+import kotlin.math.sin
 
 interface ArgbPixelSource : AutoCloseable {
     val width: Int
@@ -28,6 +31,33 @@ data class SampledSrgb(
     val blue: Float
 )
 
+class MutableSampledSrgb(
+    var red: Float = 0f,
+    var green: Float = 0f,
+    var blue: Float = 0f
+)
+
+class PreparedReferenceToSourceTransform(transform: ReferenceToSourceTransform) {
+    private val scaledCosine = transform.scale * cos(transform.rotationRadians)
+    private val scaledSine = transform.scale * sin(transform.rotationRadians)
+    private val centerX = transform.rotationCenterX
+    private val centerY = transform.rotationCenterY
+    private val dx = transform.dx
+    private val dy = transform.dy
+
+    fun sourceX(outputX: Float, outputY: Float): Float {
+        val relativeX = outputX - centerX
+        val relativeY = outputY - centerY
+        return scaledCosine * relativeX - scaledSine * relativeY + centerX + dx
+    }
+
+    fun sourceY(outputX: Float, outputY: Float): Float {
+        val relativeX = outputX - centerX
+        val relativeY = outputY - centerY
+        return scaledSine * relativeX + scaledCosine * relativeY + centerY + dy
+    }
+}
+
 class TransformedBitmapSampler {
     /** Stage 1 transforms map reference/output coordinates directly into candidate/source coordinates. */
     fun sample(
@@ -42,7 +72,18 @@ class TransformedBitmapSampler {
     }
 
     fun sampleAt(source: ArgbPixelSource, sourceX: Float, sourceY: Float): SampledSrgb? {
-        if (!isCovered(source, sourceX, sourceY)) return null
+        val destination = MutableSampledSrgb()
+        if (!sampleAt(source, sourceX, sourceY, destination)) return null
+        return SampledSrgb(destination.red, destination.green, destination.blue)
+    }
+
+    fun sampleAt(
+        source: ArgbPixelSource,
+        sourceX: Float,
+        sourceY: Float,
+        destination: MutableSampledSrgb
+    ): Boolean {
+        if (!isCovered(source, sourceX, sourceY)) return false
         val x0 = floor(sourceX).toInt()
         val y0 = floor(sourceY).toInt()
         val x1 = minOf(source.width - 1, x0 + 1)
@@ -53,11 +94,31 @@ class TransformedBitmapSampler {
         val topRight = source.argbAt(x1, y0)
         val bottomLeft = source.argbAt(x0, y1)
         val bottomRight = source.argbAt(x1, y1)
-        return SampledSrgb(
-            red = bilinearChannel(topLeft ushr 16, topRight ushr 16, bottomLeft ushr 16, bottomRight ushr 16, fractionX, fractionY),
-            green = bilinearChannel(topLeft ushr 8, topRight ushr 8, bottomLeft ushr 8, bottomRight ushr 8, fractionX, fractionY),
-            blue = bilinearChannel(topLeft, topRight, bottomLeft, bottomRight, fractionX, fractionY)
+        destination.red = bilinearChannel(
+            topLeft ushr 16,
+            topRight ushr 16,
+            bottomLeft ushr 16,
+            bottomRight ushr 16,
+            fractionX,
+            fractionY
         )
+        destination.green = bilinearChannel(
+            topLeft ushr 8,
+            topRight ushr 8,
+            bottomLeft ushr 8,
+            bottomRight ushr 8,
+            fractionX,
+            fractionY
+        )
+        destination.blue = bilinearChannel(
+            topLeft,
+            topRight,
+            bottomLeft,
+            bottomRight,
+            fractionX,
+            fractionY
+        )
+        return true
     }
 
     /** Uses the exact production bilinear coverage and interpolation semantics for patch evidence. */

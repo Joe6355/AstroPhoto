@@ -4,6 +4,11 @@ import com.example.astrophoto.processing.jpeg.v2.model.AdaptiveProcessingParamet
 import com.example.astrophoto.processing.jpeg.v2.model.LinearRgb
 import com.example.astrophoto.processing.jpeg.v2.model.QualityGateDecision
 import com.example.astrophoto.processing.jpeg.v2.model.ResultQualityMetrics
+import com.example.astrophoto.processing.jpeg.v2.model.SensorDefectFilteringReport
+import com.example.astrophoto.processing.jpeg.v2.model.SensorDefectRegionReport
+import com.example.astrophoto.processing.jpeg.v2.model.SensorDefectConstructionStageReport
+import com.example.astrophoto.processing.jpeg.v2.quality.ReferenceStarRetentionSource
+import com.example.astrophoto.processing.jpeg.v2.quality.ReferenceStarRetentionStage
 
 data class FrameRegistrationReport(
     val frameName: String,
@@ -82,6 +87,7 @@ data class ProcessingReport(
     val registrations: List<FrameRegistrationReport>,
     val frameWeights: List<FrameWeightReport>,
     val integration: IntegrationReport,
+    val sensorDefectFiltering: SensorDefectFilteringReport = SensorDefectFilteringReport(),
     val stage4Parameters: AdaptiveProcessingParameters,
     val referenceMetrics: ResultQualityMetrics,
     val cleanStackMetrics: ResultQualityMetrics,
@@ -301,6 +307,10 @@ data class ProcessingReport(
         append(",\n  \"frameWeights\": ")
         appendArray(frameWeights) { weightJson(it) }
         append(",\n  \"integration\": ${integrationJson(integration)},")
+        append(
+            "\n  \"sensorDefectFiltering\": " +
+                "${sensorDefectFilteringJson(sensorDefectFiltering)},"
+        )
         append("\n  \"stage4Parameters\": ${parametersJson(stage4Parameters)},")
         append("\n  \"referenceMetrics\": ${metricsJson(referenceMetrics)},")
         append("\n  \"cleanStackMetrics\": ${metricsJson(cleanStackMetrics)},")
@@ -322,6 +332,11 @@ data class ProcessingReport(
         property("referenceStarWidthBefore", referenceStarWidthBefore)
         property("referenceStarWidthAfter", referenceStarWidthAfter)
         property("referenceStarSmearRate", referenceStarSmearRate)
+        append("  \"referenceStarRetentionStages\": ")
+        appendArray(sensorDefectFiltering.referenceStarRetentionStages) {
+            referenceStarRetentionStageJson(it)
+        }
+        append(",\n")
         property("coverageMinimum", coverageMinimum)
         property("coverageMedian", coverageMedian)
         property("coverageMaximum", coverageMaximum)
@@ -497,7 +512,12 @@ data class ProcessingReport(
         append("  \"enhancedRejectionReasons\": ${stringArray(enhancedRejectionReasons)},\n")
         append("  \"enhancedValidationWarnings\": ${stringArray(enhancedValidationWarnings)},\n")
         append("  \"enhancedValidationMetrics\": ${floatMapJson(enhancedValidationMetrics)},\n")
+        property("cleanCandidateMasked", sensorDefectFiltering.cleanCandidateMasked)
+        property("processedCandidateMasked", sensorDefectFiltering.processedCandidateMasked)
+        property("selectedCandidateMasked", sensorDefectFiltering.selectedCandidateMasked)
         property("selectedCandidateType", selectedCandidateType)
+        nullableProperty("selectedCandidateHash", sensorDefectFiltering.selectedCandidateHash)
+        nullableProperty("publishedOutputHash", sensorDefectFiltering.publishedOutputHash)
         property("fallbackUsed", fallbackUsed)
         nullableProperty("fallbackReason", fallbackReason)
         nullableProperty("internalFallbackLabel", internalFallbackLabel)
@@ -537,7 +557,7 @@ data class ProcessingReport(
     }
 
     companion object {
-        const val SCHEMA_VERSION = "astrophoto.jpeg.processing/2"
+        const val SCHEMA_VERSION = "astrophoto.jpeg.processing/3"
 
         private fun registrationJson(value: FrameRegistrationReport): String = """{
             "frameName":"${escape(value.frameName)}","accepted":${value.accepted},
@@ -577,6 +597,141 @@ data class ProcessingReport(
             "estimatedWorkingMemoryBytes":${value.estimatedWorkingMemoryBytes},
             "outputAllocationBytes":${value.outputAllocationBytes},"diskCacheBytes":${value.diskCacheBytes},
             "robustModeReason":"${escape(value.robustModeReason)}"
+        }""".trimIndent().replace("\n", "")
+
+        private fun sensorDefectFilteringJson(
+            value: SensorDefectFilteringReport
+        ): String = """{
+            "schemaVersion":"astrophoto.jpeg.sensor-defect-filtering/1",
+            "maskEnabled":${value.maskEnabled},
+            "maskApplied":${value.filteringAppliedToFinalResult},
+            "sampleLevelFilteringApplied":${value.sampleLevelFilteringApplied},
+            "unmaskedRetryUsed":${value.unmaskedRetryUsed},
+            "rejectionReason":${nullableString(value.fallbackOrRejectionReason)},
+            "regionCount":${value.regionCount},
+            "regions":${value.regions.joinToString(prefix = "[", postfix = "]") {
+                sensorDefectRegionJson(it)
+            }},
+            "sourcePixelCount":${value.maskedSourcePixelCount},
+            "sourceMaskedFraction":${number(value.maskedSourceFraction)},
+            "excludedSampleCount":${value.excludedSampleCount},
+            "affectedOutputPixelCount":${value.affectedOutputPixelCount},
+            "expectedUnmaskedWeight":${number(value.expectedUnmaskedWeight)},
+            "minimumValidWeight":${number(value.minimumValidWeight)},
+            "medianValidWeight":${number(value.medianValidWeight)},
+            "maximumValidWeight":${number(value.maximumValidWeight)},
+            "minimumValidWeightRatio":${number(value.minimumValidWeightRatio)},
+            "medianValidWeightRatio":${number(value.medianValidWeightRatio)},
+            "maximumValidWeightRatio":${number(value.maximumValidWeightRatio)},
+            "insufficientCoveragePixelCount":${value.insufficientCoveragePixelCount},
+            "insufficientCoverageFraction":${number(value.insufficientCoverageFraction)},
+            "minimumRemainingSampleCount":${value.minimumRemainingSampleCount},
+            "medianRemainingSampleCount":${value.medianRemainingSampleCount},
+            "maximumRemainingSampleCount":${value.maximumRemainingSampleCount},
+            "originalFrameIndices":${value.originalFrameIndices.joinToString(
+                prefix = "[",
+                postfix = "]"
+            )},
+            "maskConstructionDurationMillis":${value.maskConstructionDurationMillis},
+            "integrationDurationMillis":${value.integrationDurationMillis},
+            "cleanCandidateMasked":${value.cleanCandidateMasked},
+            "processedCandidateMasked":${value.processedCandidateMasked},
+            "selectedCandidateMasked":${value.selectedCandidateMasked},
+            "selectedCandidateHash":${nullableString(value.selectedCandidateHash)},
+            "publishedOutputHash":${nullableString(value.publishedOutputHash)},
+            "starPreservationMaskAware":${value.starPreservationMaskAware},
+            "starPreservationMaskedReferenceSamplesSkipped":${value.starPreservationMaskedReferenceSamplesSkipped},
+            "starPreservationAffectedOutputPixels":${value.starPreservationAffectedOutputPixelCount},
+            "starPreservationReason":${nullableString(value.starPreservationReason)},
+            "compositionMaskAware":${value.compositionMaskAware},
+            "compositionMaskedReferenceSamplesSkipped":${value.compositionMaskedReferenceSamplesSkipped},
+            "compositionAffectedOutputPixels":${value.compositionAffectedOutputPixelCount},
+            "compositionMeanOriginalAlpha":${number(value.compositionMeanOriginalAlpha)},
+            "compositionReason":${nullableString(value.compositionReason)},
+            "compositionSafeBehavior":${nullableString(value.compositionSafeBehavior)},
+            "observationFrameCount":${value.observationFrameCount},
+            "observationCandidateCount":${value.observationCandidateCount},
+            "observationProcessedPixelCount":${value.observationProcessedPixelCount},
+            "additionalImageDecodeCount":${value.additionalImageDecodeCount},
+            "additionalFullFrameScanCount":${value.additionalFullFrameScanCount},
+            "candidateMatchingAnchorVisitCount":${value.candidateMatchingAnchorVisitCount},
+            "candidateMatchingCandidateVisitCount":${value.candidateMatchingCandidateVisitCount},
+            "candidateMatchingDistanceComparisonCount":${value.candidateMatchingDistanceComparisonCount},
+            "candidateMatchingIdentityLookupCount":${value.candidateMatchingIdentityLookupCount},
+            "constructionStages":${value.constructionStages.joinToString(
+                prefix = "[",
+                postfix = "]"
+            ) { sensorDefectConstructionStageJson(it) }}
+        }""".trimIndent().replace("\n", "")
+
+        private fun sensorDefectRegionJson(value: SensorDefectRegionReport): String = """{
+            "stableRegionId":"${escape(value.stableRegionId)}",
+            "footprintPixelCount":${value.footprintPixelCount},
+            "recurrence":${value.recurrence},
+            "totalFrameCount":${value.totalFrameCount},
+            "skySpaceSupport":${value.skySpaceSupport},
+            "confidence":${number(value.confidence)},
+            "classificationReason":"${escape(value.classificationReason)}"
+        }""".trimIndent().replace("\n", "")
+
+        private fun sensorDefectConstructionStageJson(
+            value: SensorDefectConstructionStageReport
+        ): String = """{
+            "stage":"${escape(value.stage)}",
+            "elapsedNanos":${value.elapsedNanos},
+            "inputCount":${value.inputCount},
+            "outputCount":${value.outputCount},
+            "processedUnitCount":${value.processedUnitCount},
+            "estimatedAllocatedBytes":${value.estimatedAllocatedBytes}
+        }""".trimIndent().replace("\n", "")
+
+        private fun referenceStarRetentionStageJson(
+            value: ReferenceStarRetentionStage
+        ): String = """{
+            "stage":"${escape(value.stage)}",
+            "measurementBasis":"${escape(value.measurementBasis)}",
+            "retainedCount":${value.metrics.retainedReferenceStarCount},
+            "evaluatedCount":${value.metrics.evaluatedReferenceStarCount},
+            "retentionRatio":${number(value.metrics.retentionRatio)},
+            "sources":${value.sources.joinToString(prefix = "[", postfix = "]") {
+                referenceStarRetentionSourceJson(it)
+            }}
+        }""".trimIndent().replace("\n", "")
+
+        private fun referenceStarRetentionSourceJson(
+            value: ReferenceStarRetentionSource
+        ): String = """{
+            "sourceId":"${escape(value.sourceId)}",
+            "sourceIndex":${value.sourceIndex},
+            "referenceX":${number(value.referenceX)},
+            "referenceY":${number(value.referenceY)},
+            "outputX":${number(value.referenceX)},
+            "outputY":${number(value.referenceY)},
+            "sourceFrameX":${number(value.referenceX)},
+            "sourceFrameY":${number(value.referenceY)},
+            "expectedWidth":${number(value.expectedWidth)},
+            "retained":${value.retained},
+            "failureReasons":${stringArray(value.failureReasons)},
+            "beforePresent":${value.beforePresent},
+            "beforeContrast":${number(value.beforeContrast)},
+            "beforeCentroidX":${number(value.beforeCentroidX)},
+            "beforeCentroidY":${number(value.beforeCentroidY)},
+            "beforeWidth":${number(value.beforeWidth)},
+            "beforeEllipticity":${number(value.beforeEllipticity)},
+            "afterPresent":${value.afterPresent},
+            "afterContrast":${number(value.afterContrast)},
+            "afterCentroidX":${number(value.afterCentroidX)},
+            "afterCentroidY":${number(value.afterCentroidY)},
+            "afterWidth":${number(value.afterWidth)},
+            "afterEllipticity":${number(value.afterEllipticity)},
+            "centroidShift":${number(value.centroidShift)},
+            "intersectsSourceSensorMask":${value.intersectsSourceSensorMask},
+            "intersectsAffectedOutputLineage":${value.intersectsAffectedOutputLineage},
+            "intersectsStarPreservationPatch":${value.intersectsStarPreservationPatch},
+            "effectiveSkyAlpha":${number(value.effectiveSkyAlpha)},
+            "referenceContribution":${number(value.referenceContribution)},
+            "validContributingFrameCount":${value.validContributingFrameCount},
+            "validContributingFrameWeight":${number(value.validContributingFrameWeight)}
         }""".trimIndent().replace("\n", "")
 
         private fun parametersJson(value: AdaptiveProcessingParameters): String = """{

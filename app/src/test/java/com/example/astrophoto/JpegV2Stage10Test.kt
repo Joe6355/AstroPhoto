@@ -330,7 +330,8 @@ class JpegV2Stage10Test {
         assertTrue(profile.contains("acceptedProfileFrames.removeAll { !it.registration.isReliable }"))
         assertTrue(profile.contains("val cachedFrames = fullResolutionPreparation.cachedFrames"))
         assertTrue(profile.contains("acceptedProfileFrames += fullResolutionPreparation.acceptedFrames"))
-        assertTrue(profile.contains("frames = cachedFrames.map"))
+        assertTrue(profile.contains("val integrationFrames = cachedFrames.map"))
+        assertTrue(profile.contains("frames = integrationFrames"))
         assertTrue(profile.contains("modelGuidedRegistrations"))
         assertFalse(profile.contains("ManualStackingSource") && profile.contains("registerAutomaticWithPrior("))
     }

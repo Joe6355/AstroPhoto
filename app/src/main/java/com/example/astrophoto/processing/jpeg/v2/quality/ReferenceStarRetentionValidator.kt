@@ -30,7 +30,53 @@ data class ReferenceStarRetentionResult(
     val accepted: Boolean,
     val metrics: ReferenceStarRetentionMetrics,
     val hardFailureReasons: List<String>,
-    val warningReasons: List<String>
+    val warningReasons: List<String>,
+    val sources: List<ReferenceStarRetentionSource> = emptyList()
+)
+
+data class ReferenceStarRetentionSource(
+    val sourceId: String,
+    val sourceIndex: Int,
+    val referenceX: Float,
+    val referenceY: Float,
+    val expectedWidth: Float,
+    val retained: Boolean,
+    val failureReasons: List<String>,
+    val beforePresent: Boolean,
+    val beforeContrast: Float,
+    val beforeCentroidX: Float,
+    val beforeCentroidY: Float,
+    val beforeWidth: Float,
+    val beforeEllipticity: Float,
+    val afterPresent: Boolean,
+    val afterContrast: Float,
+    val afterCentroidX: Float,
+    val afterCentroidY: Float,
+    val afterWidth: Float,
+    val afterEllipticity: Float,
+    val centroidShift: Float,
+    val intersectsSourceSensorMask: Boolean = false,
+    val intersectsAffectedOutputLineage: Boolean = false,
+    val intersectsStarPreservationPatch: Boolean = false,
+    val effectiveSkyAlpha: Float = 0f,
+    val referenceContribution: Float = 1f,
+    val validContributingFrameCount: Int = 0,
+    val validContributingFrameWeight: Float = 0f
+)
+
+data class ReferenceStarRetentionStage(
+    val stage: String,
+    val metrics: ReferenceStarRetentionMetrics,
+    val sources: List<ReferenceStarRetentionSource>,
+    val measurementBasis: String = "direct_argb_measurement"
+)
+
+data class ReferenceStarRetentionEvidence(
+    val intersectsSourceSensorMask: Boolean,
+    val intersectsAffectedOutputLineage: Boolean,
+    val effectiveSkyAlpha: Float,
+    val validContributingFrameCount: Int,
+    val validContributingFrameWeight: Float
 )
 
 class ReferenceStarRetentionValidator {
@@ -62,19 +108,14 @@ class ReferenceStarRetentionValidator {
         if (reference.width != cleanStack.width || reference.height != cleanStack.height) {
             return failure(referenceStars.size, "reference_star_dimensions_changed")
         }
-        val measurements = referenceStars.mapNotNull { star ->
-            val before = measure(reference, star.x, star.y, star.width) ?: return@mapNotNull null
+        val measurements = referenceStars.mapIndexedNotNull { sourceIndex, star ->
+            val before = measure(reference, star.x, star.y, star.width) ?: return@mapIndexedNotNull null
             val after = measure(cleanStack, star.x, star.y, star.width) ?: StarMeasurement.MISSING
-            StarRetentionMeasurement(before, after)
+            StarRetentionMeasurement(sourceIndex, star, before, after)
         }
         val evaluated = measurements.size
-        val retained = measurements.count { value ->
-            value.after.present &&
-                value.after.contrast >= maxOf(MIN_ABSOLUTE_CONTRAST, value.before.contrast * MIN_STAR_CONTRAST_RATIO) &&
-                value.after.centroidShiftFrom(value.before) <= MAX_RETAINED_CENTROID_SHIFT &&
-                value.after.width <= value.before.width * MAX_RETAINED_WIDTH_FACTOR &&
-                !value.after.lineLike
-        }
+        val sourceResults = measurements.map(StarRetentionMeasurement::toSourceResult)
+        val retained = sourceResults.count(ReferenceStarRetentionSource::retained)
         val retentionRatio = retained.toFloat() / evaluated.coerceAtLeast(1)
         val contrastBefore = median(measurements.map { it.before.contrast })
         val contrastAfter = median(measurements.map { it.after.contrast })
@@ -110,13 +151,58 @@ class ReferenceStarRetentionValidator {
             if (retentionRatio in MIN_RETENTION_RATIO..<WARNING_RETENTION_RATIO) add("reference_star_retention_near_limit")
             if (contrastRatio in MIN_MEDIAN_CONTRAST_RATIO..<WARNING_CONTRAST_RATIO) add("reference_star_contrast_near_limit")
         }
-        return ReferenceStarRetentionResult(hard.isEmpty(), metrics, hard, warnings)
+        return ReferenceStarRetentionResult(hard.isEmpty(), metrics, hard, warnings, sourceResults)
     }
 
     private data class StarRetentionMeasurement(
+        val sourceIndex: Int,
+        val star: DetectedStar,
         val before: StarMeasurement,
         val after: StarMeasurement
-    )
+    ) {
+        fun toSourceResult(): ReferenceStarRetentionSource {
+            val centroidShift = after.centroidShiftFrom(before)
+            val failures = buildList {
+                if (!after.present) add("missing")
+                if (
+                    after.present &&
+                    after.contrast < maxOf(
+                        MIN_ABSOLUTE_CONTRAST,
+                        before.contrast * MIN_STAR_CONTRAST_RATIO
+                    )
+                ) add("contrast_below_minimum")
+                if (centroidShift > MAX_RETAINED_CENTROID_SHIFT) {
+                    add("centroid_shift_above_0_75_px")
+                }
+                if (after.present && after.width > before.width * MAX_RETAINED_WIDTH_FACTOR) {
+                    add("width_above_1_50x")
+                }
+                if (after.lineLike) add("line_like_ellipticity")
+            }
+            return ReferenceStarRetentionSource(
+                sourceId = "reference-source-${(sourceIndex + 1).toString().padStart(3, '0')}",
+                sourceIndex = sourceIndex,
+                referenceX = star.x,
+                referenceY = star.y,
+                expectedWidth = star.width,
+                retained = failures.isEmpty(),
+                failureReasons = failures,
+                beforePresent = before.present,
+                beforeContrast = before.contrast,
+                beforeCentroidX = before.centroidX,
+                beforeCentroidY = before.centroidY,
+                beforeWidth = before.width,
+                beforeEllipticity = before.ellipticity,
+                afterPresent = after.present,
+                afterContrast = after.contrast,
+                afterCentroidX = after.centroidX,
+                afterCentroidY = after.centroidY,
+                afterWidth = after.width,
+                afterEllipticity = after.ellipticity,
+                centroidShift = centroidShift
+            )
+        }
+    }
 
     private data class StarMeasurement(
         val present: Boolean,

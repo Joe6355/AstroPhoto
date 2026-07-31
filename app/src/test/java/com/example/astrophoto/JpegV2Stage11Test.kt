@@ -258,7 +258,7 @@ class JpegV2Stage11Test {
         val provisional = profile.indexOf("val provisionalAcceptedFrames")
         val refinement = profile.indexOf("prepareAndRefineFullResolutionFrames(")
         val weights = profile.indexOf("FrameWeightCalculator().calculate(")
-        val integration = profile.indexOf("LinearWeightedIntegrator().integrate(")
+        val integration = profile.indexOf("runAutomaticSensorMaskedIntegration(")
         assertTrue(provisional in 0 until refinement)
         assertTrue(refinement in 0 until weights)
         assertTrue(weights in 0 until integration)
@@ -266,6 +266,7 @@ class JpegV2Stage11Test {
         assertTrue(profile.contains("val cachedFrames = fullResolutionPreparation.cachedFrames"))
         assertTrue(profile.contains("transform = accepted.registration"))
         assertFalse(profile.substring(refinement, integration).contains("scaledToFullResolution("))
+        assertTrue(source.contains("LinearWeightedIntegrator().integrate("))
         assertTrue(source.contains("cached.copy(\n                    referenceToSourceTransform = centroidResult.refinedTransform"))
     }
 

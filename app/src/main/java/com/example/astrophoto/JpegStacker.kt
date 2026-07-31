@@ -58,6 +58,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.nio.file.Files
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -72,11 +73,18 @@ import com.example.astrophoto.ui.theme.AstroColors
 import com.example.astrophoto.processing.jpeg.v2.analysis.JpegFrameAnalyzer
 import com.example.astrophoto.processing.jpeg.v2.analysis.ReferenceFrameSelector
 import com.example.astrophoto.processing.jpeg.v2.artifacts.ArtifactFrameObservation
+import com.example.astrophoto.processing.jpeg.v2.artifacts.AutomaticSensorDefectMaskDiagnostics
+import com.example.astrophoto.processing.jpeg.v2.artifacts.AutomaticSensorDefectMaskStageDiagnostics
 import com.example.astrophoto.processing.jpeg.v2.artifacts.PersistentSensorCandidateDetector
+import com.example.astrophoto.processing.jpeg.v2.artifacts.PersistentSensorFrameObservation
+import com.example.astrophoto.processing.jpeg.v2.artifacts.SensorDefectMask
 import com.example.astrophoto.processing.jpeg.v2.artifacts.StaticArtifactAnalyzer
 import com.example.astrophoto.processing.jpeg.v2.artifacts.StaticArtifactMask
+import com.example.astrophoto.processing.jpeg.v2.artifacts.buildAutomaticSensorDefectMask
 import com.example.astrophoto.processing.jpeg.v2.composition.MaskFeathering
+import com.example.astrophoto.processing.jpeg.v2.composition.FileBackedCompositeResult
 import com.example.astrophoto.processing.jpeg.v2.composition.FileBackedSkyForegroundComposer
+import com.example.astrophoto.processing.jpeg.v2.composition.ReferenceStarSignalPreserver
 import com.example.astrophoto.processing.jpeg.v2.completion.AutomaticProfileCompletionCoordinator
 import com.example.astrophoto.processing.jpeg.v2.completion.POST_COMPLETION_WARNING
 import com.example.astrophoto.processing.jpeg.v2.completion.PostCompletionEvent
@@ -95,6 +103,7 @@ import com.example.astrophoto.processing.jpeg.v2.diagnostics.completeJournalWith
 import com.example.astrophoto.processing.jpeg.v2.enhancement.EnhancedAncillaryOutcome
 import com.example.astrophoto.processing.jpeg.v2.enhancement.EnhancedGlobalToneProcessor
 import com.example.astrophoto.processing.jpeg.v2.enhancement.GlobalToneTransform
+import com.example.astrophoto.processing.jpeg.v2.enhancement.fileBackedPixelHash
 import com.example.astrophoto.processing.jpeg.v2.enhancement.publishOptionalEnhanced
 import com.example.astrophoto.processing.jpeg.v2.integration.FrameWeightCalculator
 import com.example.astrophoto.processing.jpeg.v2.integration.FrameWeightInput
@@ -105,10 +114,15 @@ import com.example.astrophoto.processing.jpeg.v2.masking.SkyMaskEstimator
 import com.example.astrophoto.processing.jpeg.v2.masking.SkyMaskRefiner
 import com.example.astrophoto.processing.jpeg.v2.model.DetectedStar as V2DetectedStar
 import com.example.astrophoto.processing.jpeg.v2.model.AdaptiveProcessingDiagnostics
+import com.example.astrophoto.processing.jpeg.v2.model.CompositeDiagnostics
 import com.example.astrophoto.processing.jpeg.v2.model.FrameAnalysis
+import com.example.astrophoto.processing.jpeg.v2.model.FrameWeight
+import com.example.astrophoto.processing.jpeg.v2.model.IntegrationDiagnostics
 import com.example.astrophoto.processing.jpeg.v2.model.QualityGateDecision
 import com.example.astrophoto.processing.jpeg.v2.model.RegistrationResult
 import com.example.astrophoto.processing.jpeg.v2.model.ResultCandidateType
+import com.example.astrophoto.processing.jpeg.v2.model.SensorDefectFilteringReport
+import com.example.astrophoto.processing.jpeg.v2.model.SensorDefectConstructionStageReport
 import com.example.astrophoto.processing.jpeg.v2.model.StoredResultCandidate
 import com.example.astrophoto.processing.jpeg.v2.model.SkyMask
 import com.example.astrophoto.processing.jpeg.v2.model.SkyMaskResult
@@ -121,6 +135,9 @@ import com.example.astrophoto.processing.jpeg.v2.quality.CleanStackExecutionPoli
 import com.example.astrophoto.processing.jpeg.v2.quality.CoverageUniformityValidator
 import com.example.astrophoto.processing.jpeg.v2.quality.LineArtifactDetector
 import com.example.astrophoto.processing.jpeg.v2.quality.ReferenceStarRetentionValidator
+import com.example.astrophoto.processing.jpeg.v2.quality.ReferenceStarRetentionEvidence
+import com.example.astrophoto.processing.jpeg.v2.quality.ReferenceStarRetentionResult
+import com.example.astrophoto.processing.jpeg.v2.quality.ReferenceStarRetentionStage
 import com.example.astrophoto.processing.jpeg.v2.quality.FileBackedResultQualityAnalyzer
 import com.example.astrophoto.processing.jpeg.v2.quality.ResultSelectionPolicy
 import com.example.astrophoto.processing.jpeg.v2.registration.OrderedRegistration
@@ -146,6 +163,7 @@ import com.example.astrophoto.processing.jpeg.v2.sampling.SamplingFidelityResult
 import com.example.astrophoto.processing.jpeg.v2.memory.ImageAllocationEstimate
 import com.example.astrophoto.processing.jpeg.v2.memory.JpegMemoryBudget
 import com.example.astrophoto.processing.jpeg.v2.memory.PipelineMemoryTracker
+import com.example.astrophoto.processing.jpeg.v2.storage.AlphaPixelSource
 import com.example.astrophoto.processing.jpeg.v2.storage.FileBackedFloatPlane
 import com.example.astrophoto.processing.jpeg.v2.storage.FileBackedFloatPlaneReader
 import com.example.astrophoto.processing.jpeg.v2.storage.FileBackedImage
@@ -168,6 +186,12 @@ internal data class JpegProfileOutputPlan(
     val outcome: JpegProfileProcessingOutcome,
     val filePrefix: String
 )
+
+internal fun shouldRetryAutomaticIntegrationWithoutMask(
+    report: SensorDefectFilteringReport
+): Boolean =
+    report.sampleLevelFilteringApplied &&
+        report.insufficientCoveragePixelCount > 0
 
 internal fun requireMinimumRegisteredFrames(
     acceptedFrames: Int,
@@ -1305,6 +1329,7 @@ class JpegStacker(private val context: Context) {
             val analysisHeight = maxOf(1, (commonHeight * analysisScale).roundToInt())
             val skyMaskEstimator = SkyMaskEstimator()
             val frameAnalyzer = JpegFrameAnalyzer()
+            val persistentSensorDetector = PersistentSensorCandidateDetector()
             val frameAnalysisStarted = System.nanoTime()
             val rawAnalyzedFrames = cappedFrames.map { frame ->
                 val analyzed = runCatching {
@@ -1321,7 +1346,14 @@ class JpegStacker(private val context: Context) {
                                 image,
                                 skyMask
                             ),
-                            skyMask = skyMask
+                            skyMask = skyMask,
+                            persistentSensorObservation = persistentSensorDetector.observe(
+                                frameId = frame.key,
+                                originalCaptureIndex =
+                                    captureIndexByFrameKey.getValue(frame.key),
+                                image = image,
+                                skyMask = skyMask.mask
+                            )
                         )
                     } finally {
                         sample.recycle()
@@ -1338,6 +1370,13 @@ class JpegStacker(private val context: Context) {
                             SkyMask.empty(analysisWidth, analysisHeight),
                             confidence = 0f,
                             usedFallback = true
+                        ),
+                        persistentSensorObservation = PersistentSensorFrameObservation(
+                            frameId = frame.key,
+                            originalCaptureIndex = captureIndexByFrameKey.getValue(frame.key),
+                            width = analysisWidth,
+                            height = analysisHeight,
+                            candidates = emptyList()
                         )
                     )
                 }
@@ -1462,6 +1501,36 @@ class JpegStacker(private val context: Context) {
                     imageHeight = selectedReference.analysis.height
                 )
                 sequenceDiagnostics = analysisRegistration
+                val sensorMaskConstructionStarted = System.nanoTime()
+                val automaticSensorMaskResult = buildAutomaticSensorDefectMask(
+                    observations = rawAnalyzedFrames.map {
+                        it.persistentSensorObservation
+                    },
+                    outputWidth = targetWidth,
+                    outputHeight = targetHeight,
+                    predictedTransform = { originalCaptureIndex ->
+                        analysisRegistration.model.predictedTransform(originalCaptureIndex)
+                    }
+                )
+                val automaticSensorMask = automaticSensorMaskResult.mask
+                val sensorMaskConstructionDurationMillis =
+                    (System.nanoTime() - sensorMaskConstructionStarted) / 1_000_000L
+                pipelineTiming.record(
+                    "sensor_defect_mask_construction",
+                    sensorMaskConstructionDurationMillis
+                )
+                Log.i(
+                    PROFILE_REGISTRATION_TAG,
+                    "sensorDefectMaskEnabled=${automaticSensorMask.enabled} " +
+                        "sensorDefectRegions=${automaticSensorMask.regions.size} " +
+                        "sensorDefectSourcePixels=${automaticSensorMask.maskedPixelCount} " +
+                        "sensorDefectSourceFraction=" +
+                        formatMetric(automaticSensorMask.maskedSourceFraction) +
+                        " sensorDefectMaskReason=" +
+                        automaticSensorMask.rejectionReason.orEmpty() +
+                        " sensorDefectOriginalIndices=" +
+                        automaticSensorMaskResult.originalFrameIndices.joinToString()
+                )
                 val scaleX = targetWidth.toFloat() /
                     selectedReference.analysis.width.coerceAtLeast(1)
                 val scaleY = targetHeight.toFloat() /
@@ -1673,16 +1742,6 @@ class JpegStacker(private val context: Context) {
                 )
                 memoryBudget.requireAllocation(integrationMaskEstimate)
                 memoryTracker.recordBoundary("integration-sky-mask", integrationMaskEstimate.bytes, 0)
-                val stackedWriter = candidateStore.createTemporaryWriter(
-                    "integrated-sky",
-                    targetWidth,
-                    targetHeight
-                )
-                val coverageWriter = candidateStore.createFloatPlaneWriter(
-                    "valid-coverage",
-                    targetWidth,
-                    targetHeight
-                )
                 require(memoryBudget.safeWorkingBudgetBytes >= MIN_PROFILE_WORKING_MEMORY_BYTES) {
                     "Недостаточно безопасной рабочей памяти для JPEG-интеграции"
                 }
@@ -1690,67 +1749,45 @@ class JpegStacker(private val context: Context) {
                     memoryBudget.safeWorkingBudgetBytes,
                     MAX_PROFILE_WORKING_MEMORY_BYTES
                 )
-                var integrationFinished = false
-                val integrationDiagnostics = try {
-                    LinearWeightedIntegrator().integrate(
-                        outputWidth = targetWidth,
-                        outputHeight = targetHeight,
-                        frames = cachedFrames.map { (accepted, cached) ->
-                            check(
-                                cached.referenceToSourceTransform ==
-                                    accepted.registration.referenceToSourceTransform()
-                            ) { "Cached transform metadata does not match refined registration" }
-                            WeightedIntegrationFrame(
-                                id = accepted.analysis.id,
-                                source = cached,
-                                transform = accepted.registration,
-                                normalizedWeight = checkNotNull(
-                                    weightsById[accepted.analysis.id]
-                                ).normalizedWeight
-                            )
-                        },
-                        maximumWorkingMemoryBytes = maximumWorkingMemory,
-                        openSource = { cached -> FileBackedArgbPixelSource(cached) },
-                        allowRobustClipping = false,
-                        includeOutputPixel = { x, y -> initialFullResolutionSkyMask.contains(x, y) },
-                        writeTile = { tile, pixels ->
-                            stackedWriter.writeTile(
-                                tile.left,
-                                tile.top,
-                                tile.width,
-                                tile.height,
-                                pixels
-                            )
-                        },
-                        writeCoverageTile = { tile, coverage ->
-                            coverageWriter.writeTile(
-                                tile.left,
-                                tile.top,
-                                tile.width,
-                                tile.height,
-                                coverage
-                            )
-                        },
-                        onTileCompleted = { tile ->
-                            withContext(Dispatchers.Main.immediate) {
-                                onProgress(
-                                    "Processing tile ${tile.index + 1} of ${tile.total}",
-                                    tile.index + 1,
-                                    tile.total
-                                )
-                            }
-                        }
-                    ).also { integrationFinished = true }
-                } finally {
-                    if (!integrationFinished) {
-                        runCatching { stackedWriter.close() }
-                        runCatching { coverageWriter.close() }
-                    }
+                val integrationFrames = cachedFrames.map { (accepted, cached) ->
+                    check(
+                        cached.referenceToSourceTransform ==
+                            accepted.registration.referenceToSourceTransform()
+                    ) { "Cached transform metadata does not match refined registration" }
+                    WeightedIntegrationFrame(
+                        id = accepted.analysis.id,
+                        source = cached,
+                        transform = accepted.registration,
+                        normalizedWeight = checkNotNull(
+                            weightsById[accepted.analysis.id]
+                        ).normalizedWeight
+                    )
                 }
-                val stackedSky = stackedWriter.finish()
-                val validCoverage = coverageWriter.finish()
+                val integrationRun = runAutomaticSensorMaskedIntegration(
+                    targetWidth = targetWidth,
+                    targetHeight = targetHeight,
+                    frames = integrationFrames,
+                    maximumWorkingMemory = maximumWorkingMemory,
+                    sensorDefectMask = automaticSensorMask,
+                    sensorDefectOriginalFrameIndices =
+                        automaticSensorMaskResult.originalFrameIndices,
+                    sensorMaskConstructionDurationMillis =
+                        sensorMaskConstructionDurationMillis,
+                    integrationSkyMask = initialFullResolutionSkyMask,
+                    candidateStore = candidateStore,
+                    onProgress = onProgress
+                )
+                val integrationDiagnostics = integrationRun.diagnostics
+                val stackedSky = integrationRun.stackedSky
+                val validCoverage = integrationRun.validCoverage
+                val sensorDefectAffectedOutput =
+                    integrationRun.sensorDefectAffectedOutput
+                val sensorDefectFilteringReport = integrationRun.sensorDefectFiltering
+                val activeAutomaticSensorMask = automaticSensorMask.takeIf {
+                    sensorDefectFilteringReport.filteringAppliedToFinalResult
+                }
                 cachedFrames.forEach { (_, cached) -> cached.file.delete() }
-                pipelineTiming.record("integration", integrationDiagnostics.processingDurationMillis)
+                pipelineTiming.record("integration", integrationRun.totalDurationMillis)
                 memoryTracker.recordBoundary(
                     "integration",
                     integrationDiagnostics.estimatedPeakWorkingMemoryBytes,
@@ -1761,17 +1798,14 @@ class JpegStacker(private val context: Context) {
                     integrationDiagnostics.tileWidth,
                     integrationDiagnostics.tileHeight
                 )
-                Log.i(
-                    PROFILE_REGISTRATION_TAG,
-                    "preset=${profile.name} reference=${selectedReference.frame.fileName} " +
-                        "inputResolution=${commonWidth}x$commonHeight " +
-                        "outputResolution=${integrationDiagnostics.outputWidth}x${integrationDiagnostics.outputHeight} " +
-                        "tileSize=${integrationDiagnostics.tileWidth}x${integrationDiagnostics.tileHeight} " +
-                        "acceptedFrames=${integrationDiagnostics.acceptedFrames} rejectedFrames=$alignmentRejected " +
-                        "integrationMode=${integrationDiagnostics.mode} robustMode=${integrationDiagnostics.robustModeEnabled} " +
-                        "validCoverage=${formatMetric(integrationDiagnostics.validCoveragePercent)} " +
-                        "estimatedPeakWorkingMemory=${integrationDiagnostics.estimatedPeakWorkingMemoryBytes} " +
-                        "resolutionChanged=${integrationDiagnostics.resolutionChanged}"
+                logAutomaticIntegration(
+                    profile,
+                    selectedReference.frame.fileName,
+                    commonWidth,
+                    commonHeight,
+                    alignmentRejected,
+                    integrationDiagnostics,
+                    sensorDefectFilteringReport
                 )
                 journalRunId?.let { runJournal.update(it, "integration_completed") }
                 currentStage = "Refining sky mask"
@@ -1800,12 +1834,15 @@ class JpegStacker(private val context: Context) {
                     memoryBudget = memoryBudget,
                     memoryTracker = memoryTracker
                 )
-                val starPreservedStackedSky = preserveConfirmedStarSignal(
-                    stackedSky,
-                    maskStage.referenceCandidate,
-                    fullResolutionStars,
-                    candidateStore
+                val starPreservation = preserveAutomaticReferenceStars(
+                    stackedSky = stackedSky,
+                    reference = maskStage.referenceCandidate,
+                    stars = fullResolutionStars,
+                    store = candidateStore,
+                    sensorDefectMask = activeAutomaticSensorMask,
+                    sensorDefectAffectedOutput = sensorDefectAffectedOutput
                 )
+                val starPreservedStackedSky = starPreservation.image
                 candidateStore.deleteTemporary(stackedSky)
                 pipelineTiming.record(
                     "sky_masking",
@@ -1817,30 +1854,18 @@ class JpegStacker(private val context: Context) {
                 withContext(Dispatchers.Main.immediate) {
                     onProgress("Combining sky and foreground", 2, 3)
                 }
-                val cleanWriter = candidateStore.createWriter(
-                    ResultCandidateType.CLEAN_STACK,
-                    targetWidth,
-                    targetHeight
+                val composite = composeCleanCandidate(
+                    stackedSky = starPreservedStackedSky,
+                    reference = maskStage.referenceCandidate,
+                    featheredSkyMask = maskStage.featheredSkyMask,
+                    validCoverage = validCoverage,
+                    sensorDefectAffectedOutput = sensorDefectAffectedOutput,
+                    sensorDefectMask = activeAutomaticSensorMask,
+                    candidateStore = candidateStore,
+                    memoryBudget = memoryBudget,
+                    memoryTracker = memoryTracker
                 )
-                val effectiveAlphaWriter = candidateStore.createFloatPlaneWriter(
-                    "effective-sky",
-                    targetWidth,
-                    targetHeight
-                )
-                val composite = FileBackedFloatPlaneReader(maskStage.featheredSkyMask).use { feathered ->
-                    FileBackedFloatPlaneReader(validCoverage).use { coverage ->
-                        FileBackedSkyForegroundComposer().compose(
-                            stackedSky = starPreservedStackedSky,
-                            reference = maskStage.referenceCandidate,
-                            featheredSkyMask = feathered,
-                            validCoverage = coverage,
-                            output = cleanWriter,
-                            effectiveAlphaOutput = effectiveAlphaWriter,
-                            memoryBudget = memoryBudget,
-                            memoryTracker = memoryTracker
-                        )
-                    }
-                }
+                sensorDefectAffectedOutput?.let(candidateStore::deleteTemporary)
                 val cleanStackHandle = candidateStore.register(
                     ResultCandidateType.CLEAN_STACK,
                     composite.image
@@ -2011,6 +2036,21 @@ class JpegStacker(private val context: Context) {
                     processedDecision,
                     cleanStackDecision
                 )
+                val finalizedSensorDefectFilteringReport = candidateMaskLineage(
+                    filtering = sensorDefectFilteringReport,
+                    maskDiagnostics = automaticSensorMaskResult.diagnostics,
+                    selected = finalSelection.selected,
+                    reference = referenceCandidate,
+                    clean = cleanStackCandidate,
+                    processed = processedCandidate,
+                    starPreservation = starPreservation,
+                    composition = composite.diagnostics,
+                    stars = fullResolutionStars,
+                    cleanRetention = retentionValidation,
+                    effectiveSkyAlpha = effectiveSkyAlpha,
+                    integrationFrames = integrationFrames,
+                    sensorDefectMask = activeAutomaticSensorMask
+                )
                 val outputPlan = jpegProfileOutputPlan(
                     profile,
                     finalSelection.selected.type,
@@ -2043,17 +2083,11 @@ class JpegStacker(private val context: Context) {
                 if (alignmentRejected > 0) {
                     warnings += "Кадров отклонено из-за ненадёжной регистрации: $alignmentRejected"
                 }
-                Log.i(
-                    PROFILE_REGISTRATION_TAG,
-                    "preset=${profile.name} reference=${selectedReference.frame.fileName} " +
-                        "refinedSkyMaskConfidence=${formatMetric(maskStage.confidence)} " +
-                        "initialSkyRatio=${formatMetric(maskStage.initialSkyRatio)} " +
-                        "refinedSkyRatio=${formatMetric(maskStage.refinedSkyRatio)} " +
-                        "protectedForegroundRatio=${formatMetric(maskStage.protectedForegroundRatio)} " +
-                        "thinStructureProtectedPixelCount=${maskStage.thinStructureProtectedPixels} " +
-                        "protectionRadius=${maskStage.protectionRadius} featherRadius=${maskStage.featherRadius} " +
-                        "validSkyCoverageRatio=${formatMetric(composite.diagnostics.validSkyCoverageRatio)} " +
-                        "output=${composite.diagnostics.outputWidth}x${composite.diagnostics.outputHeight}"
+                logAutomaticComposition(
+                    profile,
+                    selectedReference.frame.fileName,
+                    maskStage,
+                    composite
                 )
 
                 val now = System.currentTimeMillis()
@@ -2086,33 +2120,14 @@ class JpegStacker(private val context: Context) {
                     skyRatio = alphaCoverageRatio(effectiveSkyAlpha),
                     foregroundRatio = maskStage.protectedForegroundRatio,
                     registrations = registrationReports.toList(),
-                    frameWeights = frameWeights.map { weight ->
-                        FrameWeightReport(
-                            frameName = frameNameById[weight.frameId] ?: weight.frameId,
-                            registrationWeight = weight.registrationWeight,
-                            sharpnessWeight = weight.sharpnessWeight,
-                            trailWeight = weight.trailWeight,
-                            noiseWeight = weight.noiseWeight,
-                            exposureWeight = weight.exposureWeight,
-                            normalizedWeight = weight.normalizedWeight
-                        )
-                    },
-                    integration = IntegrationReport(
-                        mode = integrationDiagnostics.mode.name,
-                        robustMode = integrationDiagnostics.robustModeEnabled,
-                        inputWidth = commonWidth,
-                        inputHeight = commonHeight,
-                        outputWidth = integrationDiagnostics.outputWidth,
-                        outputHeight = integrationDiagnostics.outputHeight,
-                        tileWidth = integrationDiagnostics.tileWidth,
-                        tileHeight = integrationDiagnostics.tileHeight,
-                        resolutionChanged = integrationDiagnostics.resolutionChanged,
-                        validCoveragePercent = integrationDiagnostics.validCoveragePercent,
-                        estimatedWorkingMemoryBytes = integrationDiagnostics.estimatedPeakWorkingMemoryBytes,
-                        outputAllocationBytes = 0L,
-                        diskCacheBytes = requiredCacheBytes,
-                        robustModeReason = integrationDiagnostics.robustModeReason
+                    frameWeights = frameWeightReports(frameWeights, frameNameById),
+                    integration = processingIntegrationReport(
+                        commonWidth,
+                        commonHeight,
+                        integrationDiagnostics,
+                        requiredCacheBytes
                     ),
+                    sensorDefectFiltering = finalizedSensorDefectFilteringReport,
                     stage4Parameters = ExistingPresetParameterMapper.parametersFor(
                         profile,
                         acceptedFrames
@@ -2734,8 +2749,39 @@ class JpegStacker(private val context: Context) {
             pipelineTiming = pipelineTiming
         )
         warnings += enhanced.processingWarnings
+        val publishedOutputHash = runCatching {
+            sha256PublishedOutput(saved)
+        }.onFailure { error ->
+            warnings += "Published PNG hash unavailable: " +
+                (error.message ?: error::class.java.simpleName)
+        }.getOrNull()
+        val selectedRetention = processingReport.sensorDefectFiltering.referenceStarRetentionStages
+            .lastOrNull { it.stage == "selected_candidate" }
+        val outputRetentionStages = buildList {
+            addAll(processingReport.sensorDefectFiltering.referenceStarRetentionStages)
+            selectedRetention?.let { selected ->
+                add(
+                    selected.copy(
+                        stage = "encoded_output",
+                        measurementBasis = "lossless_png_candidate_lineage"
+                    )
+                )
+                if (publishedOutputHash != null) {
+                    add(
+                        selected.copy(
+                            stage = "published_output",
+                            measurementBasis = "reopened_published_png_hash_lineage"
+                        )
+                    )
+                }
+            }
+        }
         val updatedReport = processingReport.copy(
             outputPngDisplayName = saved.fileName,
+            sensorDefectFiltering = processingReport.sensorDefectFiltering.copy(
+                publishedOutputHash = publishedOutputHash,
+                referenceStarRetentionStages = outputRetentionStages
+            ),
             stageDurationsMillis = pipelineTiming.snapshot(),
             lastCompletedStage = "png_saved",
             warnings = warnings.distinct(),
@@ -2768,6 +2814,26 @@ class JpegStacker(private val context: Context) {
             processingReport = bookkeeping.report,
             reportJson = bookkeeping.reportJson
         )
+    }
+
+    private fun sha256PublishedOutput(saved: SavedProcessedImage): String {
+        val input = when {
+            saved.contentUri != null -> context.contentResolver.openInputStream(
+                Uri.parse(saved.contentUri)
+            )
+            saved.filePath != null -> File(saved.filePath).inputStream()
+            else -> null
+        } ?: error("Published PNG cannot be reopened")
+        val digest = MessageDigest.getInstance("SHA-256")
+        val buffer = ByteArray(64 * 1024)
+        input.use { stream ->
+            while (true) {
+                val count = stream.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     private data class AncillaryEnhancedPublication(
@@ -3052,7 +3118,8 @@ class JpegStacker(private val context: Context) {
     private data class ProfileAnalyzedFrame(
         val frame: SessionFrame,
         val analysis: FrameAnalysis,
-        val skyMask: SkyMaskResult
+        val skyMask: SkyMaskResult,
+        val persistentSensorObservation: PersistentSensorFrameObservation
     )
 
     private data class AcceptedProfileFrame(
@@ -3071,6 +3138,459 @@ class JpegStacker(private val context: Context) {
         val samplingFidelity: SamplingFidelityResult,
         val warnings: List<String>
     )
+
+    private data class AutomaticIntegrationRun(
+        val diagnostics: IntegrationDiagnostics,
+        val stackedSky: FileBackedImage,
+        val validCoverage: FileBackedFloatPlane,
+        val sensorDefectAffectedOutput: FileBackedFloatPlane?,
+        val sensorDefectFiltering: SensorDefectFilteringReport,
+        val totalDurationMillis: Long
+    )
+
+    private data class CandidateMaskLineage(
+        val stage: String,
+        val sampleFilteringPresent: Boolean,
+        val parent: CandidateMaskLineage? = null
+    )
+
+    private data class AutomaticReferenceStarPreservationResult(
+        val image: FileBackedImage,
+        val maskedReferenceSamplesSkipped: Long,
+        val affectedOutputPixelCount: Int,
+        val maskAware: Boolean,
+        val reason: String?,
+        val retentionStages: List<ReferenceStarRetentionStage>
+    )
+
+    private fun logAutomaticIntegration(
+        profile: AstroProcessingProfile,
+        referenceFileName: String,
+        inputWidth: Int,
+        inputHeight: Int,
+        rejectedFrames: Int,
+        diagnostics: IntegrationDiagnostics,
+        filtering: SensorDefectFilteringReport
+    ) {
+        Log.i(
+            PROFILE_REGISTRATION_TAG,
+            "preset=${profile.name} reference=$referenceFileName " +
+                "inputResolution=${inputWidth}x$inputHeight " +
+                "outputResolution=${diagnostics.outputWidth}x${diagnostics.outputHeight} " +
+                "tileSize=${diagnostics.tileWidth}x${diagnostics.tileHeight} " +
+                "acceptedFrames=${diagnostics.acceptedFrames} rejectedFrames=$rejectedFrames " +
+                "integrationMode=${diagnostics.mode} robustMode=${diagnostics.robustModeEnabled} " +
+                "validCoverage=${formatMetric(diagnostics.validCoveragePercent)} " +
+                "sensorDefectFilteringApplied=${filtering.filteringAppliedToFinalResult} " +
+                "sensorDefectExcludedSamples=${filtering.excludedSampleCount} " +
+                "sensorDefectAffectedPixels=${filtering.affectedOutputPixelCount} " +
+                "sensorDefectInsufficientPixels=${filtering.insufficientCoveragePixelCount} " +
+                "sensorDefectUnmaskedRetry=${filtering.unmaskedRetryUsed} " +
+                "estimatedPeakWorkingMemory=${diagnostics.estimatedPeakWorkingMemoryBytes} " +
+                "resolutionChanged=${diagnostics.resolutionChanged}"
+        )
+    }
+
+    private fun logAutomaticComposition(
+        profile: AstroProcessingProfile,
+        referenceFileName: String,
+        maskStage: FileBackedMaskStageResult,
+        composite: FileBackedCompositeResult
+    ) {
+        Log.i(
+            PROFILE_REGISTRATION_TAG,
+            "preset=${profile.name} reference=$referenceFileName " +
+                "refinedSkyMaskConfidence=${formatMetric(maskStage.confidence)} " +
+                "initialSkyRatio=${formatMetric(maskStage.initialSkyRatio)} " +
+                "refinedSkyRatio=${formatMetric(maskStage.refinedSkyRatio)} " +
+                "protectedForegroundRatio=${formatMetric(maskStage.protectedForegroundRatio)} " +
+                "thinStructureProtectedPixelCount=${maskStage.thinStructureProtectedPixels} " +
+                "protectionRadius=${maskStage.protectionRadius} " +
+                "featherRadius=${maskStage.featherRadius} " +
+                "validSkyCoverageRatio=" +
+                formatMetric(composite.diagnostics.validSkyCoverageRatio) +
+                " sensorDefectReferenceSamplesSkipped=" +
+                composite.diagnostics.maskedReferenceSamplesSkipped +
+                " sensorDefectCompositionPixels=" +
+                composite.diagnostics.sensorDefectAffectedOutputPixels +
+                " output=${composite.diagnostics.outputWidth}x" +
+                composite.diagnostics.outputHeight
+        )
+    }
+
+    private fun composeCleanCandidate(
+        stackedSky: FileBackedImage,
+        reference: FileBackedImage,
+        featheredSkyMask: FileBackedFloatPlane,
+        validCoverage: FileBackedFloatPlane,
+        sensorDefectAffectedOutput: FileBackedFloatPlane?,
+        sensorDefectMask: SensorDefectMask?,
+        candidateStore: ResultCandidateStore,
+        memoryBudget: JpegMemoryBudget,
+        memoryTracker: PipelineMemoryTracker
+    ): FileBackedCompositeResult {
+        val cleanWriter = candidateStore.createWriter(
+            ResultCandidateType.CLEAN_STACK,
+            reference.width,
+            reference.height
+        )
+        val effectiveAlphaWriter = candidateStore.createFloatPlaneWriter(
+            "effective-sky",
+            reference.width,
+            reference.height
+        )
+        return sensorDefectAffectedOutput
+            ?.let(::FileBackedFloatPlaneReader)
+            .use { affectedOutput ->
+                FileBackedFloatPlaneReader(featheredSkyMask).use { feathered ->
+                    FileBackedFloatPlaneReader(validCoverage).use { coverage ->
+                        FileBackedSkyForegroundComposer().compose(
+                            stackedSky = stackedSky,
+                            reference = reference,
+                            featheredSkyMask = feathered,
+                            validCoverage = coverage,
+                            output = cleanWriter,
+                            effectiveAlphaOutput = effectiveAlphaWriter,
+                            memoryBudget = memoryBudget,
+                            memoryTracker = memoryTracker,
+                            sensorDefectAffectedOutput = affectedOutput,
+                            sensorDefectMask = sensorDefectMask
+                        )
+                    }
+                }
+            }
+    }
+
+    private fun preserveAutomaticReferenceStars(
+        stackedSky: FileBackedImage,
+        reference: FileBackedImage,
+        stars: List<V2DetectedStar>,
+        store: ResultCandidateStore,
+        sensorDefectMask: SensorDefectMask?,
+        sensorDefectAffectedOutput: FileBackedFloatPlane?
+    ): AutomaticReferenceStarPreservationResult {
+        val maskedStage = measureReferenceStarRetention(
+            "masked_clean_integration",
+            reference,
+            stackedSky,
+            stars
+        )
+        return sensorDefectAffectedOutput
+            ?.let(::FileBackedFloatPlaneReader)
+            .use { affectedOutput ->
+                val preservation = ReferenceStarSignalPreserver().preserve(
+                    stackedSky = stackedSky,
+                    reference = reference,
+                    stars = stars,
+                    store = store,
+                    sensorDefectMask = sensorDefectMask,
+                    sensorDefectAffectedOutput = affectedOutput
+                )
+                val stages = listOf(
+                    maskedStage,
+                    measureReferenceStarRetention(
+                        "star_preserved_masked_integration",
+                        reference,
+                        preservation.image,
+                        stars
+                    )
+                ).map { stage ->
+                    stage.withMaskLineageEvidence(
+                        stars,
+                        sensorDefectMask,
+                        affectedOutput
+                    )
+                }
+                AutomaticReferenceStarPreservationResult(
+                    image = preservation.image,
+                    maskedReferenceSamplesSkipped =
+                        preservation.maskedReferenceSamplesSkipped,
+                    affectedOutputPixelCount = preservation.affectedOutputPixelCount,
+                    maskAware = preservation.maskAware,
+                    reason = preservation.reason,
+                    retentionStages = stages
+                )
+            }
+    }
+
+    private fun candidateMaskLineage(
+        filtering: SensorDefectFilteringReport,
+        maskDiagnostics: AutomaticSensorDefectMaskDiagnostics,
+        selected: StoredResultCandidate,
+        reference: StoredResultCandidate,
+        clean: StoredResultCandidate,
+        processed: StoredResultCandidate?,
+        starPreservation: AutomaticReferenceStarPreservationResult,
+        composition: CompositeDiagnostics,
+        stars: List<V2DetectedStar>,
+        cleanRetention: ReferenceStarRetentionResult,
+        effectiveSkyAlpha: FileBackedFloatPlane,
+        integrationFrames: List<WeightedIntegrationFrame<CachedArgbFrame>>,
+        sensorDefectMask: SensorDefectMask?
+    ): SensorDefectFilteringReport {
+        val integration = CandidateMaskLineage(
+            stage = "automatic_integration",
+            sampleFilteringPresent =
+                filtering.filteringAppliedToFinalResult &&
+                    filtering.sampleLevelFilteringApplied &&
+                    filtering.excludedSampleCount > 0L
+        )
+        val starPreserved = CandidateMaskLineage(
+            stage = "reference_star_preservation",
+            sampleFilteringPresent = integration.sampleFilteringPresent,
+            parent = integration
+        )
+        val cleanLineage = CandidateMaskLineage(
+            stage = "sky_foreground_composition",
+            sampleFilteringPresent = starPreserved.sampleFilteringPresent,
+            parent = starPreserved
+        )
+        val processedLineage = processed?.let {
+            CandidateMaskLineage(
+                stage = "processed_profile",
+                sampleFilteringPresent = starPreserved.sampleFilteringPresent,
+                parent = starPreserved
+            )
+        }
+        val selectedLineage = when {
+            selected === clean -> cleanLineage
+            processed != null && selected === processed -> checkNotNull(processedLineage)
+            selected === reference -> CandidateMaskLineage(
+            stage = "reference",
+            sampleFilteringPresent = false
+            )
+            else -> error("Selected candidate has no pixel lineage")
+        }
+        val referenceStarRetentionStages = completeReferenceStarRetentionLineage(
+            recorded = starPreservation.retentionStages,
+            reference = reference.image,
+            cleanRetention = cleanRetention,
+            processed = processed?.image,
+            selectedType = selected.type,
+            stars = stars,
+            effectiveSkyAlpha = effectiveSkyAlpha,
+            integrationFrames = integrationFrames,
+            sensorDefectMask = sensorDefectMask
+        )
+        return filtering.copy(
+            cleanCandidateMasked = cleanLineage.sampleFilteringPresent,
+            processedCandidateMasked = processedLineage?.sampleFilteringPresent == true,
+            selectedCandidateMasked = selectedLineage.sampleFilteringPresent,
+            selectedCandidateHash = fileBackedPixelHash(selected.image),
+            starPreservationMaskAware = starPreservation.maskAware,
+            starPreservationMaskedReferenceSamplesSkipped =
+                starPreservation.maskedReferenceSamplesSkipped,
+            starPreservationAffectedOutputPixelCount =
+                starPreservation.affectedOutputPixelCount,
+            starPreservationReason = starPreservation.reason,
+            compositionMaskAware =
+                composition.sensorDefectProtectionReason != null,
+            compositionMaskedReferenceSamplesSkipped =
+                composition.maskedReferenceSamplesSkipped,
+            compositionAffectedOutputPixelCount =
+                composition.sensorDefectAffectedOutputPixels,
+            compositionMeanOriginalAlpha =
+                composition.meanOriginalAlphaAtProtectedPixels,
+            compositionReason = composition.sensorDefectProtectionReason,
+            compositionSafeBehavior =
+                composition.sensorDefectProtectionReason?.let {
+                    "keep_masked_clean_sky_sample"
+                },
+            observationFrameCount = maskDiagnostics.inputFrameCount,
+            observationCandidateCount = maskDiagnostics.observationCandidateCount,
+            observationProcessedPixelCount =
+                maskDiagnostics.observationProcessedPixelCount,
+            additionalImageDecodeCount = maskDiagnostics.additionalImageDecodeCount,
+            additionalFullFrameScanCount =
+                maskDiagnostics.additionalFullFrameScanCount,
+            candidateMatchingAnchorVisitCount =
+                maskDiagnostics.candidateMatchingAnchorVisitCount,
+            candidateMatchingCandidateVisitCount =
+                maskDiagnostics.candidateMatchingCandidateVisitCount,
+            candidateMatchingDistanceComparisonCount =
+                maskDiagnostics.candidateMatchingDistanceComparisonCount,
+            candidateMatchingIdentityLookupCount =
+                maskDiagnostics.candidateMatchingIdentityLookupCount,
+            constructionStages = sensorDefectConstructionStages(maskDiagnostics),
+            referenceStarRetentionStages = referenceStarRetentionStages
+        )
+    }
+
+    private fun sensorDefectConstructionStages(
+        diagnostics: AutomaticSensorDefectMaskDiagnostics
+    ): List<SensorDefectConstructionStageReport> {
+        fun stage(
+            name: String,
+            value: AutomaticSensorDefectMaskStageDiagnostics
+        ) = SensorDefectConstructionStageReport(
+            name,
+            value.elapsedNanos,
+            value.inputCount,
+            value.outputCount,
+            value.processedUnitCount,
+            value.estimatedAllocatedBytes
+        )
+        return listOf(
+            SensorDefectConstructionStageReport(
+                "additional_mask_decoding",
+                0L,
+                diagnostics.inputFrameCount,
+                diagnostics.additionalImageDecodeCount,
+                0L,
+                0L
+            ),
+            stage(
+                "persistent_observation_extraction",
+                diagnostics.persistentObservationExtraction
+            ),
+            stage("candidate_matching", diagnostics.candidateMatching),
+            stage("recurrence_calculation", diagnostics.recurrenceCalculation),
+            stage("footprint_construction", diagnostics.footprintConstruction),
+            stage("mask_validation", diagnostics.maskValidation)
+        )
+    }
+
+    private suspend fun runAutomaticSensorMaskedIntegration(
+        targetWidth: Int,
+        targetHeight: Int,
+        frames: List<WeightedIntegrationFrame<CachedArgbFrame>>,
+        maximumWorkingMemory: Long,
+        sensorDefectMask: SensorDefectMask,
+        sensorDefectOriginalFrameIndices: List<Int>,
+        sensorMaskConstructionDurationMillis: Long,
+        integrationSkyMask: SkyMask,
+        candidateStore: ResultCandidateStore,
+        onProgress: suspend (message: String, current: Int, total: Int) -> Unit
+    ): AutomaticIntegrationRun {
+        var activeMask = sensorDefectMask
+        var maskedReport: SensorDefectFilteringReport? = null
+        var totalDurationMillis = 0L
+        var unmaskedRetryUsed = false
+        while (true) {
+            val filteringAttempt = activeMask.enabled && activeMask.regions.isNotEmpty()
+            val stackedWriter = candidateStore.createTemporaryWriter(
+                if (filteringAttempt) "integrated-sky-masked" else "integrated-sky",
+                targetWidth,
+                targetHeight
+            )
+            val coverageWriter = candidateStore.createFloatPlaneWriter(
+                if (filteringAttempt) "valid-coverage-masked" else "valid-coverage",
+                targetWidth,
+                targetHeight
+            )
+            val affectedWriter = if (filteringAttempt) {
+                candidateStore.createFloatPlaneWriter(
+                    "sensor-defect-affected-output",
+                    targetWidth,
+                    targetHeight
+                )
+            } else {
+                null
+            }
+            var integrationFinished = false
+            val diagnostics = try {
+                LinearWeightedIntegrator().integrate(
+                    outputWidth = targetWidth,
+                    outputHeight = targetHeight,
+                    frames = frames,
+                    maximumWorkingMemoryBytes = maximumWorkingMemory,
+                    openSource = { cached -> FileBackedArgbPixelSource(cached) },
+                    allowRobustClipping = false,
+                    sensorDefectMask = activeMask,
+                    includeOutputPixel = integrationSkyMask::contains,
+                    writeTile = { tile, pixels ->
+                        stackedWriter.writeTile(
+                            tile.left,
+                            tile.top,
+                            tile.width,
+                            tile.height,
+                            pixels
+                        )
+                    },
+                    writeCoverageTile = { tile, coverage ->
+                        coverageWriter.writeTile(
+                            tile.left,
+                            tile.top,
+                            tile.width,
+                            tile.height,
+                            coverage
+                        )
+                    },
+                    writeSensorDefectAffectedTile = { tile, affected ->
+                        val values = FloatArray(affected.size)
+                        affected.indices.forEach { index ->
+                            if (affected[index]) values[index] = 1f
+                        }
+                        checkNotNull(affectedWriter).writeTile(
+                            tile.left,
+                            tile.top,
+                            tile.width,
+                            tile.height,
+                            values
+                        )
+                    },
+                    onTileCompleted = { tile ->
+                        withContext(Dispatchers.Main.immediate) {
+                            onProgress(
+                                "Processing tile ${tile.index + 1} of ${tile.total}",
+                                tile.index + 1,
+                                tile.total
+                            )
+                        }
+                    }
+                ).also { integrationFinished = true }
+            } finally {
+                if (!integrationFinished) {
+                    runCatching { stackedWriter.close() }
+                    runCatching { coverageWriter.close() }
+                    runCatching { affectedWriter?.close() }
+                }
+            }
+            val stackedSky = stackedWriter.finish()
+            val validCoverage = coverageWriter.finish()
+            val sensorDefectAffectedOutput = affectedWriter?.finish()
+            totalDurationMillis += diagnostics.processingDurationMillis
+            val attemptReport = diagnostics.sensorDefectFiltering.copy(
+                originalFrameIndices = sensorDefectOriginalFrameIndices,
+                maskConstructionDurationMillis = sensorMaskConstructionDurationMillis
+            )
+            if (filteringAttempt) maskedReport = attemptReport
+            if (filteringAttempt && shouldRetryAutomaticIntegrationWithoutMask(attemptReport)) {
+                candidateStore.deleteTemporary(stackedSky)
+                candidateStore.deleteTemporary(validCoverage)
+                sensorDefectAffectedOutput?.let(candidateStore::deleteTemporary)
+                activeMask = SensorDefectMask.empty(
+                    targetWidth,
+                    targetHeight,
+                    reason = "insufficient_coverage_unmasked_retry"
+                )
+                unmaskedRetryUsed = true
+                continue
+            }
+            val selectedReport = (maskedReport ?: attemptReport).copy(
+                originalFrameIndices = sensorDefectOriginalFrameIndices,
+                maskConstructionDurationMillis = sensorMaskConstructionDurationMillis,
+                sampleLevelFilteringApplied =
+                    maskedReport?.sampleLevelFilteringApplied == true && !unmaskedRetryUsed,
+                filteringAppliedToFinalResult =
+                    maskedReport?.sampleLevelFilteringApplied == true && !unmaskedRetryUsed,
+                unmaskedRetryUsed = unmaskedRetryUsed,
+                fallbackOrRejectionReason = if (unmaskedRetryUsed) {
+                    "insufficient_coverage_unmasked_retry"
+                } else {
+                    (maskedReport ?: attemptReport).fallbackOrRejectionReason
+                }
+            )
+            return AutomaticIntegrationRun(
+                diagnostics = diagnostics,
+                stackedSky = stackedSky,
+                validCoverage = validCoverage,
+                sensorDefectAffectedOutput = sensorDefectAffectedOutput,
+                sensorDefectFiltering = selectedReport,
+                totalDurationMillis = totalDurationMillis
+            )
+        }
+    }
 
     private fun profileCaptureIndices(frames: List<SessionFrame>): Map<String, Int> {
         return CaptureSequenceIndexResolver.resolve(frames.map { frame ->
@@ -3638,49 +4158,212 @@ class JpegStacker(private val context: Context) {
         }
     }
 
-    private fun preserveConfirmedStarSignal(
-        stackedSky: FileBackedImage,
-        reference: FileBackedImage,
-        stars: List<V2DetectedStar>,
-        store: ResultCandidateStore
-    ): FileBackedImage {
-        require(stackedSky.width == reference.width && stackedSky.height == reference.height)
-        val writer = store.createTemporaryWriter(
-            "star-preserved-stack",
-            stackedSky.width,
-            stackedSky.height
+    private fun frameWeightReports(
+        weights: List<FrameWeight>,
+        frameNameById: Map<String, String>
+    ): List<FrameWeightReport> = weights.map { weight ->
+        FrameWeightReport(
+            frameName = frameNameById[weight.frameId] ?: weight.frameId,
+            registrationWeight = weight.registrationWeight,
+            sharpnessWeight = weight.sharpnessWeight,
+            trailWeight = weight.trailWeight,
+            noiseWeight = weight.noiseWeight,
+            exposureWeight = weight.exposureWeight,
+            normalizedWeight = weight.normalizedWeight
         )
-        val stackedRow = IntArray(stackedSky.width)
-        val referenceRow = IntArray(stackedSky.width)
-        try {
-            FileBackedImageReader(stackedSky).use { stackedReader ->
-                FileBackedImageReader(reference).use { referenceReader ->
-                    for (y in 0 until stackedSky.height) {
-                        stackedReader.readArgbRow(y, stackedRow)
-                        referenceReader.readArgbRow(y, referenceRow)
-                        stars.forEach { star ->
-                            val coreRadius = ceil(star.width * 1.8f).toInt().coerceIn(3, 7)
-                            val radius = coreRadius + 3
-                            val dy = y - star.y
-                            if (kotlin.math.abs(dy) > radius) return@forEach
-                            val centerX = star.x.roundToInt()
-                            val span = sqrt((radius * radius - dy * dy).coerceAtLeast(0f))
-                                .roundToInt()
-                            val left = (centerX - span).coerceAtLeast(0)
-                            val right = (centerX + span).coerceAtMost(stackedSky.width - 1)
-                            for (x in left..right) {
-                                stackedRow[x] = referenceRow[x]
-                            }
-                        }
-                        writer.writeRow(y, stackedRow)
+    }
+
+    private fun processingIntegrationReport(
+        inputWidth: Int,
+        inputHeight: Int,
+        diagnostics: IntegrationDiagnostics,
+        diskCacheBytes: Long
+    ) = IntegrationReport(
+        mode = diagnostics.mode.name,
+        robustMode = diagnostics.robustModeEnabled,
+        inputWidth = inputWidth,
+        inputHeight = inputHeight,
+        outputWidth = diagnostics.outputWidth,
+        outputHeight = diagnostics.outputHeight,
+        tileWidth = diagnostics.tileWidth,
+        tileHeight = diagnostics.tileHeight,
+        resolutionChanged = diagnostics.resolutionChanged,
+        validCoveragePercent = diagnostics.validCoveragePercent,
+        estimatedWorkingMemoryBytes = diagnostics.estimatedPeakWorkingMemoryBytes,
+        outputAllocationBytes = 0L,
+        diskCacheBytes = diskCacheBytes,
+        robustModeReason = diagnostics.robustModeReason
+    )
+
+    private fun completeReferenceStarRetentionLineage(
+        recorded: List<ReferenceStarRetentionStage>,
+        reference: FileBackedImage,
+        cleanRetention: ReferenceStarRetentionResult,
+        processed: FileBackedImage?,
+        selectedType: ResultCandidateType,
+        stars: List<V2DetectedStar>,
+        effectiveSkyAlpha: FileBackedFloatPlane,
+        integrationFrames: List<WeightedIntegrationFrame<CachedArgbFrame>>,
+        sensorDefectMask: SensorDefectMask?
+    ): List<ReferenceStarRetentionStage> {
+        val composed = ReferenceStarRetentionStage(
+            "composed_clean_result",
+            cleanRetention.metrics,
+            cleanRetention.sources
+        )
+        val processedStage = processed?.let {
+            measureReferenceStarRetention(
+                "processed_profile_candidate",
+                reference,
+                it,
+                stars
+            )
+        }
+        val selectedStage = when (selectedType) {
+            ResultCandidateType.REFERENCE -> measureReferenceStarRetention(
+                "selected_candidate",
+                reference,
+                reference,
+                stars
+            )
+            ResultCandidateType.CLEAN_STACK -> composed.copy(stage = "selected_candidate")
+            ResultCandidateType.PROCESSED -> checkNotNull(processedStage).copy(
+                stage = "selected_candidate"
+            )
+        }
+        val stages = buildList {
+            addAll(recorded)
+            add(composed)
+            processedStage?.let(::add)
+            add(selectedStage)
+        }
+        val affectedLineage = recorded.firstOrNull()?.sources.orEmpty()
+            .associateBy { it.sourceIndex }
+        val evidence = collectReferenceSourceEvidence(
+            stars,
+            sensorDefectMask,
+            affectedLineage,
+            effectiveSkyAlpha,
+            integrationFrames
+        )
+        return stages.map { it.withReferenceSourceEvidence(evidence) }
+    }
+
+    private fun measureReferenceStarRetention(
+        stage: String,
+        reference: FileBackedImage,
+        candidate: FileBackedImage,
+        stars: List<V2DetectedStar>
+    ): ReferenceStarRetentionStage = ReferenceStarRetentionValidator()
+        .validate(reference, candidate, stars)
+        .let { result -> ReferenceStarRetentionStage(stage, result.metrics, result.sources) }
+
+    private fun ReferenceStarRetentionStage.withReferenceSourceEvidence(
+        evidence: Map<Int, ReferenceStarRetentionEvidence>
+    ): ReferenceStarRetentionStage = copy(
+        sources = sources.map { source ->
+            val item = evidence[source.sourceIndex] ?: return@map source
+            source.copy(
+                intersectsSourceSensorMask = item.intersectsSourceSensorMask,
+                intersectsAffectedOutputLineage = item.intersectsAffectedOutputLineage,
+                intersectsStarPreservationPatch = true,
+                effectiveSkyAlpha = item.effectiveSkyAlpha,
+                referenceContribution = 1f - item.effectiveSkyAlpha,
+                validContributingFrameCount = item.validContributingFrameCount,
+                validContributingFrameWeight = item.validContributingFrameWeight
+            )
+        }
+    )
+
+    private fun ReferenceStarRetentionStage.withMaskLineageEvidence(
+        stars: List<V2DetectedStar>,
+        sensorDefectMask: SensorDefectMask?,
+        affectedOutput: AlphaPixelSource?
+    ): ReferenceStarRetentionStage = copy(
+        sources = sources.map { source ->
+            val star = stars.getOrNull(source.sourceIndex) ?: return@map source
+            val width = affectedOutput?.width ?: sensorDefectMask?.width ?: 0
+            val height = affectedOutput?.height ?: sensorDefectMask?.height ?: 0
+            source.copy(
+                intersectsSourceSensorMask = starFootprintIntersects(
+                    star,
+                    width,
+                    height
+                ) { x, y -> sensorDefectMask?.contains(x, y) == true },
+                intersectsAffectedOutputLineage = starFootprintIntersects(
+                    star,
+                    width,
+                    height
+                ) { x, y -> affectedOutput?.alphaAt(x, y)?.let { it > 0f } == true },
+                intersectsStarPreservationPatch = true
+            )
+        }
+    )
+
+    private fun collectReferenceSourceEvidence(
+        stars: List<V2DetectedStar>,
+        sensorDefectMask: SensorDefectMask?,
+        affectedLineage: Map<Int, com.example.astrophoto.processing.jpeg.v2.quality.ReferenceStarRetentionSource>,
+        effectiveSkyAlpha: FileBackedFloatPlane,
+        integrationFrames: List<WeightedIntegrationFrame<CachedArgbFrame>>
+    ): Map<Int, ReferenceStarRetentionEvidence> =
+        FileBackedFloatPlaneReader(effectiveSkyAlpha).use { alpha ->
+            stars.mapIndexed { sourceIndex, star ->
+                val centerX = star.x.toInt().coerceIn(0, alpha.width - 1)
+                val centerY = star.y.toInt().coerceIn(0, alpha.height - 1)
+                var contributingFrames = 0
+                var contributingWeight = 0f
+                integrationFrames.forEach { frame ->
+                    val point = frame.transform.referenceToSourceTransform()
+                        .mapOutputToSource(centerX.toFloat(), centerY.toFloat())
+                    val covered = point.x.isFinite() && point.y.isFinite() &&
+                        point.x >= 0f && point.y >= 0f &&
+                        point.x <= frame.source.width - 1f &&
+                        point.y <= frame.source.height - 1f
+                    if (
+                        covered &&
+                        sensorDefectMask?.intersectsBilinearSample(point.x, point.y) != true
+                    ) {
+                        contributingFrames++
+                        contributingWeight += frame.normalizedWeight
                     }
                 }
-            }
-            return writer.finish()
-        } catch (error: Throwable) {
-            runCatching { writer.close() }
-            throw error
+                sourceIndex to ReferenceStarRetentionEvidence(
+                    intersectsSourceSensorMask = starFootprintIntersects(
+                        star,
+                        alpha.width,
+                        alpha.height
+                    ) { x, y -> sensorDefectMask?.contains(x, y) == true },
+                    intersectsAffectedOutputLineage =
+                        affectedLineage[sourceIndex]?.intersectsAffectedOutputLineage == true,
+                    effectiveSkyAlpha = alpha.alphaAt(centerX, centerY),
+                    validContributingFrameCount = contributingFrames,
+                    validContributingFrameWeight = contributingWeight
+                )
+            }.toMap()
         }
+
+    private fun starFootprintIntersects(
+        star: V2DetectedStar,
+        width: Int,
+        height: Int,
+        predicate: (Int, Int) -> Boolean
+    ): Boolean {
+        if (width <= 0 || height <= 0) return false
+        val centerX = star.x.roundToInt()
+        val centerY = star.y.roundToInt()
+        val coreRadius = ceil(star.width * 1.8f).toInt().coerceIn(3, 7)
+        val radius = coreRadius + 3
+        val left = (centerX - radius).coerceAtLeast(0)
+        val right = (centerX + radius).coerceAtMost(width - 1)
+        val top = (centerY - radius).coerceAtLeast(0)
+        val bottom = (centerY + radius).coerceAtMost(height - 1)
+        for (y in top..bottom) for (x in left..right) {
+            val dx = x - centerX
+            val dy = y - centerY
+            if (dx * dx + dy * dy <= radius * radius && predicate(x, y)) return true
+        }
+        return false
     }
 
     private suspend fun prepareAndRefineFullResolutionFrames(

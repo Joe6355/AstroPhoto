@@ -23,5 +23,6 @@ data class IntegrationDiagnostics(
         "legacy_repeatability_mode"
     } else {
         "plain_weighted_average"
-    }
+    },
+    val sensorDefectFiltering: SensorDefectFilteringReport = SensorDefectFilteringReport()
 )

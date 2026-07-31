@@ -369,7 +369,7 @@ class JpegV2Stage12Test {
         val profile = source.substring(source.indexOf("suspend fun profileStack("), source.indexOf("suspend fun loadResultPreview("))
         val stage12 = profile.indexOf("prepareAndRefineFullResolutionFrames(")
         val weights = profile.indexOf("FrameWeightCalculator().calculate(")
-        val integration = profile.indexOf("LinearWeightedIntegrator().integrate(")
+        val integration = profile.indexOf("runAutomaticSensorMaskedIntegration(")
         assertTrue(stage12 in 0 until weights)
         assertTrue(weights in 0 until integration)
     }

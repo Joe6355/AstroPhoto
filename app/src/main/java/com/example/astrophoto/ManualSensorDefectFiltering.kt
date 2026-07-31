@@ -2,37 +2,13 @@ package com.example.astrophoto
 
 import com.example.astrophoto.processing.jpeg.v2.artifacts.SensorDefectMask
 import com.example.astrophoto.processing.jpeg.v2.artifacts.SensorDefectRegion
-
-internal data class ManualSensorDefectRegionReport(
-    val stableRegionId: String,
-    val footprintPixelCount: Int,
-    val recurrence: Int,
-    val totalFrameCount: Int,
-    val skySpaceSupport: Int,
-    val confidence: Float,
-    val classificationReason: String
-)
-
-internal data class ManualSensorDefectFilteringReport(
-    val regions: List<ManualSensorDefectRegionReport>,
-    val maskedSourcePixelCount: Int,
-    val maskedSourceFraction: Float,
-    val excludedSampleCount: Long,
-    val affectedOutputPixelCount: Int,
-    val minimumRemainingSampleCount: Int,
-    val medianRemainingSampleCount: Int,
-    val maximumRemainingSampleCount: Int,
-    val insufficientCoveragePixelCount: Int,
-    val sampleLevelFilteringApplied: Boolean,
-    val fallbackOrRejectionReason: String?
-) {
-    val regionCount: Int get() = regions.size
-}
+import com.example.astrophoto.processing.jpeg.v2.model.SensorDefectFilteringReport
+import com.example.astrophoto.processing.jpeg.v2.model.SensorDefectRegionReport
 
 internal data class ManualSensorDefectCoveragePlan(
     val mask: SensorDefectMask,
     val commonOutputRegion: PixelRect,
-    val report: ManualSensorDefectFilteringReport
+    val report: SensorDefectFilteringReport
 ) {
     fun sourceSampleIsValid(
         outputX: Int,
@@ -137,7 +113,7 @@ internal fun manualSensorDefectCoveragePlan(
     return ManualSensorDefectCoveragePlan(
         mask,
         commonRegion,
-        ManualSensorDefectFilteringReport(
+        SensorDefectFilteringReport(
             regions = regionReports,
             maskedSourcePixelCount = mask.maskedPixelCount,
             maskedSourceFraction = mask.maskedSourceFraction,
@@ -147,6 +123,7 @@ internal fun manualSensorDefectCoveragePlan(
             medianRemainingSampleCount = medianRemaining,
             maximumRemainingSampleCount = maximumRemaining,
             insufficientCoveragePixelCount = insufficient,
+            maskEnabled = mask.enabled,
             sampleLevelFilteringApplied = true,
             fallbackOrRejectionReason = if (insufficient > 0) {
                 "reference_sample_fallback_for_insufficient_coverage"
@@ -174,11 +151,11 @@ internal fun compactValidArgbSamples(
 }
 
 private fun unfilteredReport(
-    regions: List<ManualSensorDefectRegionReport>,
+    regions: List<SensorDefectRegionReport>,
     mask: SensorDefectMask,
     acceptedFrameCount: Int,
     reason: String
-) = ManualSensorDefectFilteringReport(
+) = SensorDefectFilteringReport(
     regions = regions,
     maskedSourcePixelCount = mask.maskedPixelCount,
     maskedSourceFraction = mask.maskedSourceFraction,
@@ -188,11 +165,12 @@ private fun unfilteredReport(
     medianRemainingSampleCount = acceptedFrameCount,
     maximumRemainingSampleCount = acceptedFrameCount,
     insufficientCoveragePixelCount = 0,
+    maskEnabled = mask.enabled,
     sampleLevelFilteringApplied = false,
     fallbackOrRejectionReason = reason
 )
 
-private fun SensorDefectRegion.toManualReport() = ManualSensorDefectRegionReport(
+private fun SensorDefectRegion.toManualReport() = SensorDefectRegionReport(
     stableRegionId = stableRegionId,
     footprintPixelCount = footprintPixels.size,
     recurrence = recurrence,

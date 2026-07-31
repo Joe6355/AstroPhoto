@@ -9,6 +9,7 @@ import com.example.astrophoto.processing.jpeg.v2.artifacts.PersistentSensorCandi
 import com.example.astrophoto.processing.jpeg.v2.artifacts.buildConfirmedSensorDefectMask
 import com.example.astrophoto.processing.jpeg.v2.masking.SkyMaskEstimator
 import com.example.astrophoto.processing.jpeg.v2.model.FrameAnalysis
+import com.example.astrophoto.processing.jpeg.v2.model.SensorDefectFilteringReport
 import com.example.astrophoto.processing.jpeg.v2.registration.SequenceAwareRegistrationEngine
 import com.example.astrophoto.processing.jpeg.v2.registration.TemporalFeatureFrame
 import kotlin.math.abs
@@ -75,7 +76,7 @@ internal data class ManualSequenceIntegrationReport(
     val acceptedFrameCount: Int,
     val rejectedFrames: List<ManualSequenceRejectedFrame>,
     val integratedOriginalFrameIndices: List<Int>,
-    val sensorDefectFiltering: ManualSensorDefectFilteringReport? = null
+    val sensorDefectFiltering: SensorDefectFilteringReport? = null
 ) {
     val rejectedFrameCount: Int get() = rejectedFrames.size
     val acceptedOriginalFrameIndices: List<Int> get() = integratedOriginalFrameIndices
@@ -161,7 +162,7 @@ internal fun manualSequenceIntegrationReport(
     plan: ManualSequenceAlignmentPlan?,
     mode: ManualAlignedStackMode,
     integratedOriginalFrameIndices: List<Int>,
-    sensorDefectFiltering: ManualSensorDefectFilteringReport? = null
+    sensorDefectFiltering: SensorDefectFilteringReport? = null
 ): ManualSequenceIntegrationReport? {
     if (plan == null) return null
     val acceptedIndices = plan.frames.filter { it.accepted }.map { it.originalFrameIndex }

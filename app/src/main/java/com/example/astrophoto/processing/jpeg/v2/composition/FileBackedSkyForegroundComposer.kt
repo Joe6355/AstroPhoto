@@ -1,6 +1,7 @@
 package com.example.astrophoto.processing.jpeg.v2.composition
 
 import com.example.astrophoto.pixelLuminance
+import com.example.astrophoto.processing.jpeg.v2.artifacts.SensorDefectMask
 import com.example.astrophoto.processing.jpeg.v2.color.SrgbTransfer
 import com.example.astrophoto.processing.jpeg.v2.memory.JpegMemoryBudget
 import com.example.astrophoto.processing.jpeg.v2.memory.PipelineMemoryTracker
@@ -40,7 +41,9 @@ class FileBackedSkyForegroundComposer {
         effectiveAlphaOutput: FileBackedFloatPlaneWriter,
         memoryBudget: JpegMemoryBudget,
         memoryTracker: PipelineMemoryTracker? = null,
-        precomputedEffectiveSkyAlpha: AlphaPixelSource? = null
+        precomputedEffectiveSkyAlpha: AlphaPixelSource? = null,
+        sensorDefectAffectedOutput: AlphaPixelSource? = null,
+        sensorDefectMask: SensorDefectMask? = null
     ): FileBackedCompositeResult {
         require(stackedSky.width == reference.width && stackedSky.height == reference.height)
         require(featheredSkyMask.width == reference.width && featheredSkyMask.height == reference.height)
@@ -51,6 +54,17 @@ class FileBackedSkyForegroundComposer {
             precomputedEffectiveSkyAlpha == null ||
                 (precomputedEffectiveSkyAlpha.width == reference.width &&
                     precomputedEffectiveSkyAlpha.height == reference.height)
+        )
+        require((sensorDefectAffectedOutput == null) == (sensorDefectMask == null))
+        require(
+            sensorDefectAffectedOutput == null ||
+                (sensorDefectAffectedOutput.width == reference.width &&
+                    sensorDefectAffectedOutput.height == reference.height)
+        )
+        require(
+            sensorDefectMask == null ||
+                (sensorDefectMask.width == reference.width &&
+                    sensorDefectMask.height == reference.height)
         )
         val started = System.nanoTime()
         val tile = memoryBudget.chooseTile(
@@ -70,6 +84,9 @@ class FileBackedSkyForegroundComposer {
         var skyMaskWeight = 0L
         var fallbackSum = 0.0
         var maximumForegroundDifference = 0
+        var maskedReferenceSamplesSkipped = 0L
+        var protectedOutputPixels = 0L
+        var originalProtectedAlphaSum = 0.0
         FileBackedImageReader(stackedSky, cachedRows = 2).use { stacked ->
             FileBackedImageReader(reference, cachedRows = 2).use { referenceReader ->
                 var top = 0
@@ -91,8 +108,24 @@ class FileBackedSkyForegroundComposer {
                             val y = top + row
                             val maskAlpha = featheredSkyMask.alphaAt(x, y)
                             val coverage = validCoverage.alphaAt(x, y)
-                            val effectiveAlpha = precomputedEffectiveSkyAlpha?.alphaAt(x, y)
+                            val originalEffectiveAlpha =
+                                precomputedEffectiveSkyAlpha?.alphaAt(x, y)
                                 ?: (maskAlpha * coverage).coerceIn(0f, 1f)
+                            val protectFromReference =
+                                sensorDefectAffectedOutput?.alphaAt(x, y)?.let { it > 0f } ==
+                                    true &&
+                                    checkNotNull(sensorDefectMask).contains(x, y) &&
+                                    originalEffectiveAlpha < 1f - EXACT_ALPHA_EPSILON
+                            val effectiveAlpha = if (protectFromReference) {
+                                1f
+                            } else {
+                                originalEffectiveAlpha
+                            }
+                            if (protectFromReference) {
+                                maskedReferenceSamplesSkipped++
+                                protectedOutputPixels++
+                                originalProtectedAlphaSum += originalEffectiveAlpha
+                            }
                             effectiveValues[index] = effectiveAlpha
                             if (maskAlpha > 0f) {
                                 skyCoverageSum += coverage
@@ -106,7 +139,7 @@ class FileBackedSkyForegroundComposer {
                                 else -> linearBlend(stackedPixels[index], referenceColor, effectiveAlpha)
                             } or OPAQUE_ALPHA
                             resultPixels[index] = resultColor
-                            if (maskAlpha <= EXACT_ALPHA_EPSILON) {
+                            if (maskAlpha <= EXACT_ALPHA_EPSILON && !protectFromReference) {
                                 maximumForegroundDifference = maxOf(
                                     maximumForegroundDifference,
                                     maximumChannelDifference(referenceColor, resultColor)
@@ -140,7 +173,20 @@ class FileBackedSkyForegroundComposer {
                 outputWidth = reference.width,
                 outputHeight = reference.height,
                 cropApplied = false,
-                compositionDurationMillis = (System.nanoTime() - started) / 1_000_000L
+                compositionDurationMillis = (System.nanoTime() - started) / 1_000_000L,
+                maskedReferenceSamplesSkipped = maskedReferenceSamplesSkipped,
+                sensorDefectAffectedOutputPixels =
+                    protectedOutputPixels.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+                meanOriginalAlphaAtProtectedPixels = if (protectedOutputPixels > 0L) {
+                    (originalProtectedAlphaSum / protectedOutputPixels).toFloat()
+                } else {
+                    0f
+                },
+                sensorDefectProtectionReason = if (protectedOutputPixels > 0L) {
+                    SENSOR_DEFECT_PROTECTION_REASON
+                } else {
+                    null
+                }
             ),
             tileWidth = tile.tileWidth,
             tileHeight = tile.tileHeight
@@ -206,5 +252,7 @@ class FileBackedSkyForegroundComposer {
         private const val EXACT_ALPHA_EPSILON = 0.0001f
         private const val FOREGROUND_ALPHA_LIMIT = 0.001f
         private const val OPAQUE_ALPHA = 0xFF000000.toInt()
+        private const val SENSOR_DEFECT_PROTECTION_REASON =
+            "filtered_output_and_confirmed_reference_defect"
     }
 }

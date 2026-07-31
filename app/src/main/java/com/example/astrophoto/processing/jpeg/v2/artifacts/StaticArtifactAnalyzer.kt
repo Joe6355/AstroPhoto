@@ -28,7 +28,23 @@ class StaticArtifactAnalyzer(
         if (frames.size < TemporalPixelConsistency.MIN_TEMPORAL_FRAMES) {
             return StaticArtifactMask.empty(imageWidth, imageHeight)
         }
-        val regions = temporalConsistency.stationaryTracks(frames).mapNotNull { track ->
+        return analyzeTracks(
+            temporalConsistency.stationaryTracks(frames),
+            frames.size,
+            imageWidth,
+            imageHeight
+        )
+    }
+
+    internal fun analyzeTracks(
+        tracks: List<TemporalPointTrack>,
+        frameCount: Int,
+        imageWidth: Int,
+        imageHeight: Int
+    ): StaticArtifactMask {
+        require(frameCount >= TemporalPixelConsistency.MIN_TEMPORAL_FRAMES)
+        require(imageWidth > 0 && imageHeight > 0)
+        val regions = tracks.mapNotNull { track ->
             val stars = track.observations.map { it.second }
             val representative = representative(stars)
             val type = classify(representative) ?: return@mapNotNull null
@@ -55,7 +71,7 @@ class StaticArtifactAnalyzer(
                     StaticArtifactType.FIXED_PATTERN_POINT -> "stationary_fixed_pattern_point"
                 },
                 recurrence = track.observations.size,
-                frameCount = frames.size
+                frameCount = frameCount
             )
         }
         val confidence = regions.map { it.confidence }.average()

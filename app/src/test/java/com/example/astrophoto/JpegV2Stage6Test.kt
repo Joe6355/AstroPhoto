@@ -33,6 +33,7 @@ import com.example.astrophoto.processing.jpeg.v2.quality.LineArtifactResult
 import com.example.astrophoto.processing.jpeg.v2.quality.ReferenceStarRetentionMetrics
 import com.example.astrophoto.processing.jpeg.v2.quality.ReferenceStarRetentionResult
 import com.example.astrophoto.processing.jpeg.v2.quality.ReferenceStarRetentionValidator
+import com.example.astrophoto.processing.jpeg.v2.quality.ReferenceStarRetentionStage
 import com.example.astrophoto.processing.jpeg.v2.quality.ResultSelectionPolicy
 import com.example.astrophoto.processing.jpeg.v2.registration.OrderedRegistration
 import com.example.astrophoto.processing.jpeg.v2.registration.SpatialStarDistributionValidator
@@ -236,6 +237,19 @@ class JpegV2Stage6Test {
         assertTrue(result.metrics.retentionRatio < 0.9f)
     }
 
+    @Test fun retentionDiagnosticsKeepStableSourceIdentityAndFailureReason() {
+        val field = gaussianField()
+        val damaged = gaussianImage(96, 80, field.second.dropLast(1), amplitude = 170f)
+        val validator = ReferenceStarRetentionValidator()
+        val first = validator.validate(field.first, damaged, field.second)
+        val second = validator.validate(field.first, damaged, field.second)
+
+        assertEquals(field.second.size, first.sources.size)
+        assertEquals(first.sources.map { it.sourceId }, second.sources.map { it.sourceId })
+        assertEquals(first.sources.indices.toList(), first.sources.map { it.sourceIndex })
+        assertTrue(first.sources.filterNot { it.retained }.all { it.failureReasons.isNotEmpty() })
+    }
+
     @Test fun retentionValidatorDetectsContrastCollapse() {
         val field = gaussianField()
         val damaged = gaussianImage(96, 80, field.second, amplitude = 100f)
@@ -400,10 +414,29 @@ class JpegV2Stage6Test {
     }
 
     @Test fun processingReportRecordsStageSixRejectionReasons() {
-        val json = report().toJson()
+        val field = gaussianField()
+        val retention = ReferenceStarRetentionValidator().validate(
+            field.first,
+            field.first,
+            field.second
+        )
+        val json = report().copy(
+            sensorDefectFiltering = report().sensorDefectFiltering.copy(
+                referenceStarRetentionStages = listOf(
+                    ReferenceStarRetentionStage(
+                        "selected_candidate",
+                        retention.metrics,
+                        retention.sources
+                    )
+                )
+            )
+        ).toJson()
         assertTrue(json.contains("\"cleanStackAccepted\": false"))
         assertTrue(json.contains("reference_star_retention_below_90_percent"))
         assertTrue(json.contains("\"robustModeReason\":\"faint_star_preservation\""))
+        assertTrue(json.contains("\"stage\":\"selected_candidate\""))
+        assertTrue(json.contains("\"sourceId\":\"reference-source-001\""))
+        assertTrue(json.contains("\"failureReasons\":[]"))
     }
 
     @Test fun registrationReportPreservesStageSixDiagnostics() {

@@ -13,6 +13,8 @@ import com.example.astrophoto.processing.jpeg.v2.model.QualityGateDecision
 import com.example.astrophoto.processing.jpeg.v2.model.ResultCandidate
 import com.example.astrophoto.processing.jpeg.v2.model.ResultCandidateType
 import com.example.astrophoto.processing.jpeg.v2.model.ResultQualityMetrics
+import com.example.astrophoto.processing.jpeg.v2.model.SensorDefectConstructionStageReport
+import com.example.astrophoto.processing.jpeg.v2.model.SensorDefectFilteringReport
 import com.example.astrophoto.processing.jpeg.v2.postprocessing.AdaptivePresetProcessor
 import com.example.astrophoto.processing.jpeg.v2.profile.ExistingPresetParameterMapper
 import com.example.astrophoto.processing.jpeg.v2.quality.AstroResultQualityGate
@@ -361,13 +363,72 @@ class JpegV2Stage5Test {
 
     @Test fun jsonReportUsesVersionedSchema() {
         val json = report().toJson()
-        assertTrue(json.contains("\"schemaVersion\": \"astrophoto.jpeg.processing/2\""))
+        assertTrue(json.contains("\"schemaVersion\": \"astrophoto.jpeg.processing/3\""))
+    }
+
+    @Test fun jsonReportContainsVersionedSensorFilteringDiagnostics() {
+        val json = report().copy(
+            sensorDefectFiltering = SensorDefectFilteringReport(
+                maskedSourcePixelCount = 12,
+                excludedSampleCount = 34,
+                expectedUnmaskedWeight = 5f,
+                minimumValidWeightRatio = 0.8f,
+                medianValidWeightRatio = 1f,
+                maximumValidWeightRatio = 1f,
+                maskEnabled = true,
+                sampleLevelFilteringApplied = true,
+                originalFrameIndices = listOf(1, 2, 9),
+                observationFrameCount = 3,
+                observationCandidateCount = 120,
+                observationProcessedPixelCount = 2_073_600,
+                additionalImageDecodeCount = 0,
+                additionalFullFrameScanCount = 0,
+                candidateMatchingDistanceComparisonCount = 45_000,
+                constructionStages = listOf(
+                    SensorDefectConstructionStageReport(
+                        stage = "candidate_matching",
+                        elapsedNanos = 123_000,
+                        inputCount = 120,
+                        outputCount = 4,
+                        processedUnitCount = 45_000,
+                        estimatedAllocatedBytes = 2_048
+                    )
+                )
+            )
+        ).toJson()
+
+        assertTrue(json.contains("\"schemaVersion\":\"astrophoto.jpeg.sensor-defect-filtering/1\""))
+        assertTrue(json.contains("\"sourcePixelCount\":12"))
+        assertTrue(json.contains("\"excludedSampleCount\":34"))
+        assertTrue(json.contains("\"originalFrameIndices\":[1, 2, 9]"))
+        assertTrue(json.contains("\"additionalImageDecodeCount\":0"))
+        assertTrue(json.contains("\"candidateMatchingDistanceComparisonCount\":45000"))
+        assertTrue(json.contains("\"stage\":\"candidate_matching\""))
+        assertTrue(json.contains("\"processedUnitCount\":45000"))
     }
 
     @Test fun jsonReportRecordsCandidateAndFallbackReason() {
         val json = report().toJson()
         assertTrue(json.contains("\"selectedCandidateType\": \"CLEAN_STACK\""))
         assertTrue(json.contains("sky_mad_increased_excessively"))
+    }
+
+    @Test fun jsonReportRecordsCandidateMaskLineageAndPublishedHashes() {
+        val json = report().copy(
+            sensorDefectFiltering = SensorDefectFilteringReport(
+                cleanCandidateMasked = true,
+                processedCandidateMasked = true,
+                selectedCandidateMasked = true,
+                selectedCandidateHash = "selected-sha256",
+                publishedOutputHash = "published-sha256"
+            )
+        ).toJson()
+
+        assertTrue(json.contains("\"cleanCandidateMasked\": true"))
+        assertTrue(json.contains("\"processedCandidateMasked\": true"))
+        assertTrue(json.contains("\"selectedCandidateMasked\": true"))
+        assertTrue(json.contains("\"selectedCandidateHash\": \"selected-sha256\""))
+        assertTrue(json.contains("\"publishedOutputHash\": \"published-sha256\""))
     }
 
     @Test fun jsonReportContainsMetricsParametersAndTimings() {

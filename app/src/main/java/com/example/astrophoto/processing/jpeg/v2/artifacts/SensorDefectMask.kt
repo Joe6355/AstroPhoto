@@ -89,6 +89,37 @@ class SensorDefectMask(
             sourceY in 0 until height &&
             footprint[sourceY * width + sourceX]
 
+    fun intersectsBilinearSample(sourceX: Float, sourceY: Float): Boolean {
+        if (
+            !enabled ||
+            !sourceX.isFinite() ||
+            !sourceY.isFinite() ||
+            sourceX < 0f ||
+            sourceY < 0f ||
+            sourceX > width - 1f ||
+            sourceY > height - 1f
+        ) {
+            return false
+        }
+        val x0 = floor(sourceX).toInt()
+        val y0 = floor(sourceY).toInt()
+        val x1 = minOf(width - 1, x0 + 1)
+        val y1 = minOf(height - 1, y0 + 1)
+        val fractionX = sourceX - x0
+        val fractionY = sourceY - y0
+        val leftWeight = 1f - fractionX
+        val topWeight = 1f - fractionY
+        return (
+            leftWeight * topWeight > 0f && contains(x0, y0)
+            ) || (
+            fractionX * topWeight > 0f && contains(x1, y0)
+            ) || (
+            leftWeight * fractionY > 0f && contains(x0, y1)
+            ) || (
+            fractionX * fractionY > 0f && contains(x1, y1)
+            )
+    }
+
     fun scaledTo(targetWidth: Int, targetHeight: Int): SensorDefectMask {
         require(targetWidth > 0 && targetHeight > 0)
         if (targetWidth == width && targetHeight == height) return this
@@ -143,7 +174,34 @@ internal fun buildConfirmedSensorDefectMask(
     frames: List<ArtifactFrameObservation>,
     referenceToSourceTransforms: List<ReferenceToSourceTransform>,
     policy: SensorDefectMaskPolicy = SensorDefectMaskPolicy()
-): SensorDefectMask {
+): SensorDefectMask = buildConfirmedSensorDefectMaskProfiled(
+    staticMask,
+    frames,
+    referenceToSourceTransforms,
+    policy
+).mask
+
+internal data class SensorDefectMaskBuildStageProfile(
+    val elapsedNanos: Long,
+    val inputCount: Int,
+    val outputCount: Int,
+    val processedPixels: Long,
+    val estimatedAllocatedBytes: Long
+)
+
+internal data class ProfiledSensorDefectMask(
+    val mask: SensorDefectMask,
+    val recurrenceCalculation: SensorDefectMaskBuildStageProfile,
+    val footprintConstruction: SensorDefectMaskBuildStageProfile,
+    val maskValidation: SensorDefectMaskBuildStageProfile
+)
+
+internal fun buildConfirmedSensorDefectMaskProfiled(
+    staticMask: StaticArtifactMask,
+    frames: List<ArtifactFrameObservation>,
+    referenceToSourceTransforms: List<ReferenceToSourceTransform>,
+    policy: SensorDefectMaskPolicy = SensorDefectMaskPolicy()
+): ProfiledSensorDefectMask {
     require(frames.size == referenceToSourceTransforms.size)
     require(frames.isNotEmpty())
     require(staticMask.width > 0 && staticMask.height > 0)
@@ -152,18 +210,31 @@ internal fun buildConfirmedSensorDefectMask(
         StaticArtifactType.SINGLE_CHANNEL_SPIKE,
         StaticArtifactType.FIXED_PATTERN_POINT
     )
-    val regions = staticMask.regions.mapNotNull { region ->
-        if (region.type !in eligibleTypes) return@mapNotNull null
-        if (region.confidence < policy.minimumConfidence) return@mapNotNull null
+    val recurrenceStarted = System.nanoTime()
+    val requiredRecurrence = maxOf(
+        TemporalPixelConsistency.MIN_TEMPORAL_FRAMES,
+        ceil(frames.size * policy.minimumRecurrenceRatio).toInt()
+    )
+    val recurrentRegions = staticMask.regions.filter { region ->
+        if (region.type !in eligibleTypes) return@filter false
+        if (region.confidence < policy.minimumConfidence) return@filter false
         val recurrence = region.recurrence
-        val requiredRecurrence = maxOf(
-            TemporalPixelConsistency.MIN_TEMPORAL_FRAMES,
-            ceil(frames.size * policy.minimumRecurrenceRatio).toInt()
-        )
         if (recurrence < requiredRecurrence || region.frameCount != frames.size) {
-            return@mapNotNull null
+            return@filter false
         }
-        val footprint = rasterizedEllipse(
+        true
+    }
+    val recurrenceProfile = SensorDefectMaskBuildStageProfile(
+        elapsedNanos = System.nanoTime() - recurrenceStarted,
+        inputCount = staticMask.regions.size,
+        outputCount = recurrentRegions.size,
+        processedPixels = 0L,
+        estimatedAllocatedBytes = recurrentRegions.size * REFERENCE_BYTES_ESTIMATE
+    )
+
+    val footprintStarted = System.nanoTime()
+    val footprints = recurrentRegions.mapNotNull { region ->
+        val pixels = rasterizedEllipse(
             staticMask.width,
             staticMask.height,
             region.x,
@@ -171,9 +242,24 @@ internal fun buildConfirmedSensorDefectMask(
             region.radius,
             region.radius
         )
-        if (footprint.isEmpty() || footprint.size > policy.maximumRegionFootprintPixels) {
+        if (pixels.isEmpty() || pixels.size > policy.maximumRegionFootprintPixels) {
             return@mapNotNull null
         }
+        region to pixels
+    }
+    val footprintPixelCount = footprints.sumOf { it.second.size.toLong() }
+    val footprintProfile = SensorDefectMaskBuildStageProfile(
+        elapsedNanos = System.nanoTime() - footprintStarted,
+        inputCount = recurrentRegions.size,
+        outputCount = footprints.size,
+        processedPixels = footprintPixelCount,
+        estimatedAllocatedBytes =
+            footprintPixelCount * SENSOR_FOOTPRINT_PIXEL_BYTES_ESTIMATE +
+                footprints.size * PAIR_BYTES_ESTIMATE
+    )
+
+    val validationStarted = System.nanoTime()
+    val regions = footprints.mapNotNull { (region, footprint) ->
         val skySupport = frames.indices.count { index ->
             val transform = referenceToSourceTransforms[index]
             val expectedX = region.x + transform.dx
@@ -185,7 +271,7 @@ internal fun buildConfirmedSensorDefectMask(
             }
         }
         if (
-            recurrence.toFloat() <=
+            region.recurrence.toFloat() <=
             skySupport.toFloat() * policy.minimumCameraToSkySupportRatio
         ) {
             return@mapNotNull null
@@ -197,7 +283,7 @@ internal fun buildConfirmedSensorDefectMask(
             sourceRadiusX = region.radius,
             sourceRadiusY = region.radius,
             footprintPixels = footprint,
-            recurrence = recurrence,
+            recurrence = region.recurrence,
             totalFrameCount = frames.size,
             skySpaceSupport = skySupport,
             confidence = region.confidence,
@@ -210,26 +296,44 @@ internal fun buildConfirmedSensorDefectMask(
             .thenBy { it.sourceX }
             .thenBy { it.stableRegionId }
     )
-    if (regions.isEmpty()) {
-        return SensorDefectMask.empty(staticMask.width, staticMask.height)
-    }
-    val candidate = SensorDefectMask(
-        staticMask.width,
-        staticMask.height,
-        regions,
-        enabled = true
-    )
-    return if (candidate.maskedSourceFraction <= policy.maximumMaskedSourceFraction) {
-        candidate
+    val mask = if (regions.isEmpty()) {
+        SensorDefectMask.empty(staticMask.width, staticMask.height)
     } else {
-        SensorDefectMask(
+        val candidate = SensorDefectMask(
             staticMask.width,
             staticMask.height,
             regions,
-            enabled = false,
-            rejectionReason = "masked_source_fraction_exceeds_limit"
+            enabled = true
         )
+        if (candidate.maskedSourceFraction <= policy.maximumMaskedSourceFraction) {
+            candidate
+        } else {
+            SensorDefectMask(
+                staticMask.width,
+                staticMask.height,
+                regions,
+                enabled = false,
+                rejectionReason = "masked_source_fraction_exceeds_limit"
+            )
+        }
     }
+    val validationProfile = SensorDefectMaskBuildStageProfile(
+        elapsedNanos = System.nanoTime() - validationStarted,
+        inputCount = footprints.size,
+        outputCount = regions.size,
+        processedPixels =
+            footprints.size.toLong() * frames.sumOf { it.stars.size.toLong() } +
+                staticMask.width.toLong() * staticMask.height,
+        estimatedAllocatedBytes =
+            staticMask.width.toLong() * staticMask.height +
+                mask.footprintPixels.size * SENSOR_FOOTPRINT_PIXEL_BYTES_ESTIMATE
+    )
+    return ProfiledSensorDefectMask(
+        mask,
+        recurrenceProfile,
+        footprintProfile,
+        validationProfile
+    )
 }
 
 private fun stableSensorDefectRegionId(region: StaticArtifactRegion): String =
@@ -259,3 +363,7 @@ private fun rasterizedEllipse(
         }
     }
 }
+
+private const val REFERENCE_BYTES_ESTIMATE = 8L
+private const val PAIR_BYTES_ESTIMATE = 24L
+private const val SENSOR_FOOTPRINT_PIXEL_BYTES_ESTIMATE = 24L
