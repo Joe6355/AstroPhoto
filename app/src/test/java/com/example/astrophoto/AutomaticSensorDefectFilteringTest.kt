@@ -541,8 +541,8 @@ class AutomaticSensorDefectFilteringTest {
             )
         }
 
-        val baseline = integrateFixture(fixture, plan, null)
-        val disabledMaskReplay = integrateFixture(
+        val baseline = integrateFixtureForAutomaticReplay(fixture, plan, null)
+        val disabledMaskReplay = integrateFixtureForAutomaticReplay(
             fixture,
             plan,
             SensorDefectMask.empty(
@@ -555,7 +555,7 @@ class AutomaticSensorDefectFilteringTest {
         assertEquals(baseline.acceptedFrames, disabledMaskReplay.acceptedFrames)
         assertFalse(disabledMaskReplay.filtering.sampleLevelFilteringApplied)
         assertEquals(0L, disabledMaskReplay.filtering.excludedSampleCount)
-        val filtered = integrateFixture(fixture, plan, automaticMask.mask)
+        val filtered = integrateFixtureForAutomaticReplay(fixture, plan, automaticMask.mask)
         assertEquals(baseline.acceptedFrames, filtered.acceptedFrames)
         assertEquals(0, filtered.filtering.insufficientCoveragePixelCount)
         assertTrue(filtered.filtering.sampleLevelFilteringApplied)
@@ -651,86 +651,6 @@ class AutomaticSensorDefectFilteringTest {
         val pixels: IntArray,
         val diagnostics: com.example.astrophoto.processing.jpeg.v2.model.SensorDefectFilteringReport
     )
-
-    private data class FixtureIntegrationResult(
-        val image: ArgbPixelImage,
-        val coverage: FloatArray,
-        val sensorDefectAffectedOutput: FloatArray,
-        val acceptedFrames: Int,
-        val filtering: com.example.astrophoto.processing.jpeg.v2.model.SensorDefectFilteringReport
-    )
-
-    private suspend fun integrateFixture(
-        fixture: Stage6RegressionFixture,
-        plan: ManualSequenceAlignmentPlan,
-        mask: SensorDefectMask?
-    ): FixtureIntegrationResult {
-        val width = fixture.frames.first().width
-        val height = fixture.frames.first().height
-        val output = IntArray(width * height)
-        val coverage = FloatArray(width * height)
-        val sensorDefectAffectedOutput = FloatArray(width * height)
-        val accepted = plan.frames.filter { it.accepted }
-        val diagnostics = LinearWeightedIntegrator(
-            tileCoordinator = TileProcessingCoordinator(128, 32)
-        ).integrate(
-            outputWidth = width,
-            outputHeight = height,
-            frames = accepted.map { decision ->
-                WeightedIntegrationFrame(
-                    id = decision.frameId ?: "frame-${decision.originalFrameIndex}",
-                    source = fixture.frames[decision.originalFrameIndex],
-                    transform = registration(
-                        dx = decision.shift.dx.toFloat(),
-                        dy = decision.shift.dy.toFloat()
-                    ),
-                    normalizedWeight = 1f
-                )
-            },
-            maximumWorkingMemoryBytes = 64L * 1024L * 1024L,
-            openSource = { IntArrayPixelSource(width, height, it.pixels) },
-            allowRobustClipping = false,
-            sensorDefectMask = mask,
-            writeTile = { tile, pixels ->
-                for (row in 0 until tile.height) {
-                    pixels.copyInto(
-                        output,
-                        destinationOffset = (tile.top + row) * width + tile.left,
-                        startIndex = row * tile.width,
-                        endIndex = (row + 1) * tile.width
-                    )
-                }
-            },
-            writeCoverageTile = { tile, values ->
-                for (row in 0 until tile.height) {
-                    values.copyInto(
-                        coverage,
-                        destinationOffset = (tile.top + row) * width + tile.left,
-                        startIndex = row * tile.width,
-                        endIndex = (row + 1) * tile.width
-                    )
-                }
-            },
-            writeSensorDefectAffectedTile = { tile, values ->
-                for (row in 0 until tile.height) {
-                    for (column in 0 until tile.width) {
-                        val sourceIndex = row * tile.width + column
-                        val destinationIndex =
-                            (tile.top + row) * width + tile.left + column
-                        sensorDefectAffectedOutput[destinationIndex] =
-                            if (values[sourceIndex]) 1f else 0f
-                    }
-                }
-            }
-        )
-        return FixtureIntegrationResult(
-            ArgbPixelImage(width, height, output),
-            coverage,
-            sensorDefectAffectedOutput,
-            diagnostics.acceptedFrames,
-            diagnostics.sensorDefectFiltering
-        )
-    }
 
     private suspend fun integrate(
         sources: List<IntArray>,
@@ -991,8 +911,8 @@ class AutomaticSensorDefectFilteringTest {
         referenceSkyMask: com.example.astrophoto.processing.jpeg.v2.model.SkyMaskResult,
         referenceStars: List<DetectedStar>,
         sensorDefectMask: SensorDefectMask,
-        unmaskedIntegration: FixtureIntegrationResult,
-        maskedIntegration: FixtureIntegrationResult
+        unmaskedIntegration: FixtureAutomaticIntegrationReplay,
+        maskedIntegration: FixtureAutomaticIntegrationReplay
     ) {
         val registrationConfidence = plan.frames
             .filter { it.accepted }
