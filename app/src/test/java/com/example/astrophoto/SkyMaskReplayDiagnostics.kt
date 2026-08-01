@@ -744,9 +744,14 @@ internal class ReplayAdaptiveSkyProcessor {
         frameCount: Int,
         stars: List<DetectedStar>,
         stretchOperationMode: ReplayStretchOperationMode = ReplayStretchOperationMode.PRODUCTION_CURRENT,
+        stretchBlendMode: ReplayStretchBlendMode = ReplayStretchBlendMode.CURRENT,
         compositionAlpha: AlphaMask = alpha
     ): ReplayProcessedSky {
         require(compositionAlpha.width == alpha.width && compositionAlpha.height == alpha.height)
+        require(
+            stretchOperationMode != ReplayStretchOperationMode.PRODUCTION_CURRENT ||
+                stretchBlendMode == ReplayStretchBlendMode.CURRENT
+        )
         val statistics = SkyStatistics()
         val parameters = ExistingPresetParameterMapper.parametersFor(profile, frameCount)
         val before = statistics.calculate(stackedSky, alpha, stars)
@@ -775,14 +780,14 @@ internal class ReplayAdaptiveSkyProcessor {
                 parameters.stretchBlend, parameters.asinhStrength,
                 parameters.highlightProtection, parameters.maximumSkyMedianFactor,
                 parameters.minimumBlackWhiteSeparation, parameters.targetDisplaySkyMedian,
-                ReplayStretchOperationMode.BYPASS
+                ReplayStretchOperationMode.BYPASS, stretchBlendMode
             )
             else -> ReplayAdaptiveAsinhStretch().apply(
                 working, alpha, stars, current,
                 parameters.stretchBlend, parameters.asinhStrength,
                 parameters.highlightProtection, parameters.maximumSkyMedianFactor,
                 parameters.minimumBlackWhiteSeparation, parameters.targetDisplaySkyMedian,
-                stretchOperationMode
+                stretchOperationMode, stretchBlendMode
             )
         }
         working = stretchResult.image

@@ -14,6 +14,7 @@ $userProfile = [Environment]::GetFolderPath('UserProfile')
 $configuredJava = [Environment]::GetEnvironmentVariable('JAVA_HOME')
 $javaCandidates = @(
     $configuredJava,
+    [System.IO.Path]::Combine($userProfile, '.gradle', 'jdks', 'eclipse_adoptium-21-amd64-windows.2'),
     [System.IO.Path]::Combine($userProfile, '.gradle', 'jdks', 'temurin-17.0.20+8'),
     'C:\Program Files\Android\Android Studio\jbr'
 ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
@@ -30,6 +31,7 @@ Push-Location $repositoryRoot
 try {
     & $gradle `
         ':app:testDebugUnitTest' `
+        '--no-daemon' `
         '--tests' `
         'com.example.astrophoto.AdaptiveAsinhAblationTest.generatedReportIsCompleteAndSecondRunByteIdentical' `
         '--rerun-tasks' `

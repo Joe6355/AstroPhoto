@@ -7,6 +7,15 @@ import kotlin.math.ceil
 import kotlin.math.floor
 
 internal object AdaptiveAsinhAblationMath {
+    fun cleanStackMetrics(baseline: SkyMaskReplayBundle): SkyMaskPostProcessStageMetrics =
+        SkyMaskReplayMath.postProcessStageMetrics(
+            stages = listOf(SkyMaskPostProcessStage("clean-stack", baseline.cleanComposed)),
+            reference = baseline.reference,
+            alpha = baseline.effectiveAlpha,
+            refined = baseline.refinedMask,
+            windows = baseline.windows
+        ).single()
+
     fun strictStarMetrics(
         baseline: SkyMaskReplayBundle,
         variants: List<AdaptiveAsinhAblationVariant>
@@ -97,7 +106,8 @@ internal object AdaptiveAsinhAblationMath {
         variants: List<AdaptiveAsinhAblationVariant>,
         strictStars: List<AdaptiveAsinhStrictStarMetric>,
         boundaries: List<AdaptiveAsinhBoundaryMetric>,
-        stages: List<AdaptiveAsinhStageMetric>
+        stages: List<AdaptiveAsinhStageMetric>,
+        cleanStack: SkyMaskPostProcessStageMetrics
     ): List<AdaptiveAsinhGlobalMetrics> {
         val preliminary = variants.filter { it.available }.map { variant ->
             val composedMetric = stages.single {
@@ -163,13 +173,15 @@ internal object AdaptiveAsinhAblationMath {
         val current = preliminary.single { it.variant == AdaptiveAsinhAblationVariantId.CURRENT }
         return preliminary.map { value ->
             val id = value.variant
-            val allowedVariant = id == AdaptiveAsinhAblationVariantId.FULL_STRETCH_SINGLE_COMPOSE ||
-                id == AdaptiveAsinhAblationVariantId.LINEAR_ALPHA_THEN_COMPOSE
+            val allowedVariant = id != AdaptiveAsinhAblationVariantId.CURRENT && id.rootCauseEligible
             value.copy(
                 acceptableProductionCandidate = allowedVariant &&
                     value.processedAccepted &&
+                    value.selectedCandidate == "PROCESSED" &&
+                    value.skyMad < cleanStack.skyMad - EPSILON &&
+                    value.bandingProxy < cleanStack.bandingProxy - EPSILON &&
                     value.bandingProxy < current.bandingProxy &&
-                    value.boundaryEdgeExcess < current.boundaryEdgeExcess &&
+                    value.boundaryEdgeExcess <= current.boundaryEdgeExcess + EPSILON &&
                     value.meanHaloScore <= current.meanHaloScore + EPSILON &&
                     value.meanLeakageScore <= current.meanLeakageScore + EPSILON &&
                     value.foregroundMeanChange <= current.foregroundMeanChange + EPSILON &&
@@ -179,40 +191,42 @@ internal object AdaptiveAsinhAblationMath {
         }
     }
 
-    fun rootCause(metrics: List<AdaptiveAsinhGlobalMetrics>): Triple<AdaptiveAsinhRootCause, String, String?> {
+    fun rootCause(
+        metrics: List<AdaptiveAsinhGlobalMetrics>,
+        variants: List<AdaptiveAsinhAblationVariant>,
+        cleanStack: SkyMaskPostProcessStageMetrics
+    ): Triple<AdaptiveAsinhRootCause, String, String?> {
         val current = metrics.single { it.variant == AdaptiveAsinhAblationVariantId.CURRENT }
-        val full = metrics.single { it.variant == AdaptiveAsinhAblationVariantId.FULL_STRETCH_SINGLE_COMPOSE }
-        val linear = metrics.single { it.variant == AdaptiveAsinhAblationVariantId.LINEAR_ALPHA_THEN_COMPOSE }
-        return when {
-            full.acceptableProductionCandidate -> Triple(
-                AdaptiveAsinhRootCause.DOUBLE_ALPHA_CONFIRMED,
-                "CURRENT rejected=${current.rejectionReasons.joinToString("|")}; " +
-                    "V1 accepted=${full.processedAccepted}; banding=${format(current.bandingProxy)}->${format(full.bandingProxy)}; " +
-                    "boundary=${format(current.boundaryEdgeExcess)}->${format(full.boundaryEdgeExcess)}; " +
-                    "composition and effective alpha unchanged",
-                "operationStrength=1; keep the existing effective-alpha composition unchanged"
-            )
-            linear.acceptableProductionCandidate -> Triple(
-                AdaptiveAsinhRootCause.SQRT_ALPHA_SPECIFIC_REGRESSION,
-                "V2 changes only sqrt(alpha) to alpha and passes unchanged quality/star/defect gates; " +
-                    "banding=${format(current.bandingProxy)}->${format(linear.bandingProxy)}; " +
-                    "boundary=${format(current.boundaryEdgeExcess)}->${format(linear.boundaryEdgeExcess)}",
-                "operationStrength=effectiveAlpha; keep the existing composer unchanged"
-            )
-            !full.processedAccepted &&
-                full.rejectionReasons.containsAll(current.rejectionReasons) &&
-                full.bandingProxy >= current.bandingProxy - EPSILON &&
-                full.boundaryEdgeExcess >= current.boundaryEdgeExcess - EPSILON -> Triple(
-                AdaptiveAsinhRootCause.GENERAL_STRETCH_PARAMETER_ERROR,
-                "Full-strength single-compose preserves the CURRENT quality failures without reducing both bad metrics",
-                null
-            )
-            else -> Triple(
-                AdaptiveAsinhRootCause.INSUFFICIENT_EVIDENCE,
-                "No isolated production-eligible variant satisfies the unchanged quality, boundary, foreground, star, and sensor-defect gates",
+        val isolated = metrics.filter { it.variant != AdaptiveAsinhAblationVariantId.CURRENT }
+        val qualityRecovered = isolated.filter {
+            it.processedAccepted &&
+                it.selectedCandidate == "PROCESSED" &&
+                it.rejectionReasons.none(current.rejectionReasons::contains)
+        }
+        if (qualityRecovered.isEmpty()) {
+            return Triple(
+                AdaptiveAsinhRootCause.TARGET_MEDIAN_ESCALATION_NOT_CONFIRMED,
+                "Every isolated lower-blend variant remains rejected by the unchanged quality policy; " +
+                    "CURRENT failures=${current.rejectionReasons.joinToString("|")}",
                 null
             )
         }
+        val eligible = qualityRecovered.filter(AdaptiveAsinhGlobalMetrics::acceptableProductionCandidate)
+        val selected = eligible.maxByOrNull { metric ->
+            variants.single { it.id == metric.variant }.stretchDiagnostics.appliedBlend
+        }
+        val recoveredSummary = qualityRecovered.joinToString(",") { value ->
+            "${value.variant.stableId}@${format(value.bandingProxy)}"
+        }
+        return Triple(
+            AdaptiveAsinhRootCause.TARGET_MEDIAN_ESCALATION_CONFIRMED,
+            "Changing only appliedBlend selection removes CURRENT quality failures for $recoveredSummary; " +
+                "CURRENT banding=${format(current.bandingProxy)}; clean-stack banding=${format(cleanStack.bandingProxy)}; " +
+                "best recovered banding=${format(qualityRecovered.minOf { it.bandingProxy })}",
+            selected?.let {
+                "${it.variant.stableId}: ${it.variant.appliedBlendDescription}"
+            }
+        )
     }
 
     private fun transitionBandVariance(

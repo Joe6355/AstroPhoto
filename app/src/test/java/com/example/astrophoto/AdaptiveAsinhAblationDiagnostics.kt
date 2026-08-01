@@ -1,7 +1,7 @@
 package com.example.astrophoto
 
 import com.example.astrophoto.processing.jpeg.v2.model.AlphaMask
-import com.example.astrophoto.processing.jpeg.v2.model.SkyMask
+import com.example.astrophoto.processing.jpeg.v2.postprocessing.SkyStatistics
 import com.example.astrophoto.processing.jpeg.v2.profile.ExistingPresetParameterMapper
 import java.nio.file.Files
 import java.nio.file.Path
@@ -24,6 +24,7 @@ internal class AdaptiveAsinhAblationDiagnosticRunner {
             baseline,
             AdaptiveAsinhAblationVariantId.CURRENT,
             ReplayStretchOperationMode.PRODUCTION_CURRENT,
+            ReplayStretchBlendMode.CURRENT,
             baseline.effectiveAlpha,
             profile
         )
@@ -37,6 +38,7 @@ internal class AdaptiveAsinhAblationDiagnosticRunner {
             baseline,
             AdaptiveAsinhAblationVariantId.CURRENT,
             ReplayStretchOperationMode.SQRT_ALPHA,
+            ReplayStretchBlendMode.CURRENT,
             baseline.effectiveAlpha,
             profile
         )
@@ -50,47 +52,53 @@ internal class AdaptiveAsinhAblationDiagnosticRunner {
             }
         }
 
-        val binarySkySelection = alphaFrom(baseline.skySelection)
-        val binaryRefined = alphaFrom(baseline.refinedMask)
-        val variants = listOf(
-            current,
-            processVariant(
-                baseline,
-                AdaptiveAsinhAblationVariantId.FULL_STRETCH_SINGLE_COMPOSE,
-                ReplayStretchOperationMode.FULL,
-                baseline.effectiveAlpha,
-                profile
-            ),
-            processVariant(
-                baseline,
-                AdaptiveAsinhAblationVariantId.LINEAR_ALPHA_THEN_COMPOSE,
-                ReplayStretchOperationMode.LINEAR_ALPHA,
-                baseline.effectiveAlpha,
-                profile
-            ),
-            processVariant(
-                baseline,
-                AdaptiveAsinhAblationVariantId.SQRT_ALPHA_NO_SECOND_COMPOSE,
-                ReplayStretchOperationMode.PRODUCTION_CURRENT,
-                binarySkySelection,
-                profile
-            ),
-            processVariant(
-                baseline,
-                AdaptiveAsinhAblationVariantId.FULL_STRETCH_HARD_COMPOSE,
-                ReplayStretchOperationMode.FULL,
-                binaryRefined,
-                profile
-            ),
-            processVariant(
-                baseline,
-                AdaptiveAsinhAblationVariantId.NO_STRETCH,
-                ReplayStretchOperationMode.BYPASS,
-                baseline.effectiveAlpha,
-                profile
-            )
-        )
+        val variants = buildList {
+            add(current)
+            AdaptiveAsinhAblationVariantId.entries.drop(1).forEach { id ->
+                add(processVariant(
+                    baseline = baseline,
+                    id = id,
+                    operationMode = ReplayStretchOperationMode.SQRT_ALPHA,
+                    blendMode = id.blendMode,
+                    compositionAlpha = baseline.effectiveAlpha,
+                    profile = profile
+                ))
+            }
+        }
         require(variants.map { it.id } == AdaptiveAsinhAblationVariantId.entries)
+
+        val neutralized = baseline.postProcessingStages.single {
+            it.id == "02-background-neutralization"
+        }.image
+        val stretchStatistics = SkyStatistics().calculate(
+            neutralized,
+            baseline.effectiveAlpha,
+            baseline.alignedStackStars
+        )
+        val blend = ReplayAdaptiveAsinhStretch.calculateBlend(
+            statistics = stretchStatistics,
+            stretchBlend = parameters.stretchBlend,
+            asinhStrength = parameters.asinhStrength,
+            blackPoint = current.stretchDiagnostics.blackPoint,
+            whitePoint = current.stretchDiagnostics.whitePoint,
+            minimumBlackWhiteSeparation = parameters.minimumBlackWhiteSeparation,
+            targetDisplaySkyMedian = parameters.targetDisplaySkyMedian
+        )
+        require(blend.currentAppliedBlend == current.stretchDiagnostics.appliedBlend)
+        val blendFormula = AdaptiveAsinhBlendFormula(
+            configuredBlend = blend.configuredBlend,
+            statisticsConfidence = stretchStatistics.confidence,
+            confidenceScale = blend.confidenceScale,
+            statisticsMedian = blend.statisticsMedian,
+            targetLinearMedian = blend.targetLinearMedian,
+            medianNormalized = blend.medianNormalized,
+            fullyMappedMedian = blend.fullyMappedMedian,
+            rawTargetBlend = blend.rawTargetBlend,
+            targetBlend = blend.targetBlend,
+            configuredContribution = blend.configuredContribution,
+            targetMedianContribution = blend.targetMedianContribution,
+            currentAppliedBlend = blend.currentAppliedBlend
+        )
 
         val hashes = baselineHashes(baseline)
         val fingerprint = parameterFingerprint(parameters)
@@ -114,19 +122,23 @@ internal class AdaptiveAsinhAblationDiagnosticRunner {
         val strictStars = AdaptiveAsinhAblationMath.strictStarMetrics(baseline, variants)
         val boundaries = AdaptiveAsinhAblationMath.boundaryMetrics(baseline, variants)
         val stageMetrics = AdaptiveAsinhAblationMath.stageMetrics(baseline, variants)
+        val cleanStackMetrics = AdaptiveAsinhAblationMath.cleanStackMetrics(baseline)
         val global = AdaptiveAsinhAblationMath.globalMetrics(
             baseline,
             variants,
             strictStars,
             boundaries,
-            stageMetrics
+            stageMetrics,
+            cleanStackMetrics
         )
-        val rootCause = AdaptiveAsinhAblationMath.rootCause(global)
+        val rootCause = AdaptiveAsinhAblationMath.rootCause(global, variants, cleanStackMetrics)
         val productionHashAfter = treeHash(productionRoot)
         return AdaptiveAsinhAblationBundle(
             baseline = baseline,
             baselineHashes = hashes,
+            cleanStackMetrics = cleanStackMetrics,
             parameters = parameters,
+            blendFormula = blendFormula,
             contracts = contracts,
             variants = variants,
             globalMetrics = global,
@@ -146,6 +158,7 @@ internal class AdaptiveAsinhAblationDiagnosticRunner {
         baseline: SkyMaskReplayBundle,
         id: AdaptiveAsinhAblationVariantId,
         operationMode: ReplayStretchOperationMode,
+        blendMode: ReplayStretchBlendMode,
         compositionAlpha: AlphaMask,
         profile: AstroProcessingProfile
     ): AdaptiveAsinhAblationVariant {
@@ -157,6 +170,7 @@ internal class AdaptiveAsinhAblationDiagnosticRunner {
             frameCount = baseline.acceptedOriginalFrameIndices.size,
             stars = baseline.alignedStackStars,
             stretchOperationMode = operationMode,
+            stretchBlendMode = blendMode,
             compositionAlpha = compositionAlpha
         )
         val selection = selectReplayCandidate(
@@ -204,6 +218,7 @@ internal class AdaptiveAsinhAblationDiagnosticRunner {
             available = true,
             unavailableReason = null,
             operationMode = operationMode,
+            blendMode = blendMode,
             compositionAlpha = compositionAlpha,
             stages = stages,
             processedSky = replay.processedSky,
@@ -255,22 +270,9 @@ internal class AdaptiveAsinhAblationDiagnosticRunner {
         )
     }
 
-    private fun alphaFrom(mask: SkyMask): AlphaMask {
-        val pixels = mask.copyPixels()
-        return AlphaMask(mask.width, mask.height, FloatArray(pixels.size) { if (pixels[it]) 1f else 0f })
-    }
-
     private fun changedCondition(id: AdaptiveAsinhAblationVariantId): String = when (id) {
         AdaptiveAsinhAblationVariantId.CURRENT -> "none; exact production behavior"
-        AdaptiveAsinhAblationVariantId.FULL_STRETCH_SINGLE_COMPOSE ->
-            "operationStrength sqrt(effectiveAlpha) -> 1"
-        AdaptiveAsinhAblationVariantId.LINEAR_ALPHA_THEN_COMPOSE ->
-            "operationStrength sqrt(effectiveAlpha) -> effectiveAlpha"
-        AdaptiveAsinhAblationVariantId.SQRT_ALPHA_NO_SECOND_COMPOSE ->
-            "compositionAlpha effectiveAlpha -> binary skySelection"
-        AdaptiveAsinhAblationVariantId.FULL_STRETCH_HARD_COMPOSE ->
-            "negative control changes operationStrength and compositionAlpha; excluded from root-cause inference"
-        AdaptiveAsinhAblationVariantId.NO_STRETCH -> "AdaptiveAsinhStretch bypass only"
+        else -> "appliedBlend policy CURRENT -> ${id.appliedBlendDescription}"
     }
 
     private fun parameterFingerprint(value: com.example.astrophoto.processing.jpeg.v2.model.AdaptiveProcessingParameters): String =

@@ -6,62 +6,85 @@ import com.example.astrophoto.processing.jpeg.v2.model.StretchDiagnostics
 
 internal enum class AdaptiveAsinhAblationVariantId(
     val stableId: String,
-    val operationDescription: String,
-    val compositionDescription: String,
+    val blendMode: ReplayStretchBlendMode,
+    val appliedBlendDescription: String,
     val changedVariables: Int,
     val rootCauseEligible: Boolean
 ) {
     CURRENT(
-        "v0-current",
-        "sqrt(effectiveAlpha)",
-        "effectiveAlpha",
+        "t0-current",
+        ReplayStretchBlendMode.CURRENT,
+        "max(configuredBlend*confidenceScale, targetBlend*confidenceScale)",
         0,
         true
     ),
-    FULL_STRETCH_SINGLE_COMPOSE(
-        "v1-full-stretch-single-compose",
-        "1",
-        "effectiveAlpha",
+    HONEST_BLEND(
+        "t1-honest-blend",
+        ReplayStretchBlendMode.HONEST_BLEND,
+        "configuredBlend",
         1,
         true
     ),
-    LINEAR_ALPHA_THEN_COMPOSE(
-        "v2-linear-alpha-then-compose",
-        "effectiveAlpha",
-        "effectiveAlpha",
+    CAPPED_BLEND_025(
+        "t2-capped-blend-025",
+        ReplayStretchBlendMode.CAPPED_025,
+        "min(currentAppliedBlend, 0.25)",
         1,
         true
     ),
-    SQRT_ALPHA_NO_SECOND_COMPOSE(
-        "v3-sqrt-alpha-no-second-compose",
-        "sqrt(effectiveAlpha)",
-        "1 inside binary skySelection; 0 outside",
+    CAPPED_BLEND_035(
+        "t2-capped-blend-035",
+        ReplayStretchBlendMode.CAPPED_035,
+        "min(currentAppliedBlend, 0.35)",
         1,
         true
     ),
-    FULL_STRETCH_HARD_COMPOSE(
-        "v4-full-stretch-hard-compose",
-        "1",
-        "binary refinedMask",
-        2,
-        false
-    ),
-    NO_STRETCH(
-        "v5-no-stretch",
-        "stretch bypassed",
-        "effectiveAlpha",
+    CAPPED_BLEND_050(
+        "t2-capped-blend-050",
+        ReplayStretchBlendMode.CAPPED_050,
+        "min(currentAppliedBlend, 0.50)",
         1,
         true
-    )
+    ),
+    CAPPED_BLEND_075(
+        "t2-capped-blend-075",
+        ReplayStretchBlendMode.CAPPED_075,
+        "min(currentAppliedBlend, 0.75)",
+        1,
+        true
+    ),
+    TARGET_MEDIAN_DISABLED(
+        "t3-target-median-disabled",
+        ReplayStretchBlendMode.TARGET_MEDIAN_DISABLED,
+        "configuredBlend*confidenceScale",
+        1,
+        true
+    );
+
+    val operationDescription: String get() = "sqrt(effectiveAlpha)"
+    val compositionDescription: String get() = "effectiveAlpha"
 }
 
 internal enum class AdaptiveAsinhRootCause {
-    DOUBLE_ALPHA_CONFIRMED,
-    SQRT_ALPHA_SPECIFIC_REGRESSION,
-    GENERAL_STRETCH_PARAMETER_ERROR,
-    COMPOSITION_INTERACTION_NOT_ISOLATED,
+    TARGET_MEDIAN_ESCALATION_CONFIRMED,
+    TARGET_MEDIAN_ESCALATION_NOT_CONFIRMED,
     INSUFFICIENT_EVIDENCE
 }
+
+internal data class AdaptiveAsinhBlendFormula(
+    val configuredBlend: Float,
+    val statisticsConfidence: Float,
+    val confidenceScale: Float,
+    val statisticsMedian: Float,
+    val targetLinearMedian: Float,
+    val medianNormalized: Float,
+    val fullyMappedMedian: Float,
+    val rawTargetBlend: Float,
+    val targetBlend: Float,
+    val configuredContribution: Float,
+    val targetMedianContribution: Float,
+    val currentAppliedBlend: Float
+)
 
 internal data class AdaptiveAsinhAblationContract(
     val variant: AdaptiveAsinhAblationVariantId,
@@ -89,6 +112,7 @@ internal data class AdaptiveAsinhAblationVariant(
     val available: Boolean,
     val unavailableReason: String?,
     val operationMode: ReplayStretchOperationMode,
+    val blendMode: ReplayStretchBlendMode,
     val compositionAlpha: AlphaMask,
     val stages: List<AdaptiveAsinhAblationStage>,
     val processedSky: ArgbPixelImage,
@@ -160,7 +184,9 @@ internal data class AdaptiveAsinhBaselineHashes(
 internal data class AdaptiveAsinhAblationBundle(
     val baseline: SkyMaskReplayBundle,
     val baselineHashes: AdaptiveAsinhBaselineHashes,
+    val cleanStackMetrics: SkyMaskPostProcessStageMetrics,
     val parameters: AdaptiveProcessingParameters,
+    val blendFormula: AdaptiveAsinhBlendFormula,
     val contracts: List<AdaptiveAsinhAblationContract>,
     val variants: List<AdaptiveAsinhAblationVariant>,
     val globalMetrics: List<AdaptiveAsinhGlobalMetrics>,

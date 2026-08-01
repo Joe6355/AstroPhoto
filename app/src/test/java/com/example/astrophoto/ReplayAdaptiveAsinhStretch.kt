@@ -14,9 +14,47 @@ import com.example.astrophoto.processing.jpeg.v2.postprocessing.smoothStep
 import kotlin.math.asinh
 import kotlin.math.sqrt
 
+internal enum class ReplayStretchBlendMode(
+    val cap: Float? = null
+) {
+    CURRENT,
+    HONEST_BLEND,
+    CAPPED_025(0.25f),
+    CAPPED_035(0.35f),
+    CAPPED_050(0.50f),
+    CAPPED_075(0.75f),
+    TARGET_MEDIAN_DISABLED
+}
+
+internal data class ReplayAdaptiveAsinhBlendCalculation(
+    val configuredBlend: Float,
+    val confidenceScale: Float,
+    val targetLinearMedian: Float,
+    val statisticsMedian: Float,
+    val medianNormalized: Float,
+    val fullyMappedMedian: Float,
+    val rawTargetBlend: Float,
+    val targetBlend: Float,
+    val configuredContribution: Float,
+    val targetMedianContribution: Float,
+    val currentAppliedBlend: Float,
+    val denominator: Float,
+    val range: Float
+) {
+    fun appliedBlend(mode: ReplayStretchBlendMode): Float = when (mode) {
+        ReplayStretchBlendMode.CURRENT -> currentAppliedBlend
+        ReplayStretchBlendMode.HONEST_BLEND -> configuredBlend
+        ReplayStretchBlendMode.TARGET_MEDIAN_DISABLED -> configuredContribution
+        ReplayStretchBlendMode.CAPPED_025,
+        ReplayStretchBlendMode.CAPPED_035,
+        ReplayStretchBlendMode.CAPPED_050,
+        ReplayStretchBlendMode.CAPPED_075 -> minOf(currentAppliedBlend, requireNotNull(mode.cap))
+    }.coerceIn(0f, 1f)
+}
+
 /**
- * Test-only copy of AdaptiveAsinhStretch with one injected variable: the spatial
- * operation-strength multiplier. All other calculations intentionally mirror production.
+ * Test-only copy of AdaptiveAsinhStretch with injectable operation and applied-blend modes.
+ * All other calculations intentionally mirror production.
  */
 internal class ReplayAdaptiveAsinhStretch(
     private val skyStatistics: SkyStatistics = SkyStatistics()
@@ -32,7 +70,8 @@ internal class ReplayAdaptiveAsinhStretch(
         maximumSkyMedianFactor: Float,
         minimumBlackWhiteSeparation: Float,
         targetDisplaySkyMedian: Float,
-        operationMode: ReplayStretchOperationMode
+        operationMode: ReplayStretchOperationMode,
+        blendMode: ReplayStretchBlendMode = ReplayStretchBlendMode.CURRENT
     ): AdaptiveStretchResult {
         require(image.width == effectiveSkyAlpha.width && image.height == effectiveSkyAlpha.height)
         require(operationMode != ReplayStretchOperationMode.PRODUCTION_CURRENT)
@@ -58,25 +97,19 @@ internal class ReplayAdaptiveAsinhStretch(
                 )
             )
         }
-        val denominator = asinh(asinhStrength.toDouble()).toFloat().coerceAtLeast(0.0001f)
-        val range = (whitePoint - blackPoint).coerceAtLeast(minimumBlackWhiteSeparation)
-        val confidenceScale = (MIN_CONFIDENCE_SCALE +
-            (1f - MIN_CONFIDENCE_SCALE) * statistics.confidence).coerceIn(0f, 1f)
-        val targetLinearMedian = SrgbTransfer.srgbToLinear(targetDisplaySkyMedian)
-        val medianNormalized = ((statistics.luminanceMedian - blackPoint) / range).coerceIn(0f, 1f)
-        val fullyMappedMedian = (
-            asinh(asinhStrength * medianNormalized.toDouble()) / denominator
-            ).toFloat()
-        val targetBlend = if (fullyMappedMedian > statistics.luminanceMedian) {
-            ((targetLinearMedian - statistics.luminanceMedian) /
-                (fullyMappedMedian - statistics.luminanceMedian)).coerceIn(0f, 1f)
-        } else {
-            0f
-        }
-        val appliedBlend = maxOf(
-            stretchBlend.coerceIn(0f, 1f) * confidenceScale,
-            targetBlend * confidenceScale
-        ).coerceIn(0f, 1f)
+        val blend = calculateBlend(
+            statistics = statistics,
+            stretchBlend = stretchBlend,
+            asinhStrength = asinhStrength,
+            blackPoint = blackPoint,
+            whitePoint = whitePoint,
+            minimumBlackWhiteSeparation = minimumBlackWhiteSeparation,
+            targetDisplaySkyMedian = targetDisplaySkyMedian
+        )
+        val denominator = blend.denominator
+        val range = blend.range
+        val targetLinearMedian = blend.targetLinearMedian
+        val appliedBlend = blend.appliedBlend(blendMode)
         val stretchedPixels = image.pixels.copyOf()
         for (index in stretchedPixels.indices) {
             val x = index % image.width
@@ -155,7 +188,54 @@ internal class ReplayAdaptiveAsinhStretch(
         )
     }
 
-    private companion object {
+    companion object {
+        internal fun calculateBlend(
+            statistics: SkyStatisticsResult,
+            stretchBlend: Float,
+            asinhStrength: Float,
+            blackPoint: Float,
+            whitePoint: Float,
+            minimumBlackWhiteSeparation: Float,
+            targetDisplaySkyMedian: Float
+        ): ReplayAdaptiveAsinhBlendCalculation {
+            val denominator = asinh(asinhStrength.toDouble()).toFloat().coerceAtLeast(0.0001f)
+            val range = (whitePoint - blackPoint).coerceAtLeast(minimumBlackWhiteSeparation)
+            val confidenceScale = (MIN_CONFIDENCE_SCALE +
+                (1f - MIN_CONFIDENCE_SCALE) * statistics.confidence).coerceIn(0f, 1f)
+            val targetLinearMedian = SrgbTransfer.srgbToLinear(targetDisplaySkyMedian)
+            val medianNormalized = ((statistics.luminanceMedian - blackPoint) / range)
+                .coerceIn(0f, 1f)
+            val fullyMappedMedian = (
+                asinh(asinhStrength * medianNormalized.toDouble()) / denominator
+                ).toFloat()
+            val rawTargetBlend = if (fullyMappedMedian > statistics.luminanceMedian) {
+                (targetLinearMedian - statistics.luminanceMedian) /
+                    (fullyMappedMedian - statistics.luminanceMedian)
+            } else {
+                0f
+            }
+            val targetBlend = rawTargetBlend.coerceIn(0f, 1f)
+            val configured = stretchBlend.coerceIn(0f, 1f)
+            val configuredContribution = configured * confidenceScale
+            val targetMedianContribution = targetBlend * confidenceScale
+            return ReplayAdaptiveAsinhBlendCalculation(
+                configuredBlend = configured,
+                confidenceScale = confidenceScale,
+                targetLinearMedian = targetLinearMedian,
+                statisticsMedian = statistics.luminanceMedian,
+                medianNormalized = medianNormalized,
+                fullyMappedMedian = fullyMappedMedian,
+                rawTargetBlend = rawTargetBlend,
+                targetBlend = targetBlend,
+                configuredContribution = configuredContribution,
+                targetMedianContribution = targetMedianContribution,
+                currentAppliedBlend = maxOf(configuredContribution, targetMedianContribution)
+                    .coerceIn(0f, 1f),
+                denominator = denominator,
+                range = range
+            )
+        }
+
         const val HIGHLIGHT_START = 0.52f
         const val MIN_CONFIDENCE_SCALE = 0.18f
         const val MIN_LUMINANCE = 0.000001f

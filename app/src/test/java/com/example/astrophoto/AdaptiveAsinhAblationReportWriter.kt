@@ -12,6 +12,7 @@ internal object AdaptiveAsinhAblationReportWriter {
         if (Files.exists(outputRoot)) outputRoot.toFile().deleteRecursively()
         Files.createDirectories(outputRoot)
         writeText(outputRoot.resolve("baseline-hashes.json"), baselineHashes(bundle))
+        writeText(outputRoot.resolve("clean-stack-metrics.json"), cleanStackMetrics(bundle))
         writeText(outputRoot.resolve("current-formula.md"), currentFormula(bundle))
         writeText(outputRoot.resolve("ablation-contract.json"), contract(bundle))
         writeText(outputRoot.resolve("ablation-summary.csv"), summaryCsv(bundle))
@@ -73,9 +74,22 @@ internal object AdaptiveAsinhAblationReportWriter {
         }
     }
 
+    private fun cleanStackMetrics(bundle: AdaptiveAsinhAblationBundle): String =
+        with(bundle.cleanStackMetrics) {
+            buildString {
+                appendLine("{")
+                appendLine("  \"measurementImage\": \"cleanComposed\",")
+                appendLine("  \"skyMad\": ${number(skyMad)},")
+                appendLine("  \"bandingProxy\": ${number(bandingProxy)},")
+                appendLine("  \"boundaryEdgeExcess\": ${number(boundaryEdgeExcess)}")
+                appendLine("}")
+            }
+        }
+
     private fun currentFormula(bundle: AdaptiveAsinhAblationBundle): String {
         val p = bundle.parameters
         val d = bundle.baseline.currentStretchDiagnostics
+        val f = bundle.blendFormula
         return buildString {
             appendLine("# CURRENT AdaptiveAsinhStretch formula")
             appendLine()
@@ -109,12 +123,28 @@ internal object AdaptiveAsinhAblationReportWriter {
                 "`targetDisplaySkyMedian=${p.targetDisplaySkyMedian}`.")
             appendLine("Measured CURRENT diagnostics: `blackPoint=${d.blackPoint}`, `whitePoint=${d.whitePoint}`, " +
                 "`appliedBlend=${d.appliedBlend}`, `combinedMedianSafetyScale=${d.medianSafetyScale}`.")
+            appendLine()
+            appendLine("Exact target-median branch values:")
+            appendLine()
+            appendLine("```text")
+            appendLine("statisticsConfidence=${f.statisticsConfidence}")
+            appendLine("confidenceScale=${f.confidenceScale}")
+            appendLine("statisticsMedian=${f.statisticsMedian}")
+            appendLine("targetLinearMedian=${f.targetLinearMedian}")
+            appendLine("medianNormalized=${f.medianNormalized}")
+            appendLine("fullyMappedMedian=${f.fullyMappedMedian}")
+            appendLine("rawTargetBlend=${f.rawTargetBlend}")
+            appendLine("targetBlend=${f.targetBlend}")
+            appendLine("configuredContribution=${f.configuredBlend}*${f.confidenceScale}=${f.configuredContribution}")
+            appendLine("targetMedianContribution=${f.targetBlend}*${f.confidenceScale}=${f.targetMedianContribution}")
+            appendLine("currentAppliedBlend=max(${f.configuredContribution}, ${f.targetMedianContribution})=${f.currentAppliedBlend}")
+            appendLine("```")
         }
     }
 
     private fun contract(bundle: AdaptiveAsinhAblationBundle): String = buildString {
         appendLine("{")
-        appendLine("  \"schemaVersion\": \"astrophoto.adaptive-asinh-ablation/1\",")
+        appendLine("  \"schemaVersion\": \"astrophoto.adaptive-asinh-ablation/2\",")
         appendLine("  \"mode\": \"test-only-replay\",")
         appendLine("  \"productionProcessingChanged\": false,")
         appendLine("  \"fixture\": \"urban-window-30\",")
@@ -127,6 +157,7 @@ internal object AdaptiveAsinhAblationReportWriter {
             appendLine("      \"changedCondition\": ${json(value.changedCondition)},")
             appendLine("      \"changedVariables\": ${value.variant.changedVariables},")
             appendLine("      \"rootCauseEligible\": ${value.variant.rootCauseEligible},")
+            appendLine("      \"appliedBlendPolicy\": ${json(value.variant.appliedBlendDescription)},")
             appendLine("      \"operationStrength\": ${json(value.variant.operationDescription)},")
             appendLine("      \"compositionAlpha\": ${json(value.variant.compositionDescription)},")
             appendLine("      \"sharedInputArgbSha256\": ${json(value.sharedInputArgbSha256)},")
@@ -146,10 +177,13 @@ internal object AdaptiveAsinhAblationReportWriter {
     }
 
     private fun summaryCsv(bundle: AdaptiveAsinhAblationBundle): String = buildString {
-        appendLine("variant,sky_mad,banding_proxy,boundary_edge_excess,halo,leakage,foreground_change,luminance_mean,luminance_median,clipped_low_pixels,clipped_high_pixels,chroma_residual,sensor_defect_residual,strict_star_gate,processed_accepted,acceptable_production_candidate")
+        appendLine("variant,blend_policy,applied_blend,sky_mad,banding_proxy,boundary_edge_excess,halo,leakage,foreground_change,luminance_mean,luminance_median,clipped_low_pixels,clipped_high_pixels,chroma_residual,sensor_defect_residual,strict_star_gate,processed_accepted,acceptable_production_candidate")
         bundle.globalMetrics.forEach { value ->
+            val variant = bundle.variants.single { it.id == value.variant }
             appendLine(listOf(
-                csv(value.variant.stableId), number(value.skyMad), number(value.bandingProxy),
+                csv(value.variant.stableId), csv(value.variant.appliedBlendDescription),
+                number(variant.stretchDiagnostics.appliedBlend.toDouble()),
+                number(value.skyMad), number(value.bandingProxy),
                 number(value.boundaryEdgeExcess), number(value.meanHaloScore),
                 number(value.meanLeakageScore), number(value.foregroundMeanChange),
                 number(value.luminanceMean), number(value.luminanceMedian),
@@ -199,10 +233,12 @@ internal object AdaptiveAsinhAblationReportWriter {
     }
 
     private fun qualityCsv(bundle: AdaptiveAsinhAblationBundle): String = buildString {
-        appendLine("variant,processed_accepted,rejection_reasons,selected_candidate,production_candidate_eligible")
+        appendLine("variant,applied_blend,processed_accepted,rejection_reasons,selected_candidate,production_candidate_eligible")
         bundle.globalMetrics.forEach { value ->
+            val variant = bundle.variants.single { it.id == value.variant }
             appendLine(listOf(
-                csv(value.variant.stableId), value.processedAccepted,
+                csv(value.variant.stableId), number(variant.stretchDiagnostics.appliedBlend.toDouble()),
+                value.processedAccepted,
                 csv(value.rejectionReasons.joinToString("|")), csv(value.selectedCandidate),
                 value.acceptableProductionCandidate
             ).joinToString(","))
@@ -223,6 +259,8 @@ internal object AdaptiveAsinhAblationReportWriter {
         appendLine("  \"id\": ${json(value.id.stableId)},")
         appendLine("  \"available\": ${value.available},")
         appendLine("  \"operationMode\": ${json(value.operationMode.name)},")
+        appendLine("  \"blendMode\": ${json(value.blendMode.name)},")
+        appendLine("  \"appliedBlendPolicy\": ${json(value.id.appliedBlendDescription)},")
         appendLine("  \"operationStrength\": ${json(value.id.operationDescription)},")
         appendLine("  \"compositionAlpha\": ${json(value.id.compositionDescription)},")
         appendLine("  \"processedAccepted\": ${value.selection.processedAccepted},")
@@ -239,7 +277,7 @@ internal object AdaptiveAsinhAblationReportWriter {
     }
 
     private fun reportSummary(bundle: AdaptiveAsinhAblationBundle): String = buildString {
-        appendLine("# AdaptiveAsinhStretch test-only ablation")
+        appendLine("# AdaptiveAsinhStretch target-median test-only ablation")
         appendLine()
         appendLine("> TEST-ONLY ABLATION — PRODUCTION PROCESSING UNCHANGED")
         appendLine()
@@ -248,6 +286,13 @@ internal object AdaptiveAsinhAblationReportWriter {
         appendLine("- rejected original frames: `${bundle.baseline.rejectedOriginalFrameIndices.joinToString(",")}`")
         appendLine("- CURRENT selected candidate: `${bundle.baseline.selectedCandidateType}`")
         appendLine("- CURRENT rejection reasons: `${bundle.baseline.processedCandidateRejectionReasons.joinToString("|")}`")
+        appendLine("- configured blend: `${bundle.blendFormula.configuredBlend}`")
+        appendLine("- configured contribution: `${bundle.blendFormula.configuredContribution}`")
+        appendLine("- target blend: `${bundle.blendFormula.targetBlend}`")
+        appendLine("- target-median contribution: `${bundle.blendFormula.targetMedianContribution}`")
+        appendLine("- CURRENT applied blend: `${bundle.blendFormula.currentAppliedBlend}`")
+        appendLine("- CLEAN_STACK sky MAD / banding: `${number(bundle.cleanStackMetrics.skyMad)}` / " +
+            "`${number(bundle.cleanStackMetrics.bandingProxy)}`")
         appendLine("- file-backed/replay maximum difference: `${bundle.baseline.activeFileBackedMaximumChannelDifference}`; differing pixels: `${bundle.baseline.activeFileBackedDifferentPixelCount}`")
         appendLine("- configurable sqrt(alpha) replay maximum difference: `${bundle.configurableCurrentMaximumChannelDifference}`; differing pixels: `${bundle.configurableCurrentDifferentPixelCount}`")
         appendLine("- strict confirmed stars: `${bundle.baseline.fixture.strictReferenceStarLabels.size}`")
@@ -256,13 +301,24 @@ internal object AdaptiveAsinhAblationReportWriter {
         appendLine("- root-cause decision: `${bundle.rootCause}`")
         appendLine("- production candidate: `${bundle.productionCandidate ?: "NONE — evidence insufficient"}`")
         appendLine()
-        appendLine("| Variant | Sky MAD | Banding | Boundary | Halo | Leakage | Quality |")
-        appendLine("|---|---:|---:|---:|---:|---:|---|")
+        appendLine("| Variant | Applied blend | Sky MAD | Banding | Boundary | Halo | Leakage | Quality |")
+        appendLine("|---|---:|---:|---:|---:|---:|---:|---|")
+        appendLine("| clean-stack | - | ${number(bundle.cleanStackMetrics.skyMad)} | " +
+            "${number(bundle.cleanStackMetrics.bandingProxy)} | " +
+            "${number(bundle.cleanStackMetrics.boundaryEdgeExcess)} | - | - | baseline |")
         bundle.globalMetrics.forEach { value ->
-            appendLine("| ${value.variant.stableId} | ${number(value.skyMad)} | ${number(value.bandingProxy)} | " +
+            val variant = bundle.variants.single { it.id == value.variant }
+            appendLine("| ${value.variant.stableId} | ${number(variant.stretchDiagnostics.appliedBlend.toDouble())} | " +
+                "${number(value.skyMad)} | ${number(value.bandingProxy)} | " +
                 "${number(value.boundaryEdgeExcess)} | ${number(value.meanHaloScore)} | " +
                 "${number(value.meanLeakageScore)} | ${if (value.processedAccepted) "accepted" else value.rejectionReasons.joinToString("|")} |")
         }
+        appendLine()
+        appendLine("Worst strict-star metrics across all variants: minimum flux retention " +
+            "`${number(bundle.strictStarMetrics.minOf { it.apertureFluxRetention })}`, maximum centroid shift " +
+            "`${number(bundle.strictStarMetrics.maxOf { it.centroidShift })}` px, width ratio " +
+            "`${number(bundle.strictStarMetrics.minOf { it.widthRatio })}`-`${number(bundle.strictStarMetrics.maxOf { it.widthRatio })}`, " +
+            "maximum ellipticity change `${number(bundle.strictStarMetrics.maxOf { it.ellipticityChange })}`.")
         appendLine()
         appendLine("Root-cause evidence: ${bundle.rootCauseEvidence}")
         appendLine()
@@ -270,8 +326,13 @@ internal object AdaptiveAsinhAblationReportWriter {
     }
 
     private fun html(bundle: AdaptiveAsinhAblationBundle): String {
-        val metricRows = bundle.globalMetrics.joinToString("\n") { value ->
-            "<tr><td>${htmlEscape(value.variant.stableId)}</td><td>${number(value.skyMad)}</td>" +
+        val cleanRow = "<tr><td>clean-stack</td><td>-</td><td>${number(bundle.cleanStackMetrics.skyMad)}</td>" +
+            "<td>${number(bundle.cleanStackMetrics.bandingProxy)}</td>" +
+            "<td>${number(bundle.cleanStackMetrics.boundaryEdgeExcess)}</td><td>-</td><td>-</td><td>baseline</td></tr>"
+        val metricRows = cleanRow + "\n" + bundle.globalMetrics.joinToString("\n") { value ->
+            val variant = bundle.variants.single { it.id == value.variant }
+            "<tr><td>${htmlEscape(value.variant.stableId)}</td>" +
+                "<td>${number(variant.stretchDiagnostics.appliedBlend.toDouble())}</td><td>${number(value.skyMad)}</td>" +
                 "<td>${number(value.bandingProxy)}</td><td>${number(value.boundaryEdgeExcess)}</td>" +
                 "<td>${number(value.meanHaloScore)}</td><td>${number(value.meanLeakageScore)}</td>" +
                 "<td>${htmlEscape(if (value.processedAccepted) "accepted" else value.rejectionReasons.joinToString("|"))}</td></tr>"
@@ -296,21 +357,22 @@ internal object AdaptiveAsinhAblationReportWriter {
         }.joinToString("\n")
         val variantSections = bundle.variants.joinToString("\n") { value ->
             "<section><h3>${htmlEscape(value.id.stableId)}</h3>" +
-                "<p>operation: <code>${htmlEscape(value.id.operationDescription)}</code>; composition: " +
+                "<p>applied blend: <code>${htmlEscape(value.id.appliedBlendDescription)}</code>; operation: " +
+                "<code>${htmlEscape(value.id.operationDescription)}</code>; composition: " +
                 "<code>${htmlEscape(value.id.compositionDescription)}</code></p>" +
                 "<div class=grid><figure><img src='${value.id.stableId}/01-adaptive-stretch.png'><figcaption>adaptive stretch</figcaption></figure>" +
                 "<figure><img src='${value.id.stableId}/06-composed.png'><figcaption>composed</figcaption></figure>" +
                 "<figure><img src='${value.id.stableId}/06-composed-minus-current.png'><figcaption>difference from CURRENT, x$DIFF_SCALE</figcaption></figure></div></section>"
         }
         return """<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>AdaptiveAsinhStretch test-only ablation</title>
+<html lang="en"><head><meta charset="utf-8"><title>AdaptiveAsinhStretch target-median test-only ablation</title>
 <style>body{font:14px system-ui;margin:24px;background:#10151d;color:#e6edf3}code{color:#9cdcfe}table{border-collapse:collapse;width:100%;margin:12px 0}th,td{border:1px solid #43505f;padding:6px;text-align:left}.warning{padding:12px;background:#5c2c00;font-weight:700}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}img{width:100%;image-rendering:auto}figure{margin:0}figcaption{color:#aab6c3}</style></head>
-<body><h1>AdaptiveAsinhStretch test-only ablation</h1>
+<body><h1>AdaptiveAsinhStretch target-median test-only ablation</h1>
 <p class="warning">TEST-ONLY ABLATION — PRODUCTION PROCESSING UNCHANGED</p>
 <h2>Current alpha usage</h2><pre>localBlend = appliedBlend * sqrt(effectiveAlpha) * highlightWeight
 composer = processed * effectiveAlpha + reference * (1-effectiveAlpha)</pre>
 <p>CURRENT configurable replay difference: max channel ${bundle.configurableCurrentMaximumChannelDifference}; ${bundle.configurableCurrentDifferentPixelCount} pixels.</p>
-<h2>Global and boundary result</h2><table><thead><tr><th>Variant</th><th>Sky MAD</th><th>Banding</th><th>Boundary</th><th>Halo</th><th>Leakage</th><th>Quality</th></tr></thead><tbody>$metricRows</tbody></table>
+<h2>Global and boundary result</h2><table><thead><tr><th>Variant</th><th>Applied blend</th><th>Sky MAD</th><th>Banding</th><th>Boundary</th><th>Halo</th><th>Leakage</th><th>Quality</th></tr></thead><tbody>$metricRows</tbody></table>
 <h2>Ranked comparison</h2><p>Order: production eligibility, unchanged quality acceptance, established strict-star gate, banding, then boundary excess.</p><ol>$ranked</ol>
 <h2>Root-cause conclusion</h2><p><b>${bundle.rootCause}</b>: ${htmlEscape(bundle.rootCauseEvidence)}</p><p>Production candidate: <code>${htmlEscape(bundle.productionCandidate ?: "NONE — evidence insufficient")}</code></p>
 <h2>Strict stars (all 6)</h2><table><thead><tr><th>Variant</th><th>Star</th><th>Flux retention</th><th>Peak retention</th><th>Centroid shift</th><th>Width ratio</th><th>Ellipticity change</th><th>Existing gate</th></tr></thead><tbody>$starRows</tbody></table>

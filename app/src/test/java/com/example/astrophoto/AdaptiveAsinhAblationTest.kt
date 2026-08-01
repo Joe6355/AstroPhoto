@@ -49,24 +49,15 @@ class AdaptiveAsinhAblationTest {
         val value = analyze()
         assertEquals(AdaptiveAsinhAblationVariantId.entries, value.variants.map { it.id })
         assertEquals(AdaptiveAsinhAblationVariantId.entries, value.contracts.map { it.variant })
+        assertEquals(7, value.variants.size)
         assertTrue(value.contracts.all { it.available && it.unavailableReason == null })
         assertEquals(0, value.contracts.single {
             it.variant == AdaptiveAsinhAblationVariantId.CURRENT
         }.variant.changedVariables)
-        listOf(
-            AdaptiveAsinhAblationVariantId.FULL_STRETCH_SINGLE_COMPOSE,
-            AdaptiveAsinhAblationVariantId.LINEAR_ALPHA_THEN_COMPOSE,
-            AdaptiveAsinhAblationVariantId.SQRT_ALPHA_NO_SECOND_COMPOSE,
-            AdaptiveAsinhAblationVariantId.NO_STRETCH
-        ).forEach { id ->
+        AdaptiveAsinhAblationVariantId.entries.drop(1).forEach { id ->
             assertEquals(1, value.contracts.single { it.variant == id }.variant.changedVariables)
             assertTrue(value.contracts.single { it.variant == id }.variant.rootCauseEligible)
         }
-        val hard = value.contracts.single {
-            it.variant == AdaptiveAsinhAblationVariantId.FULL_STRETCH_HARD_COMPOSE
-        }
-        assertEquals(2, hard.variant.changedVariables)
-        assertFalse(hard.variant.rootCauseEligible)
         value.contracts.forEach { contract ->
             assertEquals(value.baselineHashes.backgroundNeutralizedArgbSha256, contract.sharedInputArgbSha256)
             assertEquals(value.baselineHashes.initialMaskSha256, contract.initialMaskSha256)
@@ -79,28 +70,33 @@ class AdaptiveAsinhAblationTest {
             assertTrue(contract.qualityPolicy.contains("ResultSelectionPolicy"))
         }
         val currentAlpha = value.baseline.effectiveAlpha
-        listOf(
-            AdaptiveAsinhAblationVariantId.CURRENT,
-            AdaptiveAsinhAblationVariantId.FULL_STRETCH_SINGLE_COMPOSE,
-            AdaptiveAsinhAblationVariantId.LINEAR_ALPHA_THEN_COMPOSE,
-            AdaptiveAsinhAblationVariantId.NO_STRETCH
-        ).forEach { id -> assertAlphaEquals(
-            currentAlpha,
-            value.variants.single { it.id == id }.compositionAlpha
-        ) }
-        listOf(
-            AdaptiveAsinhAblationVariantId.SQRT_ALPHA_NO_SECOND_COMPOSE,
-            AdaptiveAsinhAblationVariantId.FULL_STRETCH_HARD_COMPOSE
-        ).forEach { id ->
-            val alpha = value.variants.single { it.id == id }.compositionAlpha
-            for (y in 0 until alpha.height) for (x in 0 until alpha.width) {
-                assertTrue(alpha.alphaAt(x, y) == 0f || alpha.alphaAt(x, y) == 1f)
+        value.variants.forEach { variant ->
+            assertAlphaEquals(currentAlpha, variant.compositionAlpha)
+            assertEquals(variant.id.blendMode, variant.blendMode)
+            if (variant.id == AdaptiveAsinhAblationVariantId.CURRENT) {
+                assertEquals(ReplayStretchOperationMode.PRODUCTION_CURRENT, variant.operationMode)
+            } else {
+                assertEquals(ReplayStretchOperationMode.SQRT_ALPHA, variant.operationMode)
             }
         }
-        val bypass = value.variants.single { it.id == AdaptiveAsinhAblationVariantId.NO_STRETCH }
+        fun applied(id: AdaptiveAsinhAblationVariantId): Float = value.variants.single {
+            it.id == id
+        }.stretchDiagnostics.appliedBlend
+        assertEquals(value.blendFormula.currentAppliedBlend,
+            applied(AdaptiveAsinhAblationVariantId.CURRENT), 0f)
+        assertEquals(0.25f, applied(AdaptiveAsinhAblationVariantId.HONEST_BLEND), 0f)
+        assertEquals(0.25f, applied(AdaptiveAsinhAblationVariantId.CAPPED_BLEND_025), 0f)
+        assertEquals(0.35f, applied(AdaptiveAsinhAblationVariantId.CAPPED_BLEND_035), 0f)
+        assertEquals(0.50f, applied(AdaptiveAsinhAblationVariantId.CAPPED_BLEND_050), 0f)
+        assertEquals(0.75f, applied(AdaptiveAsinhAblationVariantId.CAPPED_BLEND_075), 0f)
+        assertEquals(value.blendFormula.configuredContribution,
+            applied(AdaptiveAsinhAblationVariantId.TARGET_MEDIAN_DISABLED), 0f)
+        assertEquals(1f, value.blendFormula.targetBlend, 0f)
+        assertTrue(value.blendFormula.rawTargetBlend > 1f)
+        assertTrue(value.blendFormula.targetMedianContribution > value.blendFormula.configuredContribution)
         assertArrayEquals(
-            bypass.stages.single { it.id == "00-background-neutralized" }.image.pixels,
-            bypass.stages.single { it.id == "01-adaptive-stretch" }.image.pixels
+            value.variants.single { it.id == AdaptiveAsinhAblationVariantId.HONEST_BLEND }.composed.pixels,
+            value.variants.single { it.id == AdaptiveAsinhAblationVariantId.CAPPED_BLEND_025 }.composed.pixels
         )
     }
 
@@ -144,6 +140,23 @@ class AdaptiveAsinhAblationTest {
                 it.window.leakageScore.isFinite()
         })
         assertTrue(value.rootCause in AdaptiveAsinhRootCause.entries)
+        assertEquals(
+            AdaptiveAsinhRootCause.TARGET_MEDIAN_ESCALATION_CONFIRMED,
+            value.rootCause
+        )
+        assertTrue(value.productionCandidate == null)
+        assertFalse(value.globalMetrics.any { it.acceptableProductionCandidate })
+        assertEquals(
+            listOf(
+                AdaptiveAsinhAblationVariantId.HONEST_BLEND,
+                AdaptiveAsinhAblationVariantId.CAPPED_BLEND_025,
+                AdaptiveAsinhAblationVariantId.TARGET_MEDIAN_DISABLED
+            ),
+            value.globalMetrics.filter { it.processedAccepted }.map { it.variant }
+        )
+        assertTrue(value.globalMetrics.filter { it.processedAccepted }.all {
+            it.bandingProxy > value.cleanStackMetrics.bandingProxy
+        })
         value.productionCandidate?.let { candidate ->
             assertTrue(value.globalMetrics.any {
                 it.acceptableProductionCandidate && candidate.isNotBlank()
@@ -178,7 +191,8 @@ class AdaptiveAsinhAblationTest {
             assertEquals(mainSourceBefore, treeHash(Path.of("src/main")))
             assertEquals(fixtureHashesBefore, fixture.frames.map(ReplayDiagnosticHashing::sha256Argb))
             listOf(
-                "baseline-hashes.json", "current-formula.md", "ablation-contract.json",
+                "baseline-hashes.json", "clean-stack-metrics.json", "current-formula.md",
+                "ablation-contract.json",
                 "ablation-summary.csv", "ablation-stage-metrics.csv",
                 "strict-star-ablation.csv", "boundary-ablation.csv",
                 "quality-policy-results.csv", "root-cause.json", "report-summary.md",
