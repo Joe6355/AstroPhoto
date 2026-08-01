@@ -4,12 +4,9 @@ import com.example.astrophoto.processing.jpeg.v2.model.AlphaMask
 import com.example.astrophoto.processing.jpeg.v2.model.SkyMask
 import java.awt.image.BufferedImage
 import java.awt.image.DataBuffer
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
-import java.security.MessageDigest
 import java.util.Locale
 import javax.imageio.ImageIO
 import kotlin.io.path.invariantSeparatorsPathString
@@ -735,12 +732,7 @@ body{font-family:system-ui,sans-serif;background:#10131a;color:#e8edf5;margin:0;
     }
 
     private fun alphaBytes(alpha: AlphaMask): ByteArray {
-        val buffer = ByteBuffer.allocate(alpha.width * alpha.height * Float.SIZE_BYTES)
-            .order(ByteOrder.LITTLE_ENDIAN)
-        for (y in 0 until alpha.height) for (x in 0 until alpha.width) {
-            buffer.putFloat(alpha.alphaAt(x, y))
-        }
-        return buffer.array()
+        return ReplayDiagnosticHashing.alphaFloat32LittleEndianBytes(alpha)
     }
 
     private fun horizontal(images: List<ArgbPixelImage>): ArgbPixelImage {
@@ -794,24 +786,12 @@ body{font-family:system-ui,sans-serif;background:#10131a;color:#e8edf5;margin:0;
             (color and 0xFF) * 0.0722
 
     private fun sha256Argb(image: ArgbPixelImage): String {
-        val buffer = ByteBuffer.allocate(image.pixels.size * Int.SIZE_BYTES).order(ByteOrder.BIG_ENDIAN)
-        image.pixels.forEach(buffer::putInt)
-        return sha256(buffer.array())
+        return ReplayDiagnosticHashing.sha256Argb(image)
     }
 
-    private fun sha256File(path: Path): String = Files.newInputStream(path).use { input ->
-        val digest = MessageDigest.getInstance("SHA-256")
-        val buffer = ByteArray(64 * 1024)
-        while (true) {
-            val count = input.read(buffer)
-            if (count < 0) break
-            digest.update(buffer, 0, count)
-        }
-        digest.digest().joinToString("") { "%02x".format(it) }
-    }
+    private fun sha256File(path: Path): String = ReplayDiagnosticHashing.sha256File(path)
 
-    private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")
-        .digest(bytes).joinToString("") { "%02x".format(it) }
+    private fun sha256(bytes: ByteArray): String = ReplayDiagnosticHashing.sha256(bytes)
 
     private fun number(value: Double): String {
         require(value.isFinite())

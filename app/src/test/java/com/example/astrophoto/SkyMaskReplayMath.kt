@@ -188,31 +188,70 @@ internal object SkyMaskReplayMath {
         protection: SkyMask,
         currentAlpha: AlphaMask
     ): List<SkyMaskStarStageMetrics> {
-        val boundary = boundaryPixels(refined.copyPixels(), refined.width, refined.height)
         val current = variants.single { it.id == SkyMaskReplayVariantId.CURRENT }
         require(current.output.pixels.contentEquals(
             variants.single { it.id == SkyMaskReplayVariantId.CURRENT }.output.pixels
         ))
         val stages = listOf(
-            Triple("clean-stack", cleanStack, currentAlpha),
-            Triple("processed-sky", processedSky, currentAlpha),
-            Triple("composed-current", current.output, currentAlpha),
-            Triple("final-current", finalCurrent, currentAlpha),
-            Triple("no-mask", variants.single { it.id == SkyMaskReplayVariantId.NO_MASK }.output,
-                variants.single { it.id == SkyMaskReplayVariantId.NO_MASK }.alpha),
-            Triple("hard-mask", variants.single { it.id == SkyMaskReplayVariantId.HARD_MASK }.output,
-                variants.single { it.id == SkyMaskReplayVariantId.HARD_MASK }.alpha),
-            Triple("no-refine", variants.single { it.id == SkyMaskReplayVariantId.NO_REFINE }.output,
-                variants.single { it.id == SkyMaskReplayVariantId.NO_REFINE }.alpha),
-            Triple("no-protection", variants.single { it.id == SkyMaskReplayVariantId.NO_PROTECTION }.output,
-                variants.single { it.id == SkyMaskReplayVariantId.NO_PROTECTION }.alpha),
-            Triple("no-postprocess", variants.single { it.id == SkyMaskReplayVariantId.NO_POSTPROCESS }.output,
-                variants.single { it.id == SkyMaskReplayVariantId.NO_POSTPROCESS }.alpha)
+            SkyMaskStarStageInput("clean-stack", cleanStack, currentAlpha),
+            SkyMaskStarStageInput("processed-sky", processedSky, currentAlpha),
+            SkyMaskStarStageInput("composed-current", current.output, currentAlpha),
+            SkyMaskStarStageInput("final-current", finalCurrent, currentAlpha),
+            SkyMaskStarStageInput(
+                "no-mask",
+                variants.single { it.id == SkyMaskReplayVariantId.NO_MASK }.output,
+                variants.single { it.id == SkyMaskReplayVariantId.NO_MASK }.alpha
+            ),
+            SkyMaskStarStageInput(
+                "hard-mask",
+                variants.single { it.id == SkyMaskReplayVariantId.HARD_MASK }.output,
+                variants.single { it.id == SkyMaskReplayVariantId.HARD_MASK }.alpha
+            ),
+            SkyMaskStarStageInput(
+                "no-refine",
+                variants.single { it.id == SkyMaskReplayVariantId.NO_REFINE }.output,
+                variants.single { it.id == SkyMaskReplayVariantId.NO_REFINE }.alpha
+            ),
+            SkyMaskStarStageInput(
+                "no-protection",
+                variants.single { it.id == SkyMaskReplayVariantId.NO_PROTECTION }.output,
+                variants.single { it.id == SkyMaskReplayVariantId.NO_PROTECTION }.alpha
+            ),
+            SkyMaskStarStageInput(
+                "no-postprocess",
+                variants.single { it.id == SkyMaskReplayVariantId.NO_POSTPROCESS }.output,
+                variants.single { it.id == SkyMaskReplayVariantId.NO_POSTPROCESS }.alpha
+            )
         )
+        return strictStarMetricsForStages(
+            fixture,
+            cleanStack,
+            stages,
+            refined,
+            protection
+        )
+    }
+
+    fun strictStarMetricsForStages(
+        fixture: Stage6RegressionFixture,
+        cleanStack: ArgbPixelImage,
+        stages: List<SkyMaskStarStageInput>,
+        refined: SkyMask,
+        protection: SkyMask
+    ): List<SkyMaskStarStageMetrics> {
+        require(stages.isNotEmpty())
+        stages.forEach { stage ->
+            require(stage.image.width == cleanStack.width && stage.image.height == cleanStack.height)
+            require(stage.alpha.width == cleanStack.width && stage.alpha.height == cleanStack.height)
+        }
+        val boundary = boundaryPixels(refined.copyPixels(), refined.width, refined.height)
         val protected = protection.copyPixels()
         return fixture.strictReferenceStarLabels.flatMap { star ->
             val clean = measureStar(cleanStack, star.x, star.y)
-            stages.map { (stage, image, alpha) ->
+            stages.map { stageInput ->
+                val stage = stageInput.id
+                val image = stageInput.image
+                val alpha = stageInput.alpha
                 val measured = measureStar(image, star.x, star.y)
                 val aperture = apertureIndices(
                     image.width,
@@ -271,44 +310,66 @@ internal object SkyMaskReplayMath {
         protection: SkyMask,
         alpha: AlphaMask
     ): List<SkyMaskWindowMetrics> {
+        val current = variants.single { it.id == SkyMaskReplayVariantId.CURRENT }.output
+        val noPost = variants.single { it.id == SkyMaskReplayVariantId.NO_POSTPROCESS }.output
+        return windowMetricsForVariant(
+            windows,
+            reference,
+            noPost,
+            processedSky,
+            current,
+            refined,
+            protection,
+            alpha
+        )
+    }
+
+    fun windowMetricsForVariant(
+        windows: List<SkyMaskDiagnosticWindow>,
+        reference: ArgbPixelImage,
+        cleanComposed: ArgbPixelImage,
+        processedSky: ArgbPixelImage,
+        output: ArgbPixelImage,
+        refined: SkyMask,
+        protection: SkyMask,
+        alpha: AlphaMask
+    ): List<SkyMaskWindowMetrics> {
         val boundary = boundaryPixels(refined.copyPixels(), refined.width, refined.height)
         val refinedPixels = refined.copyPixels()
         val protected = protection.copyPixels()
-        val current = variants.single { it.id == SkyMaskReplayVariantId.CURRENT }.output
-        val noPost = variants.single { it.id == SkyMaskReplayVariantId.NO_POSTPROCESS }.output
         return windows.map { window ->
             val indices = cropIndices(reference.width, window)
             val nearBoundary = indices.filter { isNearSet(it, boundary, reference.width, reference.height, 3) }
             val residuals = nearBoundary.map { index ->
-                luminance(current.pixels[index]) - luminance(noPost.pixels[index])
+                luminance(output.pixels[index]) - luminance(cleanComposed.pixels[index])
             }
             val skyResidual = nearBoundary.filter { refinedPixels[it] }.map {
-                luminance(current.pixels[it]) - luminance(noPost.pixels[it])
+                luminance(output.pixels[it]) - luminance(cleanComposed.pixels[it])
             }
             val foregroundResidual = nearBoundary.filterNot { refinedPixels[it] }.map {
-                luminance(current.pixels[it]) - luminance(noPost.pixels[it])
+                luminance(output.pixels[it]) - luminance(cleanComposed.pixels[it])
             }
             val crossPairs = boundaryPairs(indices.toSet(), refinedPixels, reference.width, reference.height)
             val currentJumps = crossPairs.map { (first, second) ->
-                abs(luminance(current.pixels[first]) - luminance(current.pixels[second]))
+                abs(luminance(output.pixels[first]) - luminance(output.pixels[second]))
             }
             val referenceJumps = crossPairs.map { (first, second) ->
                 abs(luminance(reference.pixels[first]) - luminance(reference.pixels[second]))
             }
             val chromaJumps = crossPairs.map { (first, second) ->
-                abs(chroma(current.pixels[first]) - chroma(current.pixels[second]))
+                abs(chroma(output.pixels[first]) - chroma(output.pixels[second]))
             }
             val edgeResiduals = crossPairs.map { (first, second) ->
                 abs(
-                    (luminance(current.pixels[first]) - luminance(reference.pixels[first])) -
-                        (luminance(current.pixels[second]) - luminance(reference.pixels[second]))
+                    (luminance(output.pixels[first]) - luminance(reference.pixels[first])) -
+                        (luminance(output.pixels[second]) - luminance(reference.pixels[second]))
                 )
             }
             val second = nearBoundary.map { index ->
-                abs(laplacian(current, index) - laplacian(reference, index))
+                abs(laplacian(output, index) - laplacian(reference, index))
             }
-            val skyValues = nearBoundary.filter { refinedPixels[it] }.map { luminance(current.pixels[it]) }
-            val foregroundValues = nearBoundary.filterNot { refinedPixels[it] }.map { luminance(current.pixels[it]) }
+            val skyValues = nearBoundary.filter { refinedPixels[it] }.map { luminance(output.pixels[it]) }
+            val foregroundValues = nearBoundary.filterNot { refinedPixels[it] }.map { luminance(output.pixels[it]) }
             val leakageValues = indices.filter { !refinedPixels[it] || protected[it] }.map { index ->
                 val x = index % reference.width
                 val y = index / reference.width

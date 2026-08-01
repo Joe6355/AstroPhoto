@@ -21,6 +21,7 @@ import com.example.astrophoto.processing.jpeg.v2.model.ReferenceToSourceTransfor
 import com.example.astrophoto.processing.jpeg.v2.model.ResultCandidate
 import com.example.astrophoto.processing.jpeg.v2.model.ResultCandidateType
 import com.example.astrophoto.processing.jpeg.v2.model.SkyMask
+import com.example.astrophoto.processing.jpeg.v2.model.StretchDiagnostics
 import com.example.astrophoto.processing.jpeg.v2.postprocessing.AdaptiveAsinhStretch
 import com.example.astrophoto.processing.jpeg.v2.postprocessing.AdaptiveGradientRemoval
 import com.example.astrophoto.processing.jpeg.v2.postprocessing.AdaptivePresetProcessor
@@ -213,7 +214,7 @@ internal class SkyMaskReplayDiagnosticRunner {
         val currentVariant = variants.single { it.id == SkyMaskReplayVariantId.CURRENT }
         require(currentVariant.output.pixels.contentEquals(activeFileBackedCurrent.pixels))
 
-        val selection = selectFinalCandidate(
+        val selection = selectReplayCandidate(
             reference,
             cleanComposite.image,
             currentVariant.output,
@@ -314,8 +315,30 @@ internal class SkyMaskReplayDiagnosticRunner {
             initialMask = initial.mask,
             refinedMask = refined.binaryMask,
             effectiveAlpha = currentAlpha,
+            validCoverage = coverage,
+            sensorDefectAffectedOutput = affected,
+            sensorDefectMask = sensorMask,
             foregroundProtection = protection.mask,
             skySelection = skySelection,
+            alignedStackStars = stars,
+            alignmentModelScore = plan.modelScore,
+            alignmentTransformFingerprint = ReplayDiagnosticHashing.sha256(
+                plan.frames.joinToString("\n") { decision ->
+                    listOf(
+                        decision.originalFrameIndex,
+                        decision.frameId ?: "",
+                        decision.accepted,
+                        decision.rejectionReason ?: "",
+                        decision.shift.dx,
+                        decision.shift.dy,
+                        java.lang.Double.toHexString(decision.shift.score),
+                        java.lang.Double.toHexString(decision.shift.confidence),
+                        decision.registrationResidualPx?.let(java.lang.Float::toHexString) ?: "",
+                        decision.registrationConfidence?.let(java.lang.Float::toHexString) ?: ""
+                    ).joinToString("|")
+                }.toByteArray()
+            ),
+            currentStretchDiagnostics = currentProcessed.stretchDiagnostics,
             variants = variants,
             boundaryMetrics = boundary,
             windows = windows,
@@ -337,62 +360,6 @@ internal class SkyMaskReplayDiagnosticRunner {
             activeFileBackedMaximumChannelDifference = activeDifference.maximumChannelDifference,
             activeFileBackedDifferentPixelCount = activeDifference.differentPixelCount,
             pipelineManifestJson = manifest
-        )
-    }
-
-    private data class Selected(
-        val type: ResultCandidateType,
-        val image: ArgbPixelImage,
-        val cleanAccepted: Boolean,
-        val processedAccepted: Boolean,
-        val processedRejectionReasons: List<String>
-    )
-
-    private fun selectFinalCandidate(
-        reference: ArgbPixelImage,
-        clean: ArgbPixelImage,
-        processed: ArgbPixelImage,
-        alpha: AlphaMask,
-        coverage: AlphaMask,
-        stars: List<DetectedStar>,
-        modelScore: Float,
-        acceptedFrames: Int,
-        profile: AstroProcessingProfile
-    ): Selected {
-        val analyzer = ResultQualityAnalyzer()
-        fun candidate(type: ResultCandidateType, image: ArgbPixelImage) =
-            ResultCandidate(type, image, analyzer.analyze(image, reference, alpha))
-        val referenceCandidate = candidate(ResultCandidateType.REFERENCE, reference)
-        val cleanCandidate = candidate(ResultCandidateType.CLEAN_STACK, clean)
-        val processedCandidate = candidate(ResultCandidateType.PROCESSED, processed)
-        val gate = AstroResultQualityGate()
-        val cleanEvidence = CleanStackValidationEvidence(
-            ReferenceStarRetentionValidator().validate(reference, clean, stars),
-            CoverageUniformityValidator().validate(coverage, alpha),
-            LineArtifactDetector().compare(reference, clean, alpha),
-            modelScore,
-            acceptedFrames,
-            acceptedFrames >= 2 && modelScore >= 0.50f
-        )
-        val cleanDecision = gate.evaluateCleanStack(
-            referenceCandidate, cleanCandidate, profile, cleanEvidence
-        )
-        val processedDecision = gate.evaluateProcessed(
-            referenceCandidate, cleanCandidate, processedCandidate, profile, acceptedFrames
-        )
-        val selected = ResultSelectionPolicy().select(
-            referenceCandidate,
-            cleanCandidate,
-            processedCandidate,
-            processedDecision,
-            cleanDecision
-        ).selected
-        return Selected(
-            selected.type,
-            selected.image,
-            cleanDecision.accepted,
-            processedDecision.accepted,
-            processedDecision.hardFailureReasons
         )
     }
 
@@ -695,22 +662,91 @@ internal class SkyMaskReplayDiagnosticRunner {
     }
 }
 
-private data class ReplayProcessedSky(
+internal data class ReplayCandidateSelection(
+    val type: ResultCandidateType,
+    val image: ArgbPixelImage,
+    val cleanAccepted: Boolean,
+    val processedAccepted: Boolean,
+    val processedRejectionReasons: List<String>
+)
+
+internal fun selectReplayCandidate(
+    reference: ArgbPixelImage,
+    clean: ArgbPixelImage,
+    processed: ArgbPixelImage,
+    alpha: AlphaMask,
+    coverage: AlphaMask,
+    stars: List<DetectedStar>,
+    modelScore: Float,
+    acceptedFrames: Int,
+    profile: AstroProcessingProfile
+): ReplayCandidateSelection {
+    val analyzer = ResultQualityAnalyzer()
+    fun candidate(type: ResultCandidateType, image: ArgbPixelImage) =
+        ResultCandidate(type, image, analyzer.analyze(image, reference, alpha))
+    val referenceCandidate = candidate(ResultCandidateType.REFERENCE, reference)
+    val cleanCandidate = candidate(ResultCandidateType.CLEAN_STACK, clean)
+    val processedCandidate = candidate(ResultCandidateType.PROCESSED, processed)
+    val gate = AstroResultQualityGate()
+    val cleanEvidence = CleanStackValidationEvidence(
+        ReferenceStarRetentionValidator().validate(reference, clean, stars),
+        CoverageUniformityValidator().validate(coverage, alpha),
+        LineArtifactDetector().compare(reference, clean, alpha),
+        modelScore,
+        acceptedFrames,
+        acceptedFrames >= 2 && modelScore >= 0.50f
+    )
+    val cleanDecision = gate.evaluateCleanStack(
+        referenceCandidate, cleanCandidate, profile, cleanEvidence
+    )
+    val processedDecision = gate.evaluateProcessed(
+        referenceCandidate, cleanCandidate, processedCandidate, profile, acceptedFrames
+    )
+    val selected = ResultSelectionPolicy().select(
+        referenceCandidate,
+        cleanCandidate,
+        processedCandidate,
+        processedDecision,
+        cleanDecision
+    ).selected
+    return ReplayCandidateSelection(
+        selected.type,
+        selected.image,
+        cleanDecision.accepted,
+        processedDecision.accepted,
+        processedDecision.hardFailureReasons
+    )
+}
+
+internal enum class ReplayStretchOperationMode {
+    PRODUCTION_CURRENT,
+    SQRT_ALPHA,
+    LINEAR_ALPHA,
+    FULL,
+    BYPASS
+}
+
+internal data class ReplayProcessedSky(
     val processedSky: ArgbPixelImage,
     val composed: ArgbPixelImage,
-    val stages: List<SkyMaskPostProcessStage>
+    val stages: List<SkyMaskPostProcessStage>,
+    val stretchDiagnostics: StretchDiagnostics,
+    val compositionAlpha: AlphaMask
 )
 
 /** Exposes the otherwise private pre-composition Stage 4 image using the same production components. */
-private class ReplayAdaptiveSkyProcessor {
+internal class ReplayAdaptiveSkyProcessor {
     suspend fun process(
         stackedSky: ArgbPixelImage,
         reference: ArgbPixelImage,
         alpha: AlphaMask,
         profile: AstroProcessingProfile,
         frameCount: Int,
-        stars: List<DetectedStar>
+        stars: List<DetectedStar>,
+        stretchOperationMode: ReplayStretchOperationMode = ReplayStretchOperationMode.PRODUCTION_CURRENT,
+        compositionAlpha: AlphaMask = alpha
     ): ReplayProcessedSky {
+        require(compositionAlpha.width == alpha.width && compositionAlpha.height == alpha.height)
         val statistics = SkyStatistics()
         val parameters = ExistingPresetParameterMapper.parametersFor(profile, frameCount)
         val before = statistics.calculate(stackedSky, alpha, stars)
@@ -727,12 +763,29 @@ private class ReplayAdaptiveSkyProcessor {
         ).image
         stages += SkyMaskPostProcessStage("02-background-neutralization", working)
         current = statistics.calculate(working, alpha, stars)
-        working = AdaptiveAsinhStretch().apply(
-            working, alpha, stars, current,
-            parameters.stretchBlend, parameters.asinhStrength,
-            parameters.highlightProtection, parameters.maximumSkyMedianFactor,
-            parameters.minimumBlackWhiteSeparation, parameters.targetDisplaySkyMedian
-        ).image
+        val stretchResult = when (stretchOperationMode) {
+            ReplayStretchOperationMode.PRODUCTION_CURRENT -> AdaptiveAsinhStretch().apply(
+                working, alpha, stars, current,
+                parameters.stretchBlend, parameters.asinhStrength,
+                parameters.highlightProtection, parameters.maximumSkyMedianFactor,
+                parameters.minimumBlackWhiteSeparation, parameters.targetDisplaySkyMedian
+            )
+            ReplayStretchOperationMode.BYPASS -> ReplayAdaptiveAsinhStretch().apply(
+                working, alpha, stars, current,
+                parameters.stretchBlend, parameters.asinhStrength,
+                parameters.highlightProtection, parameters.maximumSkyMedianFactor,
+                parameters.minimumBlackWhiteSeparation, parameters.targetDisplaySkyMedian,
+                ReplayStretchOperationMode.BYPASS
+            )
+            else -> ReplayAdaptiveAsinhStretch().apply(
+                working, alpha, stars, current,
+                parameters.stretchBlend, parameters.asinhStrength,
+                parameters.highlightProtection, parameters.maximumSkyMedianFactor,
+                parameters.minimumBlackWhiteSeparation, parameters.targetDisplaySkyMedian,
+                stretchOperationMode
+            )
+        }
+        working = stretchResult.image
         stages += SkyMaskPostProcessStage("03-adaptive-stretch", working)
         current = statistics.calculate(working, alpha, stars)
         working = ChromaNoiseReducer().apply(
@@ -776,11 +829,19 @@ private class ReplayAdaptiveSkyProcessor {
         val composed = SkyForegroundComposer().compose(
             stackedSky = working,
             reference = reference,
-            featheredSkyMask = alpha,
-            validCoverage = alpha,
-            precomputedEffectiveSkyAlpha = alpha
+            featheredSkyMask = compositionAlpha,
+            validCoverage = compositionAlpha,
+            precomputedEffectiveSkyAlpha = compositionAlpha
         ).image
-        return ReplayProcessedSky(working, composed, stages)
+        return ReplayProcessedSky(
+            working,
+            composed,
+            stages,
+            stretchResult.diagnostics.copy(
+                medianSafetyScale = stretchResult.diagnostics.medianSafetyScale * safetyScale
+            ),
+            compositionAlpha
+        )
     }
 
     private fun finalSafetyScale(

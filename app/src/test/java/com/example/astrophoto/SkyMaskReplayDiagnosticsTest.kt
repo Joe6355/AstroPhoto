@@ -1,6 +1,5 @@
 package com.example.astrophoto
 
-import java.io.File
 import java.awt.image.DataBuffer
 import java.nio.file.Files
 import java.nio.file.Path
@@ -14,7 +13,7 @@ import org.junit.Test
 
 class SkyMaskReplayDiagnosticsTest {
     @Test fun pipelineOrderingCoordinateSpaceAndMaskRangesAreExplicit() {
-        val value = bundle
+        val value = analyze()
         val expected = listOf(
             "fixture_decode",
             "initial_sky_mask",
@@ -56,28 +55,30 @@ class SkyMaskReplayDiagnosticsTest {
     }
 
     @Test fun boundaryExtractionAndWindowSelectionAreDeterministic() {
+        val value = analyze()
         val first = SkyMaskReplayMath.boundaryPixels(
-            bundle.refinedMask.copyPixels(), bundle.reference.width, bundle.reference.height
+            value.refinedMask.copyPixels(), value.reference.width, value.reference.height
         )
         val second = SkyMaskReplayMath.boundaryPixels(
-            bundle.refinedMask.copyPixels(), bundle.reference.width, bundle.reference.height
+            value.refinedMask.copyPixels(), value.reference.width, value.reference.height
         )
         assertArrayEquals(first, second)
-        assertEquals(bundle.windows.map { it.id }, bundle.windows.map { it.id })
-        assertEquals(bundle.windows.map { it.id }.distinct().size, bundle.windows.size)
-        assertTrue(bundle.windows.all { it.size % 2 == 1 })
-        assertTrue(bundle.windows.any { it.id == "candidate-x56925-y74428" })
+        assertEquals(value.windows.map { it.id }, value.windows.map { it.id })
+        assertEquals(value.windows.map { it.id }.distinct().size, value.windows.size)
+        assertTrue(value.windows.all { it.size % 2 == 1 })
+        assertTrue(value.windows.any { it.id == "candidate-x56925-y74428" })
         listOf(
             "maximum-alpha-gradient",
             "maximum-composition-difference",
             "maximum-local-discontinuity",
             "maximum-halo-score",
             "maximum-edge-leakage"
-        ).forEach { id -> assertTrue(bundle.windows.any { it.id == id }) }
+        ).forEach { id -> assertTrue(value.windows.any { it.id == id }) }
     }
 
     @Test fun strictStarDenominatorAndMetricsRemainExactAndFinite() {
-        val strictIds = bundle.fixture.strictReferenceStarLabels.map { it.id }
+        val value = analyze()
+        val strictIds = value.fixture.strictReferenceStarLabels.map { it.id }
         assertEquals(
             listOf(
                 "star-01",
@@ -95,12 +96,12 @@ class SkyMaskReplayDiagnosticsTest {
             "no-mask", "hard-mask", "no-refine", "no-protection", "no-postprocess"
         )
         strictIds.forEach { id ->
-            assertEquals(expectedStages, bundle.strictStarMetrics.filter { it.starId == id }.map { it.stage }.toSet())
+            assertEquals(expectedStages, value.strictStarMetrics.filter { it.starId == id }.map { it.stage }.toSet())
         }
-        assertFalse(bundle.fixture.scoredGroundTruth.any {
+        assertFalse(value.fixture.scoredGroundTruth.any {
             it.classification == ProvisionalSourceClass.UNCERTAIN
         })
-        assertTrue(bundle.strictStarMetrics.all {
+        assertTrue(value.strictStarMetrics.all {
             listOf(
                 it.centroidX, it.centroidY, it.peakLuminance, it.apertureFlux,
                 it.localBackground, it.localContrast, it.robustWidth, it.ellipticity,
@@ -108,7 +109,7 @@ class SkyMaskReplayDiagnosticsTest {
                 it.fluxRetentionFromClean, it.centroidShiftFromClean
             ).all(Double::isFinite)
         })
-        assertTrue(bundle.windowMetrics.all { metric ->
+        assertTrue(value.windowMetrics.all { metric ->
             listOf(
                 metric.distanceToBoundary, metric.brightRim, metric.darkRim,
                 metric.haloScore, metric.luminanceJump, metric.leakageScore
@@ -120,9 +121,9 @@ class SkyMaskReplayDiagnosticsTest {
                 "03-adaptive-stretch", "04-chroma-reduction", "05-star-enhancement",
                 "06-final-safety", "07-background-match"
             ),
-            bundle.postProcessingStages.map { it.id }
+            value.postProcessingStages.map { it.id }
         )
-        assertTrue(bundle.postProcessingStageMetrics.all { metric ->
+        assertTrue(value.postProcessingStageMetrics.all { metric ->
             listOf(
                 metric.skyMad, metric.bandingProxy, metric.boundaryEdgeExcess,
                 metric.meanAbsoluteChangeFromClean
@@ -131,13 +132,14 @@ class SkyMaskReplayDiagnosticsTest {
     }
 
     @Test fun ablationVariantsDisableOnlyTheirNamedStage() {
-        assertEquals(SkyMaskReplayVariantId.entries, bundle.variants.map { it.id })
-        val current = bundle.variants.single { it.id == SkyMaskReplayVariantId.CURRENT }
-        val noMask = bundle.variants.single { it.id == SkyMaskReplayVariantId.NO_MASK }
-        val hard = bundle.variants.single { it.id == SkyMaskReplayVariantId.HARD_MASK }
-        val noRefine = bundle.variants.single { it.id == SkyMaskReplayVariantId.NO_REFINE }
-        val noProtection = bundle.variants.single { it.id == SkyMaskReplayVariantId.NO_PROTECTION }
-        val noPost = bundle.variants.single { it.id == SkyMaskReplayVariantId.NO_POSTPROCESS }
+        val value = analyze()
+        assertEquals(SkyMaskReplayVariantId.entries, value.variants.map { it.id })
+        val current = value.variants.single { it.id == SkyMaskReplayVariantId.CURRENT }
+        val noMask = value.variants.single { it.id == SkyMaskReplayVariantId.NO_MASK }
+        val hard = value.variants.single { it.id == SkyMaskReplayVariantId.HARD_MASK }
+        val noRefine = value.variants.single { it.id == SkyMaskReplayVariantId.NO_REFINE }
+        val noProtection = value.variants.single { it.id == SkyMaskReplayVariantId.NO_PROTECTION }
+        val noPost = value.variants.single { it.id == SkyMaskReplayVariantId.NO_POSTPROCESS }
         for (y in 0 until noMask.alpha.height) for (x in 0 until noMask.alpha.width) {
             assertEquals(1f, noMask.alpha.alphaAt(x, y), 0f)
             assertTrue(hard.alpha.alphaAt(x, y) == 0f || hard.alpha.alphaAt(x, y) == 1f)
@@ -166,21 +168,23 @@ class SkyMaskReplayDiagnosticsTest {
         val temporaryPrimary = configured == null
         val primary = configured?.let(Path::of) ?: Files.createTempDirectory("sky-mask-replay-a")
         val secondary = Files.createTempDirectory("sky-mask-replay-b")
-        val groundTruth = fixtureDirectory().toPath().resolve("ground-truth.csv")
+        val groundTruth = UrbanWindow30ReplayFixture.directory.toPath().resolve("ground-truth.csv")
         val groundTruthBefore = Files.readAllBytes(groundTruth)
         val mainSourceBefore = treeHash(Path.of("src/main"))
-        val fixturePixelsBefore = fixture.frames.map { it.pixels.copyOf() }
+        val fixture = UrbanWindow30ReplayFixture.fixture
+        val fixtureHashesBefore = fixture.frames.map(ReplayDiagnosticHashing::sha256Argb)
         try {
-            val firstResult = SkyMaskReplayReportWriter.write(bundle, primary)
+            var firstBundle: SkyMaskReplayBundle? = SkyMaskReplayDiagnosticRunner().analyze(fixture)
+            val firstResult = SkyMaskReplayReportWriter.write(requireNotNull(firstBundle), primary)
+            firstBundle = null
+            System.gc()
             val secondBundle = SkyMaskReplayDiagnosticRunner().analyze(fixture)
             val secondResult = SkyMaskReplayReportWriter.write(secondBundle, secondary)
             assertEquals(firstResult, secondResult)
             assertTreesByteIdentical(primary, secondary)
             assertArrayEquals(groundTruthBefore, Files.readAllBytes(groundTruth))
             assertEquals(mainSourceBefore, treeHash(Path.of("src/main")))
-            fixture.frames.forEachIndexed { index, image ->
-                assertArrayEquals(fixturePixelsBefore[index], image.pixels)
-            }
+            assertEquals(fixtureHashesBefore, fixture.frames.map(ReplayDiagnosticHashing::sha256Argb))
             listOf(
                 "reference.png", "clean-stack.png", "processed-sky.png",
                 "composed-current.png", "final-current.png", "initial-mask.png",
@@ -228,19 +232,8 @@ class SkyMaskReplayDiagnosticsTest {
         const val OUTPUT_PROPERTY = "astrophoto.skyMaskDiagnosticsOutputDir"
         const val OUTPUT_ENVIRONMENT = "ASTROPHOTO_SKY_MASK_DIAGNOSTICS_OUTPUT_DIR"
 
-        private val fixture: Stage6RegressionFixture by lazy {
-            Stage6RegressionFixtureLoader.load(fixtureDirectory())
-        }
-        private val bundle: SkyMaskReplayBundle by lazy {
-            runBlocking { SkyMaskReplayDiagnosticRunner().analyze(fixture) }
-        }
-
-        private fun fixtureDirectory(): File {
-            val resource = requireNotNull(
-                SkyMaskReplayDiagnosticsTest::class.java.classLoader
-                    ?.getResource("jpeg-stage6/urban-window-30/manifest.properties")
-            )
-            return requireNotNull(File(resource.toURI()).parentFile)
+        private fun analyze(): SkyMaskReplayBundle = runBlocking {
+            SkyMaskReplayDiagnosticRunner().analyze(UrbanWindow30ReplayFixture.fixture)
         }
 
         private fun regularFiles(root: Path): List<Path> = Files.walk(root).use { stream ->

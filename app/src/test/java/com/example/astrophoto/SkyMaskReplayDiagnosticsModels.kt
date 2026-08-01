@@ -1,7 +1,10 @@
 package com.example.astrophoto
 
+import com.example.astrophoto.processing.jpeg.v2.artifacts.SensorDefectMask
 import com.example.astrophoto.processing.jpeg.v2.model.AlphaMask
+import com.example.astrophoto.processing.jpeg.v2.model.DetectedStar
 import com.example.astrophoto.processing.jpeg.v2.model.SkyMask
+import com.example.astrophoto.processing.jpeg.v2.model.StretchDiagnostics
 
 internal enum class SkyMaskReplayVariantId(val stableId: String) {
     CURRENT("current"),
@@ -119,6 +122,12 @@ internal data class SkyMaskPostProcessStage(
     val image: ArgbPixelImage
 )
 
+internal data class SkyMaskStarStageInput(
+    val id: String,
+    val image: ArgbPixelImage,
+    val alpha: AlphaMask
+)
+
 internal data class SkyMaskPostProcessStageMetrics(
     val stage: String,
     val skyMad: Double,
@@ -168,8 +177,15 @@ internal data class SkyMaskReplayBundle(
     val initialMask: SkyMask,
     val refinedMask: SkyMask,
     val effectiveAlpha: AlphaMask,
+    val validCoverage: AlphaMask,
+    val sensorDefectAffectedOutput: AlphaMask,
+    val sensorDefectMask: SensorDefectMask,
     val foregroundProtection: SkyMask,
     val skySelection: SkyMask,
+    val alignedStackStars: List<DetectedStar>,
+    val alignmentModelScore: Float,
+    val alignmentTransformFingerprint: String,
+    val currentStretchDiagnostics: StretchDiagnostics,
     val variants: List<SkyMaskReplayVariant>,
     val boundaryMetrics: SkyMaskBoundaryMetrics,
     val windows: List<SkyMaskDiagnosticWindow>,
