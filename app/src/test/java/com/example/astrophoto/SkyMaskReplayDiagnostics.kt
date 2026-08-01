@@ -21,7 +21,9 @@ import com.example.astrophoto.processing.jpeg.v2.model.ReferenceToSourceTransfor
 import com.example.astrophoto.processing.jpeg.v2.model.ResultCandidate
 import com.example.astrophoto.processing.jpeg.v2.model.ResultCandidateType
 import com.example.astrophoto.processing.jpeg.v2.model.SkyMask
+import com.example.astrophoto.processing.jpeg.v2.model.SkyStatisticsResult
 import com.example.astrophoto.processing.jpeg.v2.model.StretchDiagnostics
+import com.example.astrophoto.processing.jpeg.v2.postprocessing.AdaptiveStretchResult
 import com.example.astrophoto.processing.jpeg.v2.postprocessing.AdaptiveAsinhStretch
 import com.example.astrophoto.processing.jpeg.v2.postprocessing.AdaptiveGradientRemoval
 import com.example.astrophoto.processing.jpeg.v2.postprocessing.AdaptivePresetProcessor
@@ -734,6 +736,15 @@ internal data class ReplayProcessedSky(
     val compositionAlpha: AlphaMask
 )
 
+internal fun interface ReplayStretchOverride {
+    fun apply(
+        image: ArgbPixelImage,
+        effectiveSkyAlpha: AlphaMask,
+        stars: List<DetectedStar>,
+        statistics: SkyStatisticsResult
+    ): AdaptiveStretchResult
+}
+
 /** Exposes the otherwise private pre-composition Stage 4 image using the same production components. */
 internal class ReplayAdaptiveSkyProcessor {
     suspend fun process(
@@ -745,11 +756,12 @@ internal class ReplayAdaptiveSkyProcessor {
         stars: List<DetectedStar>,
         stretchOperationMode: ReplayStretchOperationMode = ReplayStretchOperationMode.PRODUCTION_CURRENT,
         stretchBlendMode: ReplayStretchBlendMode = ReplayStretchBlendMode.CURRENT,
-        compositionAlpha: AlphaMask = alpha
+        compositionAlpha: AlphaMask = alpha,
+        stretchOverride: ReplayStretchOverride? = null
     ): ReplayProcessedSky {
         require(compositionAlpha.width == alpha.width && compositionAlpha.height == alpha.height)
         require(
-            stretchOperationMode != ReplayStretchOperationMode.PRODUCTION_CURRENT ||
+            stretchOverride != null || stretchOperationMode != ReplayStretchOperationMode.PRODUCTION_CURRENT ||
                 stretchBlendMode == ReplayStretchBlendMode.CURRENT
         )
         val statistics = SkyStatistics()
@@ -768,7 +780,7 @@ internal class ReplayAdaptiveSkyProcessor {
         ).image
         stages += SkyMaskPostProcessStage("02-background-neutralization", working)
         current = statistics.calculate(working, alpha, stars)
-        val stretchResult = when (stretchOperationMode) {
+        val stretchResult = stretchOverride?.apply(working, alpha, stars, current) ?: when (stretchOperationMode) {
             ReplayStretchOperationMode.PRODUCTION_CURRENT -> AdaptiveAsinhStretch().apply(
                 working, alpha, stars, current,
                 parameters.stretchBlend, parameters.asinhStrength,
