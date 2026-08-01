@@ -10,17 +10,21 @@ candidate-x21900-y05600,219,56,uncertain,0.2,manual,rejected,project_owner,2026-
 candidate-x21700-y07200,217,72,uncertain,0.2,manual,rejected,project_owner,2026-07-31T18:07:58.630Z,Обнаружен только на reference frame,unknown,6,2.21306,0
 candidate-x22100-y08800,221,88,uncertain,0.2,manual,rejected,project_owner,2026-07-31T18:10:45.409Z,Обнаружен только на reference frame,unknown,2,1.972963,0
 candidate-x60700-y16800,607,168,uncertain,0.2,manual,needs_review,project_owner,2026-07-31T18:11:22.620Z,Обнаружен только на reference frame,unknown,1,0.98071,0
-candidate-x57900-y19400,579,194,star,0.2,manual,confirmed,project_owner,2026-07-31T18:11:58.527Z,Недостаточная или противоречивая temporal evidence,sky,2,0.384027,0.707107
+candidate-x57900-y19400,579,194,uncertain,0.2,manual,needs_review,project_owner,2026-08-01T11:46:13.114Z,"Недостаточная или противоречивая temporal evidence
+Review adjustment: Reclassified after evidence review; insufficient temporal support for strict star ground truth.",sky,2,0.384027,0.707107
 candidate-x55810-y22220,558.101013,222.20343,star,0.756664,manual,confirmed,project_owner,2026-07-31T18:12:27.741Z,Когерентный sky-space трек отделён от camera-space recurrence,sky,20,1.742265,2.764402
-candidate-x56100-y27400,561,274,star,0.316667,manual,confirmed,project_owner,2026-07-31T18:12:54.730Z,Недостаточная или противоречивая temporal evidence,sky,19,1.707813,1.414214
+candidate-x56100-y27400,561,274,uncertain,0.316667,manual,needs_review,project_owner,2026-08-01T11:46:13.114Z,"Недостаточная или противоречивая temporal evidence
+Review adjustment: Reclassified after evidence review; compact stellar PSF is not sufficiently proven.",sky,19,1.707813,1.414214
 candidate-x57000-y36200,570,362,star,0.383333,manual,confirmed,project_owner,2026-07-31T18:13:16.228Z,Недостаточная или противоречивая temporal evidence,sky,23,1.834561,2.236068
 candidate-x42300-y41900,423,419,uncertain,0.2,manual,needs_review,project_owner,2026-07-31T18:13:40.268Z,Недостаточная или противоречивая temporal evidence,unknown,2,1.436694,0
 candidate-x42300-y43500,423,435,star,0.49,manual,confirmed,project_owner,2026-07-31T18:17:29.655Z,Недостаточная или противоречивая temporal evidence,sky,30,1.467145,2.236068
 candidate-x21500-y44700,215,447,uncertain,0.2,manual,rejected,project_owner,2026-07-31T18:17:42.877Z,Обнаружен только на reference frame,unknown,2,2.441736,0
-candidate-x61100-y48300,611,483,star,0.3,manual,confirmed,project_owner,2026-07-31T18:17:47.766Z,Недостаточная или противоречивая temporal evidence,sky,18,1.917057,2.236068
+candidate-x61100-y48300,611,483,uncertain,0.3,manual,needs_review,project_owner,2026-08-01T11:46:13.114Z,"Недостаточная или противоречивая temporal evidence
+Review adjustment: Reclassified after evidence review; highly elongated footprint is not reliable strict-star evidence.",sky,18,1.917057,2.236068
 candidate-x51700-y52400,517,524,star,0.383333,manual,confirmed,project_owner,2026-07-31T18:19:53.424Z,Недостаточная или противоречивая temporal evidence,sky,23,1.63955,2.828427
 candidate-x57600-y64000,576,640,uncertain,0.2,manual,rejected,project_owner,2026-07-31T18:20:02.826Z,Обнаружен только на reference frame,unknown,1,0,0
 candidate-x44900-y71700,449,717,uncertain,0.2,manual,rejected,project_owner,2026-07-31T18:20:12.518Z,Обнаружен только на reference frame,unknown,3,2.183033,0
 candidate-x43800-y72700,438,727,uncertain,0.2,manual,rejected,project_owner,2026-07-31T18:20:20.457Z,Обнаружен только на reference frame,unknown,9,2.135188,0
 candidate-x49500-y72700,495,727,uncertain,0.2,manual,rejected,project_owner,2026-07-31T18:20:32.196Z,Обнаружен только на reference frame,unknown,2,0,0
-candidate-x56925-y74428,569.248413,744.280273,star,0.316667,manual,confirmed,project_owner,2026-07-31T18:20:36.828Z,Недостаточная или противоречивая temporal evidence,sky,19,1.827805,1.484582
+candidate-x56925-y74428,569.248413,744.280273,uncertain,0.316667,manual,needs_review,project_owner,2026-08-01T11:46:13.114Z,"Недостаточная или противоречивая temporal evidence
+Review adjustment: Reclassified after evidence review; long elongated track is not reliable compact-star evidence.",sky,19,1.827805,1.484582

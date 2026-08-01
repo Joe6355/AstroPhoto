@@ -590,6 +590,11 @@ internal class GroundTruthReviewImporter {
             require(isIso8601(decision.reviewedAt)) { "reviewed_at must be ISO-8601 for ${decision.id}" }
             if (isAlreadyApplied(current, decision, finalClass, finalStatus)) return@forEach
             validateReadOnlyFields(current, decision)
+            val manualStarAdjustment = isManualStarNeedsReviewAdjustment(
+                current,
+                finalClass,
+                finalStatus
+            )
             if (
                 current.reviewStatus == GroundTruthReviewStatus.CONFIRMED &&
                 current.annotationSource in setOf(
@@ -597,13 +602,17 @@ internal class GroundTruthReviewImporter {
                     GroundTruthAnnotationSource.CATALOG
                 )
             ) {
-                require(finalClass == current.classification && finalStatus == GroundTruthReviewStatus.CONFIRMED) {
+                require(
+                    manualStarAdjustment ||
+                        finalClass == current.classification &&
+                        finalStatus == GroundTruthReviewStatus.CONFIRMED
+                ) {
                     "Conflicting decision for confirmed ground truth: ${decision.id}"
                 }
             }
             replacements[decision.id] = current.copy(
                 classification = finalClass,
-                coordinateSpace = if (finalClass == current.classification) {
+                coordinateSpace = if (finalClass == current.classification || manualStarAdjustment) {
                     current.coordinateSpace
                 } else {
                     when (finalClass) {
@@ -624,7 +633,7 @@ internal class GroundTruthReviewImporter {
                 reviewStatus = finalStatus,
                 reviewedBy = decision.reviewer,
                 reviewedAt = decision.reviewedAt,
-                notes = decision.reviewNotes.ifBlank { current.notes }
+                notes = resolvedReviewNotes(current.notes, decision.reviewNotes, manualStarAdjustment)
             )
         }
         val updated = labels.map { replacements[it.id] ?: it }
@@ -706,7 +715,15 @@ internal class GroundTruthReviewImporter {
         val proposalSource = GroundTruthAnnotationSource.entries.firstOrNull {
             it.name.equals(decision.annotationSource, ignoreCase = true)
         } ?: return false
-        val expectedSpace = if (finalClass == proposalClass) {
+        val proposalStatus = GroundTruthReviewStatus.entries.firstOrNull {
+            it.name.equals(decision.currentReviewStatus, ignoreCase = true)
+        } ?: return false
+        val manualStarAdjustment = proposalClass == ProvisionalSourceClass.STAR &&
+            proposalSource == GroundTruthAnnotationSource.MANUAL &&
+            proposalStatus == GroundTruthReviewStatus.CONFIRMED &&
+            finalClass == ProvisionalSourceClass.UNCERTAIN &&
+            finalStatus == GroundTruthReviewStatus.NEEDS_REVIEW
+        val expectedSpace = if (finalClass == proposalClass || manualStarAdjustment) {
             proposalSpace
         } else {
             when (finalClass) {
@@ -729,8 +746,33 @@ internal class GroundTruthReviewImporter {
             current.reviewStatus == finalStatus &&
             current.reviewedBy == decision.reviewer &&
             current.reviewedAt == decision.reviewedAt &&
-            (decision.reviewNotes.isBlank() || current.notes == decision.reviewNotes)
+            reviewNotesMatch(current.notes, decision.reviewNotes)
     }
+
+    private fun isManualStarNeedsReviewAdjustment(
+        current: ProvisionalSourceLabel,
+        finalClass: ProvisionalSourceClass,
+        finalStatus: GroundTruthReviewStatus
+    ): Boolean = current.classification == ProvisionalSourceClass.STAR &&
+        current.annotationSource == GroundTruthAnnotationSource.MANUAL &&
+        current.reviewStatus == GroundTruthReviewStatus.CONFIRMED &&
+        finalClass == ProvisionalSourceClass.UNCERTAIN &&
+        finalStatus == GroundTruthReviewStatus.NEEDS_REVIEW
+
+    private fun resolvedReviewNotes(
+        currentNotes: String,
+        reviewNotes: String,
+        append: Boolean
+    ): String = when {
+        reviewNotes.isBlank() -> currentNotes
+        !append || currentNotes.isBlank() -> reviewNotes
+        else -> currentNotes + REVIEW_ADJUSTMENT_NOTE_PREFIX + reviewNotes
+    }
+
+    private fun reviewNotesMatch(currentNotes: String, reviewNotes: String): Boolean =
+        reviewNotes.isBlank() ||
+            currentNotes == reviewNotes ||
+            currentNotes.endsWith(REVIEW_ADJUSTMENT_NOTE_PREFIX + reviewNotes)
 
     private fun parseReviewClass(value: String): ProvisionalSourceClass {
         val parsed = ProvisionalSourceClass.entries.firstOrNull { it.name.equals(value, ignoreCase = true) }
@@ -851,6 +893,7 @@ internal class GroundTruthReviewImporter {
             "reviewed_at",
             "review_notes"
         )
+        private const val REVIEW_ADJUSTMENT_NOTE_PREFIX = "\nReview adjustment: "
     }
 }
 

@@ -155,13 +155,13 @@ class GroundTruthReviewWorkflowTest {
 
         assertEquals(24, summary.totalRows)
         assertEquals(0, summary.excludedAutomaticRows)
-        assertEquals(12, summary.excludedUncertainRows)
+        assertEquals(16, summary.excludedUncertainRows)
         assertEquals(0, summary.excludedUnreviewedRows)
-        assertEquals(2, summary.excludedNeedsReviewRows)
+        assertEquals(6, summary.excludedNeedsReviewRows)
         assertEquals(8, summary.excludedRejectedRows)
-        assertEquals(10, summary.eligibleConfirmedStars)
+        assertEquals(6, summary.eligibleConfirmedStars)
         assertEquals(2, summary.eligibleConfirmedSensorDefects)
-        assertEquals(14, fixture.groundTruth.count {
+        assertEquals(10, fixture.groundTruth.count {
             it.annotationSource == GroundTruthAnnotationSource.MANUAL &&
                 it.reviewStatus == GroundTruthReviewStatus.CONFIRMED
         })
@@ -171,12 +171,36 @@ class GroundTruthReviewWorkflowTest {
         )
     }
 
-    @Test fun manuallyConfirmedCandidateStarIsInFixtureStrictDenominator() {
+    @Test fun refinedStrictStarSetExcludesNeedsReviewCandidatesWithoutRemovingThem() {
         val fixture = fixture()
+        val strictIds = listOf(
+            "star-01",
+            "star-02",
+            "candidate-x55810-y22220",
+            "candidate-x57000-y36200",
+            "candidate-x42300-y43500",
+            "candidate-x51700-y52400"
+        )
+        val adjustedCoordinates = linkedMapOf(
+            "candidate-x57900-y19400" to (579.0 to 194.0),
+            "candidate-x56100-y27400" to (561.0 to 274.0),
+            "candidate-x61100-y48300" to (611.0 to 483.0),
+            "candidate-x56925-y74428" to (569.248413 to 744.280273)
+        )
 
         assertTrue(fixture.provisionalReferenceStars.any { it.id == "candidate-x55810-y22220" })
         assertTrue(fixture.strictReferenceStarLabels.any { it.id == "candidate-x55810-y22220" })
-        assertEquals(10, fixture.strictReferenceStarLabels.size)
+        assertEquals(strictIds, fixture.strictReferenceStarLabels.map { it.id })
+        adjustedCoordinates.forEach { (id, coordinates) ->
+            val label = fixture.groundTruth.single { it.id == id }
+            assertEquals(ProvisionalSourceClass.UNCERTAIN, label.classification)
+            assertEquals(GroundTruthReviewStatus.NEEDS_REVIEW, label.reviewStatus)
+            assertEquals(GroundTruthAnnotationSource.MANUAL, label.annotationSource)
+            assertEquals(coordinates.first, label.x, 0.0)
+            assertEquals(coordinates.second, label.y, 0.0)
+            assertFalse(fixture.strictReferenceStarLabels.any { it.id == id })
+        }
+        assertTrue(diagnosticBundle().candidates.map { it.id }.containsAll(adjustedCoordinates.keys))
     }
 
     @Test fun reviewImporterRejectsDuplicateAndUnknownIds() {
@@ -225,6 +249,49 @@ class GroundTruthReviewWorkflowTest {
         assertThrows(IllegalArgumentException::class.java) {
             GroundTruthReviewImporter().importReview(input, queue, directory.resolve("out.csv"))
         }
+    }
+
+    @Test fun explicitManualReviewCanMoveConfirmedStarToNeedsReviewIdempotently() {
+        val directory = reportDirectory("manual-adjustment-${UUID.randomUUID()}")
+        val input = directory.resolve("input.csv")
+        GroundTruthCsv.write(
+            input,
+            listOf(
+                label("manual-star", notes = "Original evidence note").copy(
+                    reviewedBy = "project_owner",
+                    reviewedAt = "2026-07-31T12:00:00Z"
+                )
+            )
+        )
+        val queue = directory.resolve("queue.csv")
+        Files.writeString(
+            queue,
+            queue(
+                listOf("manual-star"),
+                finalClass = "uncertain",
+                finalStatus = "needs_review",
+                reviewer = "project_owner",
+                reviewedAt = "2026-08-01T00:00:00Z",
+                reviewNotes = "Insufficient evidence for the strict star denominator."
+            ),
+            StandardCharsets.UTF_8
+        )
+        val importer = GroundTruthReviewImporter()
+        val first = importer.importReview(input, queue, directory.resolve("first.csv"))
+        val second = importer.importReview(first.output, queue, directory.resolve("second.csv"))
+
+        assertEquals(1, first.importedDecisionCount)
+        assertEquals(0, second.importedDecisionCount)
+        assertArrayEquals(Files.readAllBytes(first.output), Files.readAllBytes(second.output))
+        val adjusted = GroundTruthCsv.read(first.output.toFile()).single()
+        assertEquals(ProvisionalSourceClass.UNCERTAIN, adjusted.classification)
+        assertEquals(ProvisionalCoordinateSpace.SKY, adjusted.coordinateSpace)
+        assertEquals(GroundTruthAnnotationSource.MANUAL, adjusted.annotationSource)
+        assertEquals(GroundTruthReviewStatus.NEEDS_REVIEW, adjusted.reviewStatus)
+        assertEquals("project_owner", adjusted.reviewedBy)
+        assertEquals("2026-08-01T00:00:00Z", adjusted.reviewedAt)
+        assertTrue(adjusted.notes.contains("Original evidence note"))
+        assertTrue(adjusted.notes.contains("Insufficient evidence for the strict star denominator."))
     }
 
     @Test fun validExplicitImportIsAtomicAuditedAndIdempotent() {
@@ -485,7 +552,7 @@ class GroundTruthReviewWorkflowTest {
         )
         template.drop(1).forEach { row -> assertTrue(row.drop(1).all(String::isBlank)) }
         assertEquals(beforeHash, sha256(fixtureDirectory().toPath().resolve("ground-truth.csv")))
-        assertEquals(10, fixture.groundTruthSummary.eligibleConfirmedStars)
+        assertEquals(6, fixture.groundTruthSummary.eligibleConfirmedStars)
         assertEquals(2, fixture.groundTruthSummary.eligibleConfirmedSensorDefects)
         assertEquals(0, fixture.groundTruth.count {
             it.annotationSource == GroundTruthAnnotationSource.AUTOMATIC &&
@@ -494,7 +561,7 @@ class GroundTruthReviewWorkflowTest {
         assertEquals(8, fixture.groundTruth.count {
             it.reviewStatus == GroundTruthReviewStatus.REJECTED
         })
-        assertEquals(2, fixture.groundTruth.count {
+        assertEquals(6, fixture.groundTruth.count {
             it.reviewStatus == GroundTruthReviewStatus.NEEDS_REVIEW
         })
         assertFalse(fixture.groundTruth.any {
@@ -556,8 +623,10 @@ class GroundTruthReviewWorkflowTest {
         coordinateSpace: String = "sky",
         proposalClass: String = "star",
         finalClass: String = "star",
+        finalStatus: String = "confirmed",
         reviewer: String = "fixture-reviewer",
-        reviewedAt: String = "2026-07-31T12:00:00Z"
+        reviewedAt: String = "2026-07-31T12:00:00Z",
+        reviewNotes: String = "explicit review"
     ): String = buildString {
         appendLine(
             CsvCodec.encodeRow(
@@ -582,10 +651,10 @@ class GroundTruthReviewWorkflowTest {
                         if (automatic) "automatic" else "manual",
                         if (automatic) "unreviewed" else "confirmed",
                         finalClass,
-                        "confirmed",
+                        finalStatus,
                         reviewer,
                         reviewedAt,
-                        "explicit review"
+                        reviewNotes
                     )
                 )
             )
