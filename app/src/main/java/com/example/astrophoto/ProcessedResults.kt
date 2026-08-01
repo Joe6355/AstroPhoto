@@ -112,7 +112,8 @@ enum class ProcessedResultType(val title: String) {
     BACKGROUND_REMOVED("Удаление засветки"),
     STARS_ONLY_PREVIEW("Превью звёзд"),
     EDITED("Отредактировано"),
-    UNKNOWN("Неизвестный результат")
+    UNKNOWN("Неизвестный результат"),
+    EXPERIMENTAL_STARS("Experimental Stars")
 }
 
 internal fun processedResultTypeForFileName(fileName: String): ProcessedResultType =
@@ -164,6 +165,9 @@ internal fun processedResultTypeForFileName(fileName: String): ProcessedResultTy
         fileName.startsWith("MaxStars_") &&
             fileName.endsWith(".jpg", ignoreCase = true) ->
             ProcessedResultType.MAX_STARS
+        fileName.startsWith("ExperimentalStars_") &&
+            fileName.endsWith(".jpg", ignoreCase = true) ->
+            ProcessedResultType.EXPERIMENTAL_STARS
         fileName.startsWith("RecoveredStars_") &&
             fileName.endsWith(".jpg", ignoreCase = true) ->
             ProcessedResultType.RECOVERED_STARS
@@ -1244,7 +1248,10 @@ private fun ProcessedResultCard(
                         text = result.type.title,
                         color = MaterialTheme.colorScheme.secondary
                     )
-                    if (result.type == ProcessedResultType.RECOVERED_STARS) {
+                    if (
+                        result.type == ProcessedResultType.RECOVERED_STARS ||
+                        result.type == ProcessedResultType.EXPERIMENTAL_STARS
+                    ) {
                         Text(
                             text = "Проверьте возможные артефакты",
                             color = AstroColors.Warning,

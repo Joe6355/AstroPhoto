@@ -33,6 +33,7 @@ class AdaptivePresetProcessor(
         profile: AstroProcessingProfile,
         frameCount: Int,
         alignedStackStars: List<DetectedStar>,
+        sensorDefectAffectedOutput: AlphaMask? = null,
         onProgress: suspend (message: String, current: Int, total: Int) -> Unit = { _, _, _ -> }
     ): PresetProcessingResult {
         require(stackedSky.width == referenceForeground.width && stackedSky.height == referenceForeground.height)
@@ -145,16 +146,32 @@ class AdaptivePresetProcessor(
         onProgress("Enhancing stars", 5, TOTAL_STAGES)
         currentStatistics = statistics.calculate(working, effectiveSkyAlpha, alignedStackStars)
         stageStarted = System.nanoTime()
-        val starEnhancementDiagnostics = starEnhancer.apply(
-            working,
-            effectiveSkyAlpha,
-            alignedStackStars,
-            currentStatistics,
-            parameters.starContrastStrength,
-            parameters.maximumStarDetailGain,
-            parameters.maximumStarWidthGrowth,
-            parameters.minimumStarContrastGain
-        ).let { result ->
+        val starResult = if (profile == AstroProcessingProfile.EXPERIMENTAL_STARS) {
+            starEnhancer.applyExperimental(
+                working,
+                effectiveSkyAlpha,
+                alignedStackStars,
+                currentStatistics,
+                parameters.starContrastStrength,
+                parameters.maximumStarDetailGain,
+                parameters.maximumStarWidthGrowth,
+                parameters.minimumStarContrastGain,
+                ExperimentalStarStrengthVariant.PRODUCTION_SELECTED.residualStrength,
+                sensorDefectAffectedOutput
+            )
+        } else {
+            starEnhancer.apply(
+                working,
+                effectiveSkyAlpha,
+                alignedStackStars,
+                currentStatistics,
+                parameters.starContrastStrength,
+                parameters.maximumStarDetailGain,
+                parameters.maximumStarWidthGrowth,
+                parameters.minimumStarContrastGain
+            )
+        }
+        val starEnhancementDiagnostics = starResult.let { result ->
             working = result.image
             result.diagnostics
         }

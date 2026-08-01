@@ -22,12 +22,14 @@ import com.example.astrophoto.processing.jpeg.v2.model.ResultCandidate
 import com.example.astrophoto.processing.jpeg.v2.model.ResultCandidateType
 import com.example.astrophoto.processing.jpeg.v2.model.SkyMask
 import com.example.astrophoto.processing.jpeg.v2.model.SkyStatisticsResult
+import com.example.astrophoto.processing.jpeg.v2.model.StarEnhancementDiagnostics
 import com.example.astrophoto.processing.jpeg.v2.model.StretchDiagnostics
 import com.example.astrophoto.processing.jpeg.v2.postprocessing.AdaptiveStretchResult
 import com.example.astrophoto.processing.jpeg.v2.postprocessing.AdaptiveAsinhStretch
 import com.example.astrophoto.processing.jpeg.v2.postprocessing.AdaptiveGradientRemoval
 import com.example.astrophoto.processing.jpeg.v2.postprocessing.AdaptivePresetProcessor
 import com.example.astrophoto.processing.jpeg.v2.postprocessing.FileBackedAdaptivePresetProcessor
+import com.example.astrophoto.processing.jpeg.v2.postprocessing.ExperimentalStarStrengthVariant
 import com.example.astrophoto.processing.jpeg.v2.postprocessing.BackgroundNeutralizer
 import com.example.astrophoto.processing.jpeg.v2.postprocessing.ChromaNoiseReducer
 import com.example.astrophoto.processing.jpeg.v2.postprocessing.LocalStarContrastEnhancer
@@ -578,13 +580,17 @@ internal class SkyMaskReplayDiagnosticRunner {
         return PixelDifference(maximum, count)
     }
 
-    private suspend fun runActiveFileBackedAdaptive(
+    internal suspend fun runActiveFileBackedAdaptive(
         stackedSky: ArgbPixelImage,
         reference: ArgbPixelImage,
         alpha: AlphaMask,
         profile: AstroProcessingProfile,
         frameCount: Int,
-        stars: List<DetectedStar>
+        stars: List<DetectedStar>,
+        sensorDefectAffectedOutput: AlphaMask? = null,
+        experimentalStrengthVariant: ExperimentalStarStrengthVariant =
+            ExperimentalStarStrengthVariant.PRODUCTION_SELECTED,
+        onStarDiagnostics: (StarEnhancementDiagnostics) -> Unit = {}
     ): ArgbPixelImage {
         val cacheRoot = Files.createTempDirectory("sky-mask-file-backed").toFile()
         val files = TemporaryPipelineFiles.create(cacheRoot)
@@ -593,7 +599,12 @@ internal class SkyMaskReplayDiagnosticRunner {
             val stackedHandle = writeTemporary(store, "replay-sky", stackedSky)
             val referenceHandle = writeCandidate(store, ResultCandidateType.REFERENCE, reference)
             val alphaHandle = writePlane(store, "replay-alpha", alpha)
-            val result = FileBackedAdaptivePresetProcessor().process(
+            val defectHandle = sensorDefectAffectedOutput?.let {
+                writePlane(store, "replay-sensor-defect-affected", it)
+            }
+            val result = FileBackedAdaptivePresetProcessor(
+                experimentalStrengthVariant = experimentalStrengthVariant
+            ).process(
                 stackedSky = stackedHandle,
                 referenceForeground = referenceHandle,
                 effectiveSkyAlpha = alphaHandle,
@@ -605,8 +616,10 @@ internal class SkyMaskReplayDiagnosticRunner {
                     RuntimeHeapSnapshot(512L * MIB, 128L * MIB, 96L * MIB),
                     reserveBytes = 64L * MIB
                 ),
-                memoryTracker = PipelineMemoryTracker()
+                memoryTracker = PipelineMemoryTracker(),
+                sensorDefectAffectedOutput = defectHandle
             )
+            onStarDiagnostics(result.diagnostics.starEnhancement)
             return ArgbPixelImage(result.image.width, result.image.height, readAll(result.image))
         } finally {
             files.close()

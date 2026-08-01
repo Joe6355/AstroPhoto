@@ -132,6 +132,177 @@ class LocalStarContrastEnhancer {
         )
     }
 
+    fun applyExperimental(
+        image: ArgbPixelImage,
+        effectiveSkyAlpha: AlphaMask,
+        stars: List<DetectedStar>,
+        statistics: SkyStatisticsResult,
+        strength: Float,
+        maximumDetailGain: Float,
+        maximumWidthGrowth: Float,
+        minimumContrastGain: Float,
+        residualStrength: Float,
+        sensorDefectAffectedOutput: AlphaMask? = null
+    ): LocalStarEnhancementResult {
+        require(image.width == effectiveSkyAlpha.width && image.height == effectiveSkyAlpha.height)
+        require(
+            sensorDefectAffectedOutput == null ||
+                (image.width == sensorDefectAffectedOutput.width &&
+                    image.height == sensorDefectAffectedOutput.height)
+        )
+        if (strength <= 0f || maximumDetailGain <= 1f) {
+            return LocalStarEnhancementResult(
+                image.copy(pixels = image.pixels.copyOf()),
+                StarEnhancementDiagnostics(strength, stars.size, 0, stars.size, 0f)
+            )
+        }
+        val candidates = stars + ExperimentalStarEnhancementSupport.discoverCompactCandidates(
+            width = image.width,
+            height = image.height,
+            knownStars = stars,
+            statistics = statistics,
+            colorAt = image::pixelAt,
+            alphaAt = effectiveSkyAlpha::alphaAt,
+            defectAt = { x, y -> sensorDefectAffectedOutput?.alphaAt(x, y) ?: 0f }
+        )
+        if (candidates.isEmpty()) {
+            return LocalStarEnhancementResult(
+                image.copy(pixels = image.pixels.copyOf()),
+                StarEnhancementDiagnostics(strength, 0, 0, 0, 0f)
+            )
+        }
+        val output = image.pixels.copyOf()
+        val noiseFloor = ExperimentalStarEnhancementSupport.noiseFloor(statistics)
+        var enhanced = 0
+        var rejected = 0
+        candidates.forEach { star ->
+            val centerX = star.x.roundToInt()
+            val centerY = star.y.roundToInt()
+            if (
+                !ExperimentalStarEnhancementSupport.validShape(star) ||
+                centerX !in 0 until image.width || centerY !in 0 until image.height ||
+                effectiveSkyAlpha.alphaAt(centerX, centerY) <= OPERATION_ALPHA_THRESHOLD ||
+                sensorDefectAffectedOutput?.alphaAt(centerX, centerY)?.let { it > 0f } == true
+            ) {
+                rejected++
+                return@forEach
+            }
+            val background = experimentalAnnulusMedian(
+                image,
+                effectiveSkyAlpha,
+                sensorDefectAffectedOutput,
+                centerX,
+                centerY,
+                star.width
+            )
+            if (!background.isFinite()) {
+                rejected++
+                return@forEach
+            }
+            val centerColor = image.pixelAt(centerX, centerY)
+            val centerLuminance = linearLuminance(centerColor)
+            val centerDetail = centerLuminance - background
+            if (
+                centerDetail <= noiseFloor || centerLuminance >= SATURATED_STAR_LIMIT ||
+                ExperimentalStarEnhancementSupport.isSingleChannelSpike(
+                    centerColor,
+                    background,
+                    centerDetail
+                )
+            ) {
+                rejected++
+                return@forEach
+            }
+            val radius = ExperimentalStarEnhancementSupport.coreRadius(star.width)
+            val supportThreshold = ExperimentalStarEnhancementSupport.supportThreshold(
+                centerDetail,
+                noiseFloor
+            )
+            var support = 0
+            for (dy in -radius..radius) for (dx in -radius..radius) {
+                if (dx * dx + dy * dy > radius * radius) continue
+                val x = centerX + dx
+                val y = centerY + dy
+                if (
+                    x !in 0 until image.width || y !in 0 until image.height ||
+                    effectiveSkyAlpha.alphaAt(x, y) <= OPERATION_ALPHA_THRESHOLD ||
+                    sensorDefectAffectedOutput?.alphaAt(x, y)?.let { it > 0f } == true
+                ) continue
+                if (linearLuminance(image.pixelAt(x, y)) - background >= supportThreshold) support++
+            }
+            if (
+                support !in ExperimentalStarEnhancementSupport.MIN_STAR_SUPPORT..
+                    ExperimentalStarEnhancementSupport.MAX_STAR_SUPPORT
+            ) {
+                rejected++
+                return@forEach
+            }
+            val residualGain = ExperimentalStarEnhancementSupport.residualGain(
+                strength,
+                residualStrength,
+                maximumDetailGain,
+                minimumContrastGain,
+                star.confidence
+            ) * ExperimentalStarEnhancementSupport.brightProtection(statistics, centerLuminance)
+            if (residualGain <= 0.001f) {
+                rejected++
+                return@forEach
+            }
+            var changed = false
+            for (dy in -radius..radius) for (dx in -radius..radius) {
+                val x = centerX + dx
+                val y = centerY + dy
+                if (x !in 0 until image.width || y !in 0 until image.height) continue
+                val index = y * image.width + x
+                val color = image.pixels[index]
+                val luminance = linearLuminance(color)
+                val localDetail = luminance - background
+                val supportWeight = ExperimentalStarEnhancementSupport.supportWeight(
+                    dx = dx,
+                    dy = dy,
+                    radius = radius,
+                    localDetail = localDetail,
+                    centerDetail = centerDetail,
+                    noiseFloor = noiseFloor,
+                    foregroundAlpha = effectiveSkyAlpha.alphaAt(x, y),
+                    defectAffected = sensorDefectAffectedOutput?.alphaAt(x, y) ?: 0f
+                )
+                if (supportWeight <= 0f || luminance <= 0f) continue
+                val targetLuminance = (
+                    background + localDetail * (
+                        1f + residualGain *
+                            ExperimentalStarEnhancementSupport.strengthAdjustedSupportWeight(
+                                supportWeight,
+                                residualStrength
+                            )
+                    )
+                ).coerceAtMost(ExperimentalStarEnhancementSupport.MAX_ENHANCED_VALUE)
+                if (targetLuminance <= luminance) continue
+                val scale = targetLuminance / luminance
+                val enhancedColor = packLinear(
+                    linearChannel(color, 16) * scale,
+                    linearChannel(color, 8) * scale,
+                    linearChannel(color, 0) * scale
+                )
+                if (enhancedColor != color) {
+                    output[index] = enhancedColor
+                    changed = true
+                }
+            }
+            if (changed) enhanced++ else rejected++
+        }
+        return LocalStarEnhancementResult(
+            ArgbPixelImage(image.width, image.height, output),
+            StarEnhancementDiagnostics(
+                strength = strength,
+                considered = candidates.size,
+                enhanced = enhanced,
+                rejected = rejected,
+                maximumMeasuredWidthGrowth = 0f.coerceAtMost(maximumWidthGrowth)
+            )
+        )
+    }
+
     private fun validShape(star: DetectedStar): Boolean =
         star.confidence >= MIN_STAR_CONFIDENCE &&
             star.width in MIN_STAR_WIDTH..MAX_STAR_WIDTH &&
@@ -160,6 +331,35 @@ class LocalStarContrastEnhancer {
             values[count++] = linearLuminance(image.pixelAt(x, y))
         }
         if (count < MIN_ANNULUS_SAMPLES) return Float.NaN
+        values.sort(0, count)
+        return values[count / 2]
+    }
+
+    private fun experimentalAnnulusMedian(
+        image: ArgbPixelImage,
+        mask: AlphaMask,
+        sensorDefectAffectedOutput: AlphaMask?,
+        centerX: Int,
+        centerY: Int,
+        width: Float
+    ): Float {
+        val inner = ceil(maxOf(2f, width * 1.4f)).toInt()
+        val outer = (inner + 3).coerceAtMost(9)
+        val values = FloatArray((outer * 2 + 1) * (outer * 2 + 1))
+        var count = 0
+        for (dy in -outer..outer) for (dx in -outer..outer) {
+            val distanceSquared = dx * dx + dy * dy
+            if (distanceSquared < inner * inner || distanceSquared > outer * outer) continue
+            val x = centerX + dx
+            val y = centerY + dy
+            if (
+                x !in 0 until image.width || y !in 0 until image.height ||
+                mask.alphaAt(x, y) < ExperimentalStarEnhancementSupport.BACKGROUND_ALPHA_THRESHOLD ||
+                sensorDefectAffectedOutput?.alphaAt(x, y)?.let { it > 0f } == true
+            ) continue
+            values[count++] = linearLuminance(image.pixelAt(x, y))
+        }
+        if (count < ExperimentalStarEnhancementSupport.MIN_ANNULUS_SAMPLES) return Float.NaN
         values.sort(0, count)
         return values[count / 2]
     }

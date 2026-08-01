@@ -41,5 +41,11 @@ enum class AstroProcessingProfile(
         description = "Сильно вытягивает слабые точки. Может усилить шум.",
         filePrefix = "MaxStars",
         minimumFrames = 6
+    ),
+    EXPERIMENTAL_STARS(
+        title = "Experimental Stars",
+        description = "Локально усиливает подтверждённые звёзды без общего осветления неба.",
+        filePrefix = "ExperimentalStars",
+        minimumFrames = 6
     )
 }

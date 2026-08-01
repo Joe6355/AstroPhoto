@@ -2,6 +2,9 @@ package com.example.astrophoto
 
 import com.example.astrophoto.processing.jpeg.v2.model.ResultCandidateType
 import com.example.astrophoto.processing.jpeg.v2.completion.automaticProfileSuccessStatus
+import com.example.astrophoto.processing.jpeg.v2.quality.withExperimentalSafeFallback
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -50,6 +53,60 @@ class JpegProfileOutcomeTest {
 
         assertEquals(JpegProfileProcessingOutcome.CLEAN_FALLBACK, plan.outcome)
         assertEquals("RecoveredStars", plan.filePrefix)
+    }
+
+    @Test fun experimentalOutputIsIsolatedAndCleanFallbackKeepsRecoveredStarsName() {
+        val processed = jpegProfileOutputPlan(
+            AstroProcessingProfile.EXPERIMENTAL_STARS,
+            ResultCandidateType.PROCESSED,
+            20,
+            30,
+            null
+        )
+        val fallback = jpegProfileOutputPlan(
+            AstroProcessingProfile.EXPERIMENTAL_STARS,
+            ResultCandidateType.CLEAN_STACK,
+            20,
+            30,
+            "experimental_validation_failed"
+        )
+
+        assertEquals(JpegProfileProcessingOutcome.PROCESSED, processed.outcome)
+        assertEquals("ExperimentalStars", processed.filePrefix)
+        assertEquals(JpegProfileProcessingOutcome.CLEAN_FALLBACK, fallback.outcome)
+        assertEquals("RecoveredStars", fallback.filePrefix)
+    }
+
+    @Test fun experimentalSaveFailurePublishesSafeResult() = runBlocking {
+        var primaryFailure = ""
+        val result = withExperimentalSafeFallback(
+            enabled = true,
+            primary = { throw IllegalStateException("simulated_save_failure") },
+            safeFallback = { error ->
+                primaryFailure = error.message.orEmpty()
+                "RecoveredStars_001.png"
+            }
+        )
+
+        assertEquals("RecoveredStars_001.png", result)
+        assertEquals("simulated_save_failure", primaryFailure)
+    }
+
+    @Test fun experimentalCancellationNeverPublishesFallback() = runBlocking {
+        var fallbackCalled = false
+        val error = runCatching {
+            withExperimentalSafeFallback(
+                enabled = true,
+                primary = { throw CancellationException("cancelled") },
+                safeFallback = {
+                    fallbackCalled = true
+                    "unexpected"
+                }
+            )
+        }.exceptionOrNull()
+
+        assertTrue(error is CancellationException)
+        assertTrue(!fallbackCalled)
     }
 
     @Test fun completionStatusShowsFramesCandidatePostprocessingAndFallbackReason() {

@@ -562,7 +562,7 @@ class JpegV2Stage5Test {
 
     @Test fun existingPresetIdentifiersRemainCompatible() {
         assertEquals(
-            listOf("NORMAL", "DEEP_SKY", "DEEP_SKY_ALIGNED", "URBAN_SKY", "URBAN_SKY_STRONG", "MAX_STARS"),
+            listOf("NORMAL", "DEEP_SKY", "DEEP_SKY_ALIGNED", "URBAN_SKY", "URBAN_SKY_STRONG", "MAX_STARS", "EXPERIMENTAL_STARS"),
             AstroProcessingProfile.entries.map { it.name }
         )
     }
@@ -576,6 +576,18 @@ class JpegV2Stage5Test {
         val clean = starField(96, 72)
         val processed = gradientScene()
         assertEquals(fullGate(clean, processed, cleanProfile), fullGate(clean, processed, cleanProfile))
+    }
+
+    @Test fun experimentalNoOpIsRejectedToCleanFallback() {
+        val clean = starField(96, 72)
+        val selected = fullGate(
+            clean,
+            clean.copy(pixels = clean.pixels.copyOf()),
+            AstroProcessingProfile.EXPERIMENTAL_STARS
+        )
+
+        assertEquals(ResultCandidateType.CLEAN_STACK, selected.selected.type)
+        assertTrue(selected.rejectionReasons.contains("experimental_processing_returned_clean_fallback"))
     }
 
     private fun fullGate(

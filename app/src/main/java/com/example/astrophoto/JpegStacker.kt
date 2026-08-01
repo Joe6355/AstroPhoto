@@ -140,6 +140,7 @@ import com.example.astrophoto.processing.jpeg.v2.quality.ReferenceStarRetentionR
 import com.example.astrophoto.processing.jpeg.v2.quality.ReferenceStarRetentionStage
 import com.example.astrophoto.processing.jpeg.v2.quality.FileBackedResultQualityAnalyzer
 import com.example.astrophoto.processing.jpeg.v2.quality.ResultSelectionPolicy
+import com.example.astrophoto.processing.jpeg.v2.quality.withExperimentalSafeFallback
 import com.example.astrophoto.processing.jpeg.v2.registration.OrderedRegistration
 import com.example.astrophoto.processing.jpeg.v2.registration.ExpectedSequenceMotionModel
 import com.example.astrophoto.processing.jpeg.v2.registration.FullResolutionRefinementResult
@@ -1912,7 +1913,6 @@ class JpegStacker internal constructor(
                     memoryBudget = memoryBudget,
                     memoryTracker = memoryTracker
                 )
-                sensorDefectAffectedOutput?.let(candidateStore::deleteTemporary)
                 val cleanStackHandle = candidateStore.register(
                     ResultCandidateType.CLEAN_STACK,
                     composite.image
@@ -2025,6 +2025,7 @@ class JpegStacker internal constructor(
                         store = candidateStore,
                         memoryBudget = memoryBudget,
                         memoryTracker = memoryTracker,
+                        sensorDefectAffectedOutput = sensorDefectAffectedOutput,
                         onProgress = { message, current, total ->
                             currentStage = message
                             withContext(Dispatchers.Main.immediate) {
@@ -2069,6 +2070,7 @@ class JpegStacker internal constructor(
                         metrics = referenceCandidate.metrics
                     )
                 }
+                sensorDefectAffectedOutput?.let(candidateStore::deleteTemporary)
                 journalRunId?.let {
                     runJournal.update(
                         it,
@@ -2124,7 +2126,10 @@ class JpegStacker internal constructor(
                 logProfileStage(profile, source, "finalQualityGate", selectedProfileMetrics)
                 journalRunId?.let { runJournal.update(it, "final_candidate_selected") }
 
-                if (profile == AstroProcessingProfile.MAX_STARS) {
+                if (
+                    profile == AstroProcessingProfile.MAX_STARS ||
+                    profile == AstroProcessingProfile.EXPERIMENTAL_STARS
+                ) {
                     warnings += "Режим может усилить шум и артефакты"
                 }
                 if (alignmentRejected > 0) {
@@ -2418,8 +2423,19 @@ class JpegStacker internal constructor(
                     temporaryFiles = temporaryFiles,
                     journalRunId = journalRunId,
                     runJournal = runJournal,
+                    experimentalSafeCandidate = cleanStackCandidate.takeIf {
+                        profile == AstroProcessingProfile.EXPERIMENTAL_STARS &&
+                            finalSelection.selected.type == ResultCandidateType.PROCESSED
+                    },
+                    experimentalSafeFileName = "${ResultSelectionPolicy.INTERNAL_FALLBACK_LABEL}_$timestamp.png",
                     onProgress = onProgress
                 )
+                if (savedArtifacts.primaryFallbackUsed) {
+                    finalStars = cleanStackCandidate.metrics.reliableStarCount
+                    sanityStatus = "fallback"
+                    fallback = ResultSelectionPolicy.INTERNAL_FALLBACK_LABEL
+                    fallbackReason = savedArtifacts.primaryFallbackReason.orEmpty()
+                }
                 val saved = savedArtifacts.saved
                 val fileName = saved.fileName
                 val enhancedFileName = savedArtifacts.enhancedFileName
@@ -2599,18 +2615,27 @@ class JpegStacker internal constructor(
                     frameCount = acceptedFrames,
                     sessionInfoUpdated = infoUpdated,
                     alignmentEnabled = alignmentApplied > 0,
-                    astroStretchApplied = processingOutcome == JpegProfileProcessingOutcome.PROCESSED,
+                    astroStretchApplied = processingOutcome == JpegProfileProcessingOutcome.PROCESSED &&
+                        !savedArtifacts.primaryFallbackUsed,
                     downscaled = false,
                     profile = profile,
-                    selectedResultType = finalSelection.selected.type.name,
+                    selectedResultType = if (savedArtifacts.primaryFallbackUsed) {
+                        ResultCandidateType.CLEAN_STACK.name
+                    } else {
+                        finalSelection.selected.type.name
+                    },
                     starsBefore = cleanStackCandidate.metrics.reliableStarCount,
                     starCount = finalStars,
-                    fallbackUsed = finalSelection.fallbackUsed,
-                    fallbackReason = finalSelection.fallbackReason,
+                    fallbackUsed = finalSelection.fallbackUsed || savedArtifacts.primaryFallbackUsed,
+                    fallbackReason = savedArtifacts.primaryFallbackReason ?: finalSelection.fallbackReason,
                     warnings = warnings.distinct(),
                     additionalFiles = additionalFiles,
                     processingRunId = journalRunId,
-                    processingOutcome = processingOutcome,
+                    processingOutcome = if (savedArtifacts.primaryFallbackUsed) {
+                        JpegProfileProcessingOutcome.CLEAN_FALLBACK
+                    } else {
+                        processingOutcome
+                    },
                     postProcessingExecuted = stage4Executed
                 ).also {
                     Log.i(
@@ -2752,7 +2777,17 @@ class JpegStacker internal constructor(
         val saved: SavedProcessedImage,
         val enhancedFileName: String?,
         val processingReport: ProcessingReport,
-        val reportJson: String
+        val reportJson: String,
+        val primaryFallbackUsed: Boolean = false,
+        val primaryFallbackReason: String? = null
+    )
+
+    private data class PrimaryPublication(
+        val saved: SavedProcessedImage,
+        val selected: StoredResultCandidate,
+        val publishedOutputHash: String?,
+        val fallbackUsed: Boolean,
+        val fallbackReason: String? = null
     )
 
     private suspend fun savePrimaryAndAncillaryEnhanced(
@@ -2769,43 +2804,70 @@ class JpegStacker internal constructor(
         temporaryFiles: TemporaryPipelineFiles,
         journalRunId: String?,
         runJournal: ProcessingRunJournal,
+        experimentalSafeCandidate: StoredResultCandidate? = null,
+        experimentalSafeFileName: String? = null,
         onProgress: suspend (message: String, current: Int, total: Int) -> Unit
     ): SavedProfileArtifacts {
         withContext(Dispatchers.Main.immediate) {
             onProgress("Saving lossless PNG", 3, 3)
         }
         val pngWritingStarted = System.nanoTime()
-        val saved = FileBackedImageReader(selected.image).use { selectedReader ->
-            LosslessProcessedImageWriter(context).write(
-                session,
-                selectedReader,
-                requestedFileName
-            )
-        }
+        val primary = publishPrimaryWithExperimentalFallback(
+            selected = selected,
+            requestedFileName = requestedFileName,
+            experimentalSafeCandidate = experimentalSafeCandidate,
+            experimentalSafeFileName = experimentalSafeFileName,
+            session = session,
+            warnings = warnings
+        )
+        val saved = primary.saved
         pipelineTiming.record(
             "png_writing",
             (System.nanoTime() - pngWritingStarted) / 1_000_000L
         )
-        val enhanced = publishAncillaryEnhanced(
-            selected = selected,
-            effectiveSkyAlpha = effectiveSkyAlpha,
-            confirmedStars = confirmedStars,
-            candidateStore = candidateStore,
-            session = session,
-            timestamp = timestamp,
-            pipelineTiming = pipelineTiming
-        )
+        val enhanced = if (primary.fallbackUsed) {
+            AncillaryEnhancedPublication(attempted = false, status = "NOT_ATTEMPTED_SAFE_FALLBACK")
+        } else {
+            publishAncillaryEnhanced(
+                selected = primary.selected,
+                effectiveSkyAlpha = effectiveSkyAlpha,
+                confirmedStars = confirmedStars,
+                candidateStore = candidateStore,
+                session = session,
+                timestamp = timestamp,
+                pipelineTiming = pipelineTiming
+            )
+        }
         warnings += enhanced.processingWarnings
-        val publishedOutputHash = runCatching {
-            sha256PublishedOutput(saved)
-        }.onFailure { error ->
-            warnings += "Published PNG hash unavailable: " +
-                (error.message ?: error::class.java.simpleName)
-        }.getOrNull()
-        val selectedRetention = processingReport.sensorDefectFiltering.referenceStarRetentionStages
+        val effectiveReport = if (primary.fallbackUsed) {
+            val cleanStage = processingReport.sensorDefectFiltering.referenceStarRetentionStages
+                .lastOrNull { it.stage == "composed_clean_result" }
+            val retentionStages = if (cleanStage == null) {
+                processingReport.sensorDefectFiltering.referenceStarRetentionStages
+            } else {
+                processingReport.sensorDefectFiltering.referenceStarRetentionStages
+                    .filterNot { it.stage == "selected_candidate" } +
+                    cleanStage.copy(stage = "selected_candidate")
+            }
+            processingReport.copy(
+                selectedCandidateType = ResultCandidateType.CLEAN_STACK.name,
+                fallbackUsed = true,
+                fallbackReason = primary.fallbackReason,
+                internalFallbackLabel = ResultSelectionPolicy.INTERNAL_FALLBACK_LABEL,
+                processingOutcome = JpegProfileProcessingOutcome.CLEAN_FALLBACK.name,
+                actualStarContrastGain = 1f,
+                sensorDefectFiltering = processingReport.sensorDefectFiltering.copy(
+                    referenceStarRetentionStages = retentionStages
+                )
+            )
+        } else {
+            processingReport
+        }
+        val publishedOutputHash = primary.publishedOutputHash
+        val selectedRetention = effectiveReport.sensorDefectFiltering.referenceStarRetentionStages
             .lastOrNull { it.stage == "selected_candidate" }
         val outputRetentionStages = buildList {
-            addAll(processingReport.sensorDefectFiltering.referenceStarRetentionStages)
+            addAll(effectiveReport.sensorDefectFiltering.referenceStarRetentionStages)
             selectedRetention?.let { selected ->
                 add(
                     selected.copy(
@@ -2823,9 +2885,9 @@ class JpegStacker internal constructor(
                 }
             }
         }
-        val updatedReport = processingReport.copy(
+        val updatedReport = effectiveReport.copy(
             outputPngDisplayName = saved.fileName,
-            sensorDefectFiltering = processingReport.sensorDefectFiltering.copy(
+            sensorDefectFiltering = effectiveReport.sensorDefectFiltering.copy(
                 publishedOutputHash = publishedOutputHash,
                 referenceStarRetentionStages = outputRetentionStages
             ),
@@ -2859,8 +2921,73 @@ class JpegStacker internal constructor(
             saved = saved,
             enhancedFileName = enhanced.fileName,
             processingReport = bookkeeping.report,
-            reportJson = bookkeeping.reportJson
+            reportJson = bookkeeping.reportJson,
+            primaryFallbackUsed = primary.fallbackUsed,
+            primaryFallbackReason = primary.fallbackReason
         )
+    }
+
+    private suspend fun publishPrimaryWithExperimentalFallback(
+        selected: StoredResultCandidate,
+        requestedFileName: String,
+        experimentalSafeCandidate: StoredResultCandidate?,
+        experimentalSafeFileName: String?,
+        session: SessionSummary,
+        warnings: MutableList<String>
+    ): PrimaryPublication = withExperimentalSafeFallback(
+        enabled = experimentalSafeCandidate != null,
+        primary = {
+            val saved = writePrimaryCandidate(selected, requestedFileName, session)
+            val hash = publishedOutputHash(saved, warnings)
+            if (experimentalSafeCandidate != null && hash == null) {
+                val removed = runCatching { deletePublishedOutput(saved) }.getOrDefault(false)
+                if (!removed) warnings += "Unverified Experimental Stars output cleanup failed"
+                error("Experimental Stars PNG post-save verification failed")
+            }
+            PrimaryPublication(saved, selected, hash, fallbackUsed = false)
+        },
+        safeFallback = { primaryFailure ->
+            val safe = checkNotNull(experimentalSafeCandidate)
+            val safeName = requireNotNull(experimentalSafeFileName)
+            warnings += "Experimental Stars publication failed; RecoveredStars saved: " +
+                (primaryFailure.message ?: primaryFailure::class.java.simpleName)
+            val saved = writePrimaryCandidate(safe, safeName, session)
+            PrimaryPublication(
+                saved = saved,
+                selected = safe,
+                publishedOutputHash = publishedOutputHash(saved, warnings),
+                fallbackUsed = true,
+                fallbackReason = EXPERIMENTAL_PUBLICATION_FALLBACK_REASON
+            )
+        }
+    )
+
+    private suspend fun writePrimaryCandidate(
+        selected: StoredResultCandidate,
+        requestedFileName: String,
+        session: SessionSummary
+    ): SavedProcessedImage = FileBackedImageReader(selected.image).use { selectedReader ->
+        LosslessProcessedImageWriter(context).write(session, selectedReader, requestedFileName)
+    }
+
+    private fun publishedOutputHash(
+        saved: SavedProcessedImage,
+        warnings: MutableList<String>
+    ): String? = runCatching { sha256PublishedOutput(saved) }
+        .onFailure { error ->
+            warnings += "Published PNG hash unavailable: " +
+                (error.message ?: error::class.java.simpleName)
+        }
+        .getOrNull()
+
+    private fun deletePublishedOutput(saved: SavedProcessedImage): Boolean = when {
+        saved.contentUri != null -> context.contentResolver.delete(
+            Uri.parse(saved.contentUri),
+            null,
+            null
+        ) > 0
+        saved.filePath != null -> File(saved.filePath).delete()
+        else -> false
     }
 
     private fun sha256PublishedOutput(saved: SavedProcessedImage): String {
@@ -6092,6 +6219,8 @@ class JpegStacker internal constructor(
         private const val ADAPTIVE_PROCESSING_TAG = "AstroPhotoJpegStage4"
         private const val POST_COMPLETION_TAG = "AstroPhotoPostCompletion"
         private const val POST_COMPLETION_JOURNAL_TAG = "AstroPhotoProcessingJournal"
+        private const val EXPERIMENTAL_PUBLICATION_FALLBACK_REASON =
+            "experimental_save_or_verification_failed"
         private const val MIN_SKY_ALPHA_FOR_ADAPTIVE_STATISTICS = 0.98f
         private const val MIN_PROFILE_WORKING_MEMORY_BYTES = 64L * 1024L * 1024L
         private const val MAX_PROFILE_WORKING_MEMORY_BYTES = 256L * 1024L * 1024L

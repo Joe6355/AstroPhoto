@@ -18,6 +18,7 @@ import com.example.astrophoto.processing.jpeg.v2.model.StarEnhancementDiagnostic
 import com.example.astrophoto.processing.jpeg.v2.model.StretchDiagnostics
 import com.example.astrophoto.processing.jpeg.v2.profile.ExistingPresetParameterMapper
 import com.example.astrophoto.processing.jpeg.v2.quality.FileBackedSuspiciousPointClassifier
+import com.example.astrophoto.processing.jpeg.v2.quality.withExperimentalSafeFallback
 import com.example.astrophoto.processing.jpeg.v2.storage.AlphaPixelSource
 import com.example.astrophoto.processing.jpeg.v2.storage.FileBackedFloatPlane
 import com.example.astrophoto.processing.jpeg.v2.storage.FileBackedFloatPlaneReader
@@ -37,10 +38,12 @@ data class FileBackedAdaptiveProcessingResult(
 )
 
 /** Stage 4 equivalent that owns only bounded tile/halo buffers and file handles. */
-class FileBackedAdaptivePresetProcessor(
+class FileBackedAdaptivePresetProcessor internal constructor(
     private val statistics: FileBackedSkyStatistics = FileBackedSkyStatistics(),
     private val composer: FileBackedSkyForegroundComposer = FileBackedSkyForegroundComposer(),
-    private val featureFlags: AdaptiveProcessingFeatureFlags = AdaptiveProcessingFeatureFlags()
+    private val featureFlags: AdaptiveProcessingFeatureFlags = AdaptiveProcessingFeatureFlags(),
+    private val experimentalStrengthVariant: ExperimentalStarStrengthVariant =
+        ExperimentalStarStrengthVariant.PRODUCTION_SELECTED
 ) {
     suspend fun process(
         stackedSky: FileBackedImage,
@@ -52,10 +55,61 @@ class FileBackedAdaptivePresetProcessor(
         store: ResultCandidateStore,
         memoryBudget: JpegMemoryBudget,
         memoryTracker: PipelineMemoryTracker,
+        sensorDefectAffectedOutput: FileBackedFloatPlane? = null,
         onProgress: suspend (message: String, current: Int, total: Int) -> Unit = { _, _, _ -> }
+    ): FileBackedAdaptiveProcessingResult = withExperimentalSafeFallback(
+        enabled = profile == AstroProcessingProfile.EXPERIMENTAL_STARS,
+        primary = {
+            processInternal(
+                stackedSky,
+                referenceForeground,
+                effectiveSkyAlpha,
+                profile,
+                frameCount,
+                alignedStackStars,
+                store,
+                memoryBudget,
+                memoryTracker,
+                sensorDefectAffectedOutput,
+                onProgress
+            )
+        },
+        safeFallback = { error ->
+            onProgress("Experimental processing failed; preserving CLEAN", TOTAL_STAGES, TOTAL_STAGES)
+            experimentalProcessingFallback(
+                stackedSky,
+                referenceForeground,
+                effectiveSkyAlpha,
+                profile,
+                alignedStackStars,
+                store,
+                memoryBudget,
+                memoryTracker,
+                error
+            )
+        }
+    )
+
+    private suspend fun processInternal(
+        stackedSky: FileBackedImage,
+        referenceForeground: FileBackedImage,
+        effectiveSkyAlpha: FileBackedFloatPlane,
+        profile: AstroProcessingProfile,
+        frameCount: Int,
+        alignedStackStars: List<DetectedStar>,
+        store: ResultCandidateStore,
+        memoryBudget: JpegMemoryBudget,
+        memoryTracker: PipelineMemoryTracker,
+        sensorDefectAffectedOutput: FileBackedFloatPlane?,
+        onProgress: suspend (message: String, current: Int, total: Int) -> Unit
     ): FileBackedAdaptiveProcessingResult {
         require(stackedSky.width == referenceForeground.width && stackedSky.height == referenceForeground.height)
         require(stackedSky.width == effectiveSkyAlpha.width && stackedSky.height == effectiveSkyAlpha.height)
+        require(
+            sensorDefectAffectedOutput == null ||
+                (stackedSky.width == sensorDefectAffectedOutput.width &&
+                    stackedSky.height == sensorDefectAffectedOutput.height)
+        )
         require(profile != AstroProcessingProfile.NORMAL)
         val started = System.nanoTime()
         val parameters = ExistingPresetParameterMapper.parametersFor(profile, frameCount)
@@ -169,19 +223,37 @@ class FileBackedAdaptivePresetProcessor(
         onProgress("Enhancing stars", 5, TOTAL_STAGES)
         currentStatistics = fileStatistics(workingImage)
         stageStarted = System.nanoTime()
-        val enhanced = starPass(
-            workingImage,
-            effectiveSkyAlpha,
-            alignedStackStars,
-            currentStatistics,
-            parameters.starContrastStrength,
-            parameters.maximumStarDetailGain,
-            parameters.minimumStarContrastGain,
-            parameters.maximumStarWidthGrowth,
-            store,
-            memoryBudget,
-            memoryTracker
-        )
+        val enhanced = if (profile == AstroProcessingProfile.EXPERIMENTAL_STARS) {
+            experimentalStarPass(
+                workingImage,
+                effectiveSkyAlpha,
+                sensorDefectAffectedOutput,
+                alignedStackStars,
+                currentStatistics,
+                parameters.starContrastStrength,
+                experimentalStrengthVariant.maximumDetailGain,
+                parameters.minimumStarContrastGain,
+                parameters.maximumStarWidthGrowth,
+                experimentalStrengthVariant.residualStrength,
+                store,
+                memoryBudget,
+                memoryTracker
+            )
+        } else {
+            starPass(
+                workingImage,
+                effectiveSkyAlpha,
+                alignedStackStars,
+                currentStatistics,
+                parameters.starContrastStrength,
+                parameters.maximumStarDetailGain,
+                parameters.minimumStarContrastGain,
+                parameters.maximumStarWidthGrowth,
+                store,
+                memoryBudget,
+                memoryTracker
+            )
+        }
         store.deleteTemporary(workingImage)
         workingImage = enhanced.first
         val starDiagnostics = enhanced.second
@@ -292,6 +364,40 @@ class FileBackedAdaptivePresetProcessor(
                 foregroundDifferenceOutsideMask = composite.diagnostics.maximumForegroundChannelDifference,
                 processingDurationMillis = (System.nanoTime() - started) / 1_000_000L,
                 stageDurationsMillis = durations
+            )
+        )
+    }
+
+    private fun experimentalProcessingFallback(
+        stackedSky: FileBackedImage,
+        referenceForeground: FileBackedImage,
+        effectiveSkyAlpha: FileBackedFloatPlane,
+        profile: AstroProcessingProfile,
+        alignedStackStars: List<DetectedStar>,
+        store: ResultCandidateStore,
+        memoryBudget: JpegMemoryBudget,
+        memoryTracker: PipelineMemoryTracker,
+        error: Exception
+    ): FileBackedAdaptiveProcessingResult {
+        val started = System.nanoTime()
+        val before = FileBackedImageReader(stackedSky).use { image ->
+            FileBackedFloatPlaneReader(effectiveSkyAlpha).use { alpha ->
+                statistics.calculate(image, alpha, alignedStackStars)
+            }
+        }
+        return bypassPostProcessing(
+            stackedSky = stackedSky,
+            referenceForeground = referenceForeground,
+            effectiveSkyAlpha = effectiveSkyAlpha,
+            profile = profile,
+            before = before,
+            store = store,
+            memoryBudget = memoryBudget,
+            memoryTracker = memoryTracker,
+            started = started,
+            durations = mapOf(
+                "experimental_processing_failed_${error::class.java.simpleName}" to
+                    (System.nanoTime() - started) / 1_000_000L
             )
         )
     }
@@ -678,6 +784,196 @@ class FileBackedAdaptivePresetProcessor(
         return output to ChromaNoiseDiagnostics(applied, radius)
     }
 
+    private fun experimentalStarPass(
+        input: FileBackedImage,
+        alphaPlane: FileBackedFloatPlane,
+        sensorDefectAffectedOutput: FileBackedFloatPlane?,
+        stars: List<DetectedStar>,
+        stats: SkyStatisticsResult,
+        strength: Float,
+        maximumDetailGain: Float,
+        minimumContrastGain: Float,
+        maximumWidthGrowth: Float,
+        residualStrength: Float,
+        store: ResultCandidateStore,
+        budget: JpegMemoryBudget,
+        tracker: PipelineMemoryTracker
+    ): Pair<FileBackedImage, StarEnhancementDiagnostics> {
+        if (strength <= 0f || maximumDetailGain <= 1f) {
+            return transform(
+                "experimental-stars-copy",
+                input,
+                alphaPlane,
+                store,
+                budget,
+                tracker
+            ) { _, _, color, _, _ -> color } to
+                StarEnhancementDiagnostics(strength, stars.size, 0, stars.size, 0f)
+        }
+        val changes = mutableMapOf<Long, Int>()
+        val noiseFloor = ExperimentalStarEnhancementSupport.noiseFloor(stats)
+        var considered = 0
+        var enhanced = 0
+        var rejected = 0
+        FileBackedImageReader(input, cachedRows = 20).use { image ->
+            FileBackedFloatPlaneReader(alphaPlane, cachedRows = 20).use { alpha ->
+                sensorDefectAffectedOutput?.let { FileBackedFloatPlaneReader(it, cachedRows = 20) }
+                    .use { defect ->
+                        val candidates = stars +
+                            ExperimentalStarEnhancementSupport.discoverCompactCandidates(
+                                width = input.width,
+                                height = input.height,
+                                knownStars = stars,
+                                statistics = stats,
+                                colorAt = image::argbAt,
+                                alphaAt = alpha::alphaAt,
+                                defectAt = { x, y -> defect?.alphaAt(x, y) ?: 0f }
+                            )
+                        considered = candidates.size
+                        candidates.forEach { star ->
+                            val centerX = star.x.roundToInt()
+                            val centerY = star.y.roundToInt()
+                            if (
+                                !ExperimentalStarEnhancementSupport.validShape(star) ||
+                                centerX !in 0 until input.width || centerY !in 0 until input.height ||
+                                alpha.alphaAt(centerX, centerY) <= OPERATION_ALPHA_THRESHOLD ||
+                                (defect?.alphaAt(centerX, centerY) ?: 0f) > 0f
+                            ) {
+                                rejected++
+                                return@forEach
+                            }
+                            val background = annulusMedian(
+                                image,
+                                alpha,
+                                centerX,
+                                centerY,
+                                star.width,
+                                defect,
+                                ExperimentalStarEnhancementSupport.BACKGROUND_ALPHA_THRESHOLD
+                            )
+                            if (!background.isFinite()) {
+                                rejected++
+                                return@forEach
+                            }
+                            val centerColor = image.argbAt(centerX, centerY)
+                            val centerLuminance = linearLuminance(centerColor)
+                            val centerDetail = centerLuminance - background
+                            if (
+                                centerDetail <= noiseFloor || centerLuminance >= SATURATED_STAR_LIMIT ||
+                                ExperimentalStarEnhancementSupport.isSingleChannelSpike(
+                                    centerColor,
+                                    background,
+                                    centerDetail
+                                )
+                            ) {
+                                rejected++
+                                return@forEach
+                            }
+                            val radius = ExperimentalStarEnhancementSupport.coreRadius(star.width)
+                            val supportThreshold = ExperimentalStarEnhancementSupport.supportThreshold(
+                                centerDetail,
+                                noiseFloor
+                            )
+                            var support = 0
+                            for (dy in -radius..radius) for (dx in -radius..radius) {
+                                if (dx * dx + dy * dy > radius * radius) continue
+                                val x = centerX + dx
+                                val y = centerY + dy
+                                if (
+                                    x !in 0 until input.width || y !in 0 until input.height ||
+                                    alpha.alphaAt(x, y) <= OPERATION_ALPHA_THRESHOLD ||
+                                    (defect?.alphaAt(x, y) ?: 0f) > 0f
+                                ) continue
+                                if (linearLuminance(image.argbAt(x, y)) - background >= supportThreshold) {
+                                    support++
+                                }
+                            }
+                            if (
+                                support !in ExperimentalStarEnhancementSupport.MIN_STAR_SUPPORT..
+                                    ExperimentalStarEnhancementSupport.MAX_STAR_SUPPORT
+                            ) {
+                                rejected++
+                                return@forEach
+                            }
+                            val residualGain = ExperimentalStarEnhancementSupport.residualGain(
+                                strength,
+                                residualStrength,
+                                maximumDetailGain,
+                                minimumContrastGain,
+                                star.confidence
+                            ) * ExperimentalStarEnhancementSupport.brightProtection(stats, centerLuminance)
+                            if (residualGain <= 0.001f) {
+                                rejected++
+                                return@forEach
+                            }
+                            var changed = false
+                            for (dy in -radius..radius) for (dx in -radius..radius) {
+                                val x = centerX + dx
+                                val y = centerY + dy
+                                if (x !in 0 until input.width || y !in 0 until input.height) continue
+                                val color = image.argbAt(x, y)
+                                val luminance = linearLuminance(color)
+                                val localDetail = luminance - background
+                                val supportWeight = ExperimentalStarEnhancementSupport.supportWeight(
+                                    dx = dx,
+                                    dy = dy,
+                                    radius = radius,
+                                    localDetail = localDetail,
+                                    centerDetail = centerDetail,
+                                    noiseFloor = noiseFloor,
+                                    foregroundAlpha = alpha.alphaAt(x, y),
+                                    defectAffected = defect?.alphaAt(x, y) ?: 0f
+                                )
+                                if (supportWeight <= 0f || luminance <= 0f) continue
+                                val target = (
+                                    background + localDetail * (
+                                        1f + residualGain *
+                                            ExperimentalStarEnhancementSupport.strengthAdjustedSupportWeight(
+                                                supportWeight,
+                                                residualStrength
+                                            )
+                                    )
+                                ).coerceAtMost(ExperimentalStarEnhancementSupport.MAX_ENHANCED_VALUE)
+                                if (target <= luminance) continue
+                                val scale = target / luminance
+                                val enhancedColor = packLinear(
+                                    linearChannel(color, 16) * scale,
+                                    linearChannel(color, 8) * scale,
+                                    linearChannel(color, 0) * scale
+                                )
+                                val key = y.toLong() * input.width + x
+                                if (
+                                    enhancedColor != color &&
+                                    (changes[key]?.let(::linearLuminance) ?: -1f) <
+                                    linearLuminance(enhancedColor)
+                                ) {
+                                    changes[key] = enhancedColor
+                                    changed = true
+                                }
+                            }
+                            if (changed) enhanced++ else rejected++
+                        }
+                    }
+            }
+        }
+        val output = transform(
+            "experimental-stars",
+            input,
+            alphaPlane,
+            store,
+            budget,
+            tracker,
+            halo = 9
+        ) { x, y, color, _, _ -> changes[y.toLong() * input.width + x] ?: color }
+        return output to StarEnhancementDiagnostics(
+            strength,
+            considered,
+            enhanced,
+            rejected,
+            0f.coerceAtMost(maximumWidthGrowth)
+        )
+    }
+
     private fun starPass(
         input: FileBackedImage,
         alphaPlane: FileBackedFloatPlane,
@@ -969,7 +1265,9 @@ class FileBackedAdaptivePresetProcessor(
         mask: AlphaPixelSource,
         centerX: Int,
         centerY: Int,
-        width: Float
+        width: Float,
+        sensorDefectAffectedOutput: AlphaPixelSource? = null,
+        minimumAlpha: Float = STATISTICS_ALPHA_THRESHOLD
     ): Float {
         val inner = ceil(maxOf(2f, width * 1.4f)).toInt()
         val outer = (inner + 3).coerceAtMost(9)
@@ -981,7 +1279,8 @@ class FileBackedAdaptivePresetProcessor(
             val x = centerX + dx
             val y = centerY + dy
             if (x !in 0 until image.width || y !in 0 until image.height ||
-                mask.alphaAt(x, y) < STATISTICS_ALPHA_THRESHOLD
+                mask.alphaAt(x, y) < minimumAlpha ||
+                (sensorDefectAffectedOutput?.alphaAt(x, y) ?: 0f) > 0f
             ) continue
             values[count++] = linearLuminance(image.argbAt(x, y))
         }

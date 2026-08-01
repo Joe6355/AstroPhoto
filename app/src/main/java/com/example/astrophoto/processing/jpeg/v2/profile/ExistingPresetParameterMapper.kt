@@ -2,6 +2,7 @@ package com.example.astrophoto.processing.jpeg.v2.profile
 
 import com.example.astrophoto.AstroProcessingProfile
 import com.example.astrophoto.processing.jpeg.v2.model.AdaptiveProcessingParameters
+import com.example.astrophoto.processing.jpeg.v2.postprocessing.ExperimentalStarStrengthVariant
 
 object ExistingPresetParameterMapper {
     fun parametersFor(
@@ -17,6 +18,7 @@ object ExistingPresetParameterMapper {
             AstroProcessingProfile.URBAN_SKY -> CITY_WINDOW
             AstroProcessingProfile.URBAN_SKY_STRONG -> CITY_WINDOW_STRONG
             AstroProcessingProfile.MAX_STARS -> MAXIMUM_STARS
+            AstroProcessingProfile.EXPERIMENTAL_STARS -> EXPERIMENTAL_STARS
         }
         return if (stableSignal) parameters else parameters.copy(starContrastStrength = 0f)
     }
@@ -119,6 +121,30 @@ object ExistingPresetParameterMapper {
         maximumStarWidthGrowth = 0.03f,
         targetDisplaySkyMedian = 26f / 255f,
         minimumStarContrastGain = 0.50f
+    )
+
+    /**
+     * One deliberately isolated production experiment: preserve the CLEAN sky/background and
+     * strengthen only confirmed compact PSF cores. Existing preset parameter objects stay exact.
+     */
+    private val EXPERIMENTAL_STARS = AdaptiveProcessingParameters(
+        gradientStrength = 0f,
+        neutralizationStrength = 0f,
+        stretchBlend = 0f,
+        asinhStrength = 0f,
+        highlightProtection = 0.98f,
+        chromaNoiseStrength = 0f,
+        starContrastStrength = 1f,
+        maximumSkyMedianFactor = 1.05f,
+        maximumChannelClippingPercent = 2f,
+        minimumBlackWhiteSeparation = 0.35f,
+        maximumGradientCorrection = 0f,
+        maximumNeutralizationCorrection = 0f,
+        maximumStarDetailGain = ExperimentalStarStrengthVariant.PRODUCTION_SELECTED.maximumDetailGain,
+        maximumChromaRadius = 0,
+        maximumStarWidthGrowth = 0f,
+        targetDisplaySkyMedian = 0f,
+        minimumStarContrastGain = 0.60f
     )
 
     private const val MIN_STABLE_STACK_FRAMES = 6

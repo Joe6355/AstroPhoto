@@ -32,11 +32,13 @@ class AstroResultQualityGate(
         val comparisons = listOf(
             foregroundComparator.compare(reference.metrics, processed.metrics),
             starComparator.compare(cleanStack.metrics, processed.metrics, profile),
-            backgroundComparator.compare(
+            backgroundComparisonFor(
                 cleanStack.metrics,
                 processed.metrics,
-                ExistingPresetParameterMapper.parametersFor(profile, frameCount)
-            )
+                profile,
+                frameCount
+            ),
+            experimentalNoOpComparison(cleanStack.metrics, processed.metrics, profile)
         )
         return decision(processed, comparisons)
     }
@@ -52,13 +54,48 @@ class AstroResultQualityGate(
         listOf(
             foregroundComparator.compare(reference.metrics, processed.metrics),
             starComparator.compare(cleanStack.metrics, processed.metrics, profile),
-            backgroundComparator.compare(
+            backgroundComparisonFor(
                 cleanStack.metrics,
                 processed.metrics,
-                ExistingPresetParameterMapper.parametersFor(profile, frameCount)
-            )
+                profile,
+                frameCount
+            ),
+            experimentalNoOpComparison(cleanStack.metrics, processed.metrics, profile)
         )
     )
+
+    private fun experimentalNoOpComparison(
+        clean: com.example.astrophoto.processing.jpeg.v2.model.ResultQualityMetrics,
+        processed: com.example.astrophoto.processing.jpeg.v2.model.ResultQualityMetrics,
+        profile: AstroProcessingProfile
+    ): QualityComparison = if (
+        profile == AstroProcessingProfile.EXPERIMENTAL_STARS && processed == clean
+    ) {
+        QualityComparison(
+            hardFailureReasons = listOf("experimental_processing_returned_clean_fallback")
+        )
+    } else {
+        QualityComparison()
+    }
+
+    private fun backgroundComparisonFor(
+        clean: com.example.astrophoto.processing.jpeg.v2.model.ResultQualityMetrics,
+        processed: com.example.astrophoto.processing.jpeg.v2.model.ResultQualityMetrics,
+        profile: AstroProcessingProfile,
+        frameCount: Int
+    ): QualityComparison {
+        val comparison = backgroundComparator.compare(
+            clean,
+            processed,
+            ExistingPresetParameterMapper.parametersFor(profile, frameCount)
+        )
+        if (profile != AstroProcessingProfile.EXPERIMENTAL_STARS) return comparison
+        val relaxed = comparison.hardFailureReasons.filter(EXPERIMENTAL_REVIEW_ONLY_REASONS::contains)
+        return QualityComparison(
+            hardFailureReasons = comparison.hardFailureReasons - relaxed.toSet(),
+            warningReasons = (comparison.warningReasons + relaxed.map { "experimental_review_$it" }).distinct()
+        )
+    }
 
     fun evaluateCleanStack(
         reference: ResultCandidate,
@@ -133,5 +170,10 @@ class AstroResultQualityGate(
     companion object {
         private const val HARD_FAILURE_SCORE_PENALTY = 0.30f
         private const val WARNING_SCORE_PENALTY = 0.05f
+        private val EXPERIMENTAL_REVIEW_ONLY_REASONS = setOf(
+            "sky_mad_increased_excessively",
+            "banding_increased_excessively",
+            "gradient_residual_worsened"
+        )
     }
 }

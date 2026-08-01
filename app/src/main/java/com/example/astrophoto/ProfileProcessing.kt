@@ -51,6 +51,12 @@ internal fun profileRecipe(
             safeStarBoost(StarBoostMode.STRONG),
             hasStableStackSignal, 2.0, false, false
         )
+        AstroProcessingProfile.EXPERIMENTAL_STARS -> AstroProfileRecipe(
+            AstroRoi.Top70, AstroRoi.Top70, "Top 70%", StarDetectionSensitivity.HIGH,
+            BackgroundRemovalMode.URBAN, AstroStretchMode.NATURAL,
+            safeStarBoost(StarBoostMode.STRONG),
+            hasStableStackSignal, 2.0, false, false
+        )
         AstroProcessingProfile.MAX_STARS -> AstroProfileRecipe(
             AstroRoi.Top70, AstroRoi.Top70, "Top 70%", StarDetectionSensitivity.HIGH,
             BackgroundRemovalMode.STRONG, AstroStretchMode.NATURAL,

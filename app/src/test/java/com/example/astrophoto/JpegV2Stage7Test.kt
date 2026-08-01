@@ -419,10 +419,11 @@ class JpegV2Stage7Test {
             stacker.indexOf("private suspend fun savePrimaryAndAncillaryEnhanced("),
             stacker.indexOf("private data class AncillaryEnhancedPublication")
         )
-        val primarySave = saveFunction.indexOf("LosslessProcessedImageWriter(context).write")
+        val primarySave = saveFunction.indexOf("publishPrimaryWithExperimentalFallback(")
         val ancillaryStart = saveFunction.indexOf("publishAncillaryEnhanced(")
         assertTrue(primarySave >= 0 && ancillaryStart > primarySave)
-        assertTrue(saveFunction.contains("selected = selected"))
+        assertTrue(saveFunction.contains("LosslessProcessedImageWriter(context).write"))
+        assertTrue(saveFunction.contains("selected = primary.selected"))
         assertFalse(saveFunction.contains("Bitmap.createBitmap"))
 
         val ancillaryFunction = stacker.substring(

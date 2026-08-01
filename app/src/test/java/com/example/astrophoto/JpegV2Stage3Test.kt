@@ -381,7 +381,7 @@ class JpegV2Stage3Test {
 
     @Test fun existingPresetIdentifiersRemainCompatible() {
         assertEquals(
-            listOf("NORMAL", "DEEP_SKY", "DEEP_SKY_ALIGNED", "URBAN_SKY", "URBAN_SKY_STRONG", "MAX_STARS"),
+            listOf("NORMAL", "DEEP_SKY", "DEEP_SKY_ALIGNED", "URBAN_SKY", "URBAN_SKY_STRONG", "MAX_STARS", "EXPERIMENTAL_STARS"),
             AstroProcessingProfile.entries.map { it.name }
         )
     }

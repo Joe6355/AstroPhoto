@@ -338,6 +338,7 @@ class ProcessedResultLocationTest {
             "UrbanSkyStrong_1.png" to ProcessedResultType.URBAN_SKY_STRONG,
             "UrbanSky_1.jpg" to ProcessedResultType.URBAN_SKY,
             "MaxStars_1.jpeg" to ProcessedResultType.MAX_STARS,
+            "ExperimentalStars_1.png" to ProcessedResultType.EXPERIMENTAL_STARS,
             "RecoveredStars_1.png" to ProcessedResultType.RECOVERED_STARS,
             "BackgroundRemoved_1.jpg" to ProcessedResultType.BACKGROUND_REMOVED,
             "StarsOnlyPreview_1.jpg" to ProcessedResultType.STARS_ONLY_PREVIEW,

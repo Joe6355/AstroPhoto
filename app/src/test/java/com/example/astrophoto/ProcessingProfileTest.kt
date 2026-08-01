@@ -3,6 +3,7 @@ package com.example.astrophoto
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -10,14 +11,15 @@ class ProcessingProfileTest {
     private val profiles = AstroProcessingProfile.entries.filterNot { it == AstroProcessingProfile.NORMAL }
 
     @Test
-    fun allFiveExpectedProfilesExist() {
+    fun allExpectedProfilesExistWithExperimentalAppended() {
         assertEquals(
             listOf(
                 AstroProcessingProfile.DEEP_SKY,
                 AstroProcessingProfile.DEEP_SKY_ALIGNED,
                 AstroProcessingProfile.URBAN_SKY,
                 AstroProcessingProfile.URBAN_SKY_STRONG,
-                AstroProcessingProfile.MAX_STARS
+                AstroProcessingProfile.MAX_STARS,
+                AstroProcessingProfile.EXPERIMENTAL_STARS
             ),
             profiles
         )
@@ -168,7 +170,22 @@ class ProcessingProfileTest {
 
     @Test
     fun everyEnabledProfileHasMeaningfullyDifferentConfiguration() {
-        assertEquals(profiles.size, profiles.map { profileRecipe(it, 8) }.toSet().size)
+        val existingProfiles = profiles.filterNot { it == AstroProcessingProfile.EXPERIMENTAL_STARS }
+        assertEquals(existingProfiles.size, existingProfiles.map { profileRecipe(it, 8) }.toSet().size)
+        assertEquals(
+            profileRecipe(AstroProcessingProfile.URBAN_SKY_STRONG, 8),
+            profileRecipe(AstroProcessingProfile.EXPERIMENTAL_STARS, 8)
+        )
+        assertNotEquals(
+            com.example.astrophoto.processing.jpeg.v2.profile.ExistingPresetParameterMapper.parametersFor(
+                AstroProcessingProfile.URBAN_SKY_STRONG,
+                8
+            ),
+            com.example.astrophoto.processing.jpeg.v2.profile.ExistingPresetParameterMapper.parametersFor(
+                AstroProcessingProfile.EXPERIMENTAL_STARS,
+                8
+            )
+        )
     }
 
     @Test
