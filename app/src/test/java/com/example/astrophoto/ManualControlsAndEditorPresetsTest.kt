@@ -93,6 +93,31 @@ class ManualControlsAndEditorPresetsTest {
     }
 
     @Test
+    fun completedResultEditorWaitsUntilProcessingCoroutineStops() {
+        assertFalse(
+            shouldOpenCompletedResultEditor(
+                pendingEditorFileName = "RecoveredStars_1.png",
+                stackingInProgress = true,
+                showingProcessing = true
+            )
+        )
+        assertFalse(
+            shouldOpenCompletedResultEditor(
+                pendingEditorFileName = null,
+                stackingInProgress = false,
+                showingProcessing = true
+            )
+        )
+        assertTrue(
+            shouldOpenCompletedResultEditor(
+                pendingEditorFileName = "RecoveredStars_1.png",
+                stackingInProgress = false,
+                showingProcessing = true
+            )
+        )
+    }
+
+    @Test
     fun visibleStarPresetsIncludeRealContrastAndSharpness() {
         val visible = EDITOR_PRESETS.first { it.name == "Звёзды — заметно" }.adjustments
         val maximum = EDITOR_PRESETS.first { it.name == "Звёзды — максимум" }.adjustments

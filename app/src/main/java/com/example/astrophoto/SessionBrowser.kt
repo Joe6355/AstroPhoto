@@ -60,6 +60,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -770,6 +771,25 @@ fun SessionDetailsScreen(
         }
     }
 
+    LaunchedEffect(
+        pendingEditorFileName,
+        stackingInProgress,
+        showingProcessing
+    ) {
+        if (
+            shouldOpenCompletedResultEditor(
+                pendingEditorFileName = pendingEditorFileName,
+                stackingInProgress = stackingInProgress,
+                showingProcessing = showingProcessing
+            )
+        ) {
+            // Let the processing coroutine return before its composable scope is removed.
+            yield()
+            showingProcessing = false
+            showingProcessedResults = true
+        }
+    }
+
     if (showingFrames) {
         SessionFramesScreen(
             session = currentSummary,
@@ -805,8 +825,6 @@ fun SessionDetailsScreen(
             onStackCompleted = { checkRefreshKey++ },
             onResultReady = { fileName ->
                 pendingEditorFileName = fileName
-                showingProcessing = false
-                showingProcessedResults = true
             },
             onOpenHelp = onOpenHelp,
             onOpenResults = {
@@ -1221,6 +1239,15 @@ fun SessionDetailsScreen(
         )
     }
 }
+
+internal fun shouldOpenCompletedResultEditor(
+    pendingEditorFileName: String?,
+    stackingInProgress: Boolean,
+    showingProcessing: Boolean
+): Boolean =
+    !pendingEditorFileName.isNullOrBlank() &&
+        !stackingInProgress &&
+        showingProcessing
 
 @Composable
 private fun SessionProcessingScreen(
