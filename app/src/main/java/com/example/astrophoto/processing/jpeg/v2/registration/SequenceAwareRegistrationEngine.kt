@@ -136,7 +136,9 @@ class SequenceAwareRegistrationEngine(
                     usableSparseHypothesis = sparseSeed != null,
                     local = effectiveLocal,
                     legacyRegistration = legacy,
-                    verification = frameVerification.selected
+                    verification = frameVerification.selected,
+                    identityVerification = frameVerification.identity,
+                    sequenceIdentityVerification = globalVerification.identity
                 )
             )
             val result = when (decision) {
@@ -157,6 +159,26 @@ class SequenceAwareRegistrationEngine(
                         local = effectiveLocal,
                         sequenceAgreement = agreement,
                         verificationConfidence = frameVerification.confidence
+                    )
+                is FrameAcceptanceDecision.AcceptedVerifiedIdentity ->
+                    verifiedIdentityRegistration(
+                        referenceStars = reference.stars.size,
+                        detectedStars = frame.stars.size,
+                        verification = frameVerification.identity
+                    )
+                is FrameAcceptanceDecision.ProvisionalStationary ->
+                    sequenceSupportedRegistration(
+                        referenceStars = reference.stars.size,
+                        detectedStars = frame.stars.size,
+                        local = effectiveLocal,
+                        sequenceAgreement = agreement,
+                        verificationConfidence = frameVerification.confidence
+                    ).copy(
+                        registrationModel = "STATIONARY_PROVISIONAL",
+                        confidence = maxOf(
+                            MIN_PROVISIONAL_CONFIDENCE,
+                            effectiveLocal.confidence * 0.55f + agreement * 0.45f
+                        ).coerceIn(0f, 1f)
                     )
                 is FrameAcceptanceDecision.ProvisionalFullResolution ->
                     sequenceSupportedRegistration(
@@ -291,6 +313,34 @@ class SequenceAwareRegistrationEngine(
         transformSequenceDeviation = hypot(local.correctionDx, local.correctionDy),
         rawDx = local.predictedDx,
         rawDy = local.predictedDy,
+        rawRotationRadians = 0f
+    )
+
+    private fun verifiedIdentityRegistration(
+        referenceStars: Int,
+        detectedStars: Int,
+        verification: RegistrationVerificationMetrics
+    ) = RegistrationResult(
+        dx = 0f,
+        dy = 0f,
+        rotationRadians = 0f,
+        scale = 1f,
+        detectedStars = detectedStars,
+        matchedStars = verification.reliableStarCount,
+        inlierStars = verification.reliableStarCount,
+        residualError = 0f,
+        confidence = verification.score,
+        isReliable = true,
+        rejectionReason = null,
+        referenceStars = referenceStars,
+        registrationModel = "VERIFIED_IDENTITY",
+        scaleFixed = true,
+        rotationAllowed = false,
+        rotationRejectionReason = "stationary_sequence_identity_verified",
+        transformSequenceScore = verification.score,
+        transformSequenceDeviation = 0f,
+        rawDx = 0f,
+        rawDy = 0f,
         rawRotationRadians = 0f
     )
 

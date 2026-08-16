@@ -424,6 +424,12 @@ class JpegV2Stage7Test {
         assertTrue(primarySave >= 0 && ancillaryStart > primarySave)
         assertTrue(saveFunction.contains("LosslessProcessedImageWriter(context).write"))
         assertTrue(saveFunction.contains("selected = primary.selected"))
+        assertTrue(
+            saveFunction.contains(
+                "processingReport.presetId == AstroProcessingProfile.EXPERIMENTAL_STARS.name"
+            )
+        )
+        assertTrue(saveFunction.contains("NOT_ATTEMPTED_EXPERIMENTAL_STARS"))
         assertFalse(saveFunction.contains("Bitmap.createBitmap"))
 
         val ancillaryFunction = stacker.substring(

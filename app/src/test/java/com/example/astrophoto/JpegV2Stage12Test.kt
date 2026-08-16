@@ -2,12 +2,15 @@ package com.example.astrophoto
 
 import com.example.astrophoto.processing.jpeg.v2.model.ReferenceToSourceTransform
 import com.example.astrophoto.processing.jpeg.v2.registration.FullResolutionStarCentroidDetector
+import com.example.astrophoto.processing.jpeg.v2.registration.FullResolutionFrameVerificationResult
 import com.example.astrophoto.processing.jpeg.v2.registration.FullResolutionStarPatch
 import com.example.astrophoto.processing.jpeg.v2.registration.FullResolutionStarPatchSelector
+import com.example.astrophoto.processing.jpeg.v2.registration.FullResolutionTransformEvidence
 import com.example.astrophoto.processing.jpeg.v2.registration.LocalBackgroundEstimator
 import com.example.astrophoto.processing.jpeg.v2.registration.StellarCentroidFrameRefiner
 import com.example.astrophoto.processing.jpeg.v2.registration.StellarCentroidMatch
 import com.example.astrophoto.processing.jpeg.v2.registration.StellarCentroidMeasurement
+import com.example.astrophoto.processing.jpeg.v2.registration.StellarCentroidRefinementPolicy
 import com.example.astrophoto.processing.jpeg.v2.registration.TemporalMotionCluster
 import com.example.astrophoto.processing.jpeg.v2.registration.preferStrongCentroidMatches
 import com.example.astrophoto.processing.jpeg.v2.sampling.IntArrayPixelSource
@@ -178,6 +181,26 @@ class JpegV2Stage12Test {
         assertTrue(gate.contains("MIN_MEDIAN_CONTRAST_RATIO = 0.85f"))
         assertTrue(gate.contains("MAX_LINE_LIKE_SMEAR_RATE = 0.10f"))
         assertTrue(jpegStackerSource().contains("samplingKernel = sampling.kernel"))
+    }
+    @Test fun scenario49VerifiedIdentityPassesOnlyWithStrongFullResolutionEvidence() {
+        val strong = FullResolutionTransformEvidence(6, 0.95f, 1f, 1f, 0.15f, 0f, 0f)
+        val verification = FullResolutionFrameVerificationResult(
+            refined = strong,
+            initial = strong,
+            identity = strong,
+            inverse = strong,
+            doubleApplied = strong,
+            spatialSectorCount = 3,
+            zncc = strong
+        )
+        val policy = StellarCentroidRefinementPolicy()
+        assertTrue(policy.decideVerifiedIdentity(verification).accepted)
+        assertEquals(
+            "identity_centroid_residual_high",
+            policy.decideVerifiedIdentity(
+                verification.copy(identity = strong.copy(centroidResidual = 0.75f))
+            ).rejectionReason
+        )
     }
 
     @Test fun scenario49PhoneSizedReferenceSetFitsPatchBudget() {

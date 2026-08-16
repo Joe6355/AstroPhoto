@@ -564,6 +564,7 @@ fun SessionDetailsScreen(
     var stackingFrameCount by remember { mutableIntStateOf(0) }
     var showingFrames by remember { mutableStateOf(false) }
     var showingProcessedResults by remember { mutableStateOf(false) }
+    var showingSessionCheck by remember(session.folderName) { mutableStateOf(false) }
     var exportInProgress by remember { mutableStateOf(false) }
     var exportStatus by remember { mutableStateOf<String?>(null) }
     var exportProgress by remember { mutableStateOf<SessionZipProgress?>(null) }
@@ -897,16 +898,29 @@ fun SessionDetailsScreen(
             )
         }
         item {
-            SessionQualityBlock(
-                session = currentSummary,
-                rawSupported = rawSupported,
-                badFrameCount = badFrameCount,
-                manualBadFrameCount = manualBadFrameCount,
-                autoBadFrameCount = autoBadFrameCount,
-                stackingFrameCount = stackingFrameCount,
-                loading = checkInProgress,
-                onRefresh = { checkRefreshKey++ }
+            AstroSecondaryButton(
+                text = if (showingSessionCheck) {
+                    "Скрыть проверку сессии"
+                } else {
+                    "Проверка сессии"
+                },
+                onClick = { showingSessionCheck = !showingSessionCheck },
+                modifier = Modifier.fillMaxWidth()
             )
+        }
+        if (showingSessionCheck) {
+            item {
+                SessionQualityBlock(
+                    session = currentSummary,
+                    rawSupported = rawSupported,
+                    badFrameCount = badFrameCount,
+                    manualBadFrameCount = manualBadFrameCount,
+                    autoBadFrameCount = autoBadFrameCount,
+                    stackingFrameCount = stackingFrameCount,
+                    loading = checkInProgress,
+                    onRefresh = { checkRefreshKey++ }
+                )
+            }
         }
         item {
             JpegStackingBlock(

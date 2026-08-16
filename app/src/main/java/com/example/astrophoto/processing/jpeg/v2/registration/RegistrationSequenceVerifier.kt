@@ -189,6 +189,8 @@ class RegistrationSequenceVerifier {
         }
         val selected = if (tracks.motionObservable && moving.size >= MIN_MOVING_REFERENCE_STARS) {
             moving
+        } else if (!tracks.motionObservable) {
+            reference.stars
         } else {
             reference.stars.filter {
                 tracks.clusterAt(reference.frameId, it) !=
@@ -240,7 +242,10 @@ class RegistrationSequenceVerifier {
             stackedFrames++
             frame.stars.forEach { star ->
                 val cluster = tracks.clusterAt(frame.frameId, star)
-                if (cluster == TemporalMotionCluster.STATIONARY_CAMERA_SPACE) {
+                if (
+                    tracks.motionObservable &&
+                    cluster == TemporalMotionCluster.STATIONARY_CAMERA_SPACE
+                ) {
                     stationaryIncluded++
                     return@forEach
                 }

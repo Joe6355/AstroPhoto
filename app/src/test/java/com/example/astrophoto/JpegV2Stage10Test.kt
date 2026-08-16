@@ -166,6 +166,58 @@ class JpegV2Stage10Test {
         assertTrue(noVerifiedStars is FrameAcceptanceDecision.Rejected)
     }
 
+    @Test fun unobservableSmallShiftReachesFullResolutionButLargeShiftDoesNot() {
+        val weakIdentity = metrics(retention = 0.50f, contrast = 0.10f, stars = 3, score = 0.45f)
+        val local = localResult().copy(
+            transform = ReferenceToSourceTransform(0.35f, -0.20f),
+            residual = 0.25f,
+            confidence = 0.70f
+        )
+        val provisional = policy.evaluate(
+            evidence(
+                local = local,
+                identityVerification = weakIdentity,
+                sequenceIdentityVerification = weakIdentity,
+                motionObservable = false,
+                sequenceModelScore = 0.37f
+            )
+        )
+        val excessiveShift = policy.evaluate(
+            evidence(
+                local = local.copy(transform = ReferenceToSourceTransform(1.25f, 0f)),
+                identityVerification = weakIdentity,
+                sequenceIdentityVerification = weakIdentity,
+                motionObservable = false
+            )
+        )
+
+        assertTrue(provisional is FrameAcceptanceDecision.ProvisionalStationary)
+        assertTrue(excessiveShift is FrameAcceptanceDecision.Rejected)
+    }
+
+    @Test fun strongZeroModelAllowsSparseIdentityOnlyAsFullResolutionProvisional() {
+        val sparseIdentity = metrics(retention = 0.25f, contrast = 0f, stars = 1, score = 0.35f)
+        val rejectedLocal = localResult(matched = 1, inliers = 0).copy(
+            transform = ReferenceToSourceTransform.Identity,
+            residual = Float.POSITIVE_INFINITY,
+            confidence = 0f,
+            rejectionReason = "Insufficient local correspondences near sequence prediction"
+        )
+        val decision = policy.evaluate(
+            evidence(
+                local = rejectedLocal,
+                verification = sparseIdentity,
+                identityVerification = sparseIdentity,
+                sequenceIdentityVerification = sparseIdentity,
+                motionObservable = false,
+                sequenceModelScore = 0.72f,
+                agreement = 1f
+            )
+        )
+
+        assertTrue(decision is FrameAcceptanceDecision.ProvisionalStationary)
+    }
+
     @Test fun traditionalStrongMatchPathAndLegacyThresholdsRemainUnchanged() {
         val decision = policy.evaluate(
             evidence(
@@ -320,6 +372,51 @@ class JpegV2Stage10Test {
         assertNotEquals("REFERENCE_IDENTITY", registration.registrationModel)
     }
 
+    @Test fun stationarySequenceUsesVerifiedIdentityInsteadOfRejectingEveryFrame() {
+        val frames = (0..7).map { capture ->
+            TemporalFeatureFrame("stationary$capture", capture, gridStars())
+        }
+        val result = SequenceAwareRegistrationEngine().register(
+            frames,
+            referenceFrameId = "stationary3",
+            imageWidth = WIDTH,
+            imageHeight = HEIGHT
+        )
+
+        assertFalse(result.model.motionObservable)
+        assertEquals(frames.size, result.registrations.count { it.value.isReliable })
+        assertTrue(result.frameAcceptancePaths.filterKeys { it != "stationary3" }.values.all {
+            it == FrameAcceptanceDecision.PATH_VERIFIED_IDENTITY
+        })
+        assertTrue(result.registrations.values.all { it.dx == 0f && it.dy == 0f })
+    }
+
+    @Test fun verifiedIdentityDoesNotAcceptFramesShiftedOutsideIdentityTolerance() {
+        val frames = (0..7).map { capture ->
+            val shift = if (capture % 2 == 0) 0f else 4f
+            TemporalFeatureFrame(
+                "mixed$capture",
+                capture,
+                gridStars().map { it.copy(x = it.x + shift) }
+            )
+        }
+        val result = SequenceAwareRegistrationEngine().register(
+            frames,
+            referenceFrameId = "mixed2",
+            imageWidth = WIDTH,
+            imageHeight = HEIGHT
+        )
+
+        assertFalse(result.model.motionObservable)
+        frames.filter { it.captureIndex % 2 == 1 }.forEach { frame ->
+            assertFalse(result.registrations.getValue(frame.frameId).isReliable)
+            assertNotEquals(
+                FrameAcceptanceDecision.PATH_VERIFIED_IDENTITY,
+                result.frameAcceptancePaths.getValue(frame.frameId)
+            )
+        }
+    }
+
     @Test fun productionCachesAndIntegratesOnlyFinalReliableRegistrations() {
         val source = Files.readString(Path.of("src/main/java/com/example/astrophoto/JpegStacker.kt"))
         val profile = source.substring(
@@ -429,16 +526,22 @@ class JpegV2Stage10Test {
         local: ModelGuidedRegistrationResult = localResult(),
         legacy: RegistrationResult = registration(reliable = false, matched = 3, inliers = 3),
         verification: RegistrationVerificationMetrics = metrics(),
+        identityVerification: RegistrationVerificationMetrics = metrics(),
+        sequenceIdentityVerification: RegistrationVerificationMetrics = metrics(),
         sparse: Boolean = false,
-        agreement: Float = 0.9f
+        agreement: Float = 0.9f,
+        motionObservable: Boolean = true,
+        sequenceModelScore: Float = 0.75f
     ) = FrameAcceptanceEvidence(
-        motionObservable = true,
-        sequenceModelScore = 0.75f,
+        motionObservable = motionObservable,
+        sequenceModelScore = sequenceModelScore,
         sequenceAgreement = agreement,
         usableSparseHypothesis = sparse,
         local = local,
         legacyRegistration = legacy,
-        verification = verification
+        verification = verification,
+        identityVerification = identityVerification,
+        sequenceIdentityVerification = sequenceIdentityVerification
     )
 
     private fun localResult(matched: Int = 4, inliers: Int = 4) = ModelGuidedRegistrationResult(

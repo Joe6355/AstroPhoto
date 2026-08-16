@@ -77,6 +77,30 @@ class StellarCentroidRefinementPolicy {
         return StellarCentroidRefinementDecision(true, null)
     }
 
+    fun decideVerifiedIdentity(
+        verification: FullResolutionFrameVerificationResult
+    ): StellarCentroidRefinementDecision {
+        fun reject(reason: String) = StellarCentroidRefinementDecision(false, reason)
+        val identity = verification.identity
+        if (identity.validPatchCount < MIN_ACCEPTED_MATCHES) {
+            return reject("insufficient_identity_verification_matches")
+        }
+        if (verification.spatialSectorCount < 2) {
+            return reject("insufficient_identity_spatial_sectors")
+        }
+        if (identity.retention < MIN_RETENTION) return reject("identity_retention_low")
+        if (identity.contrastRatio < MIN_CONTRAST_RATIO) return reject("identity_contrast_low")
+        if (identity.centroidResidual > TARGET_P90_RESIDUAL) {
+            return reject("identity_centroid_residual_high")
+        }
+        if (identity.widthGrowth > MAX_WIDTH_GROWTH) return reject("identity_width_growth_high")
+        if (identity.ellipticityGrowth > MAX_ELLIPTICITY_GROWTH) {
+            return reject("identity_ellipticity_growth_high")
+        }
+        if (identity.smear > MAX_SMEAR) return reject("identity_smear_high")
+        return StellarCentroidRefinementDecision(true, null)
+    }
+
     private fun beats(
         refined: FullResolutionTransformEvidence,
         alternative: FullResolutionTransformEvidence,

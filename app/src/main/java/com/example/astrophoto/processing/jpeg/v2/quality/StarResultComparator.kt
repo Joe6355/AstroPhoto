@@ -13,6 +13,12 @@ class StarResultComparator {
     ): QualityComparison {
         val hard = mutableListOf<String>()
         val warnings = mutableListOf<String>()
+        val expandedExperimentalPopulation =
+            profile == AstroProcessingProfile.EXPERIMENTAL_STARS &&
+                candidate.reliableStarCount > baseline.reliableStarCount
+        if (expandedExperimentalPopulation) {
+            warnings += "experimental_global_star_population_expanded"
+        }
         if (!matchedStarsValidated && baseline.reliableStarCount >= MIN_STARS_FOR_RATIO) {
             if (candidate.reliableStarCount < baseline.reliableStarCount * HARD_MIN_STAR_FRACTION) {
                 hard += "star_count_drop_gt_20_percent"
@@ -20,7 +26,11 @@ class StarResultComparator {
                 warnings += "star_count_reduced"
             }
         }
-        if (!matchedStarsValidated && baseline.medianStarLocalContrast > 0f) {
+        if (
+            !matchedStarsValidated &&
+            !expandedExperimentalPopulation &&
+            baseline.medianStarLocalContrast > 0f
+        ) {
             if (candidate.medianStarLocalContrast <
                 baseline.medianStarLocalContrast * HARD_MIN_CONTRAST_FRACTION
             ) {

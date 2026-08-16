@@ -143,10 +143,12 @@ import com.example.astrophoto.processing.jpeg.v2.quality.ResultSelectionPolicy
 import com.example.astrophoto.processing.jpeg.v2.quality.withExperimentalSafeFallback
 import com.example.astrophoto.processing.jpeg.v2.registration.OrderedRegistration
 import com.example.astrophoto.processing.jpeg.v2.registration.ExpectedSequenceMotionModel
+import com.example.astrophoto.processing.jpeg.v2.registration.FrameAcceptanceDecision
 import com.example.astrophoto.processing.jpeg.v2.registration.FullResolutionRefinementResult
 import com.example.astrophoto.processing.jpeg.v2.registration.FullResolutionRegistrationRefiner
 import com.example.astrophoto.processing.jpeg.v2.registration.FullResolutionStarPatch
 import com.example.astrophoto.processing.jpeg.v2.registration.StellarCentroidFrameRefiner
+import com.example.astrophoto.processing.jpeg.v2.registration.StellarCentroidRefinementPolicy
 import com.example.astrophoto.processing.jpeg.v2.registration.StellarCentroidRefinementResult
 import com.example.astrophoto.processing.jpeg.v2.registration.CaptureSequenceFrame
 import com.example.astrophoto.processing.jpeg.v2.registration.CaptureSequenceIndexResolver
@@ -1549,6 +1551,7 @@ class JpegStacker internal constructor(
                     imageHeight = selectedReference.analysis.height
                 )
                 sequenceDiagnostics = analysisRegistration
+                logSequenceIdentityVerification(analysisRegistration)
                 val sensorMaskConstructionStarted = System.nanoTime()
                 val automaticSensorMaskResult = buildAutomaticSensorDefectMask(
                     observations = rawAnalyzedFrames.map {
@@ -1637,37 +1640,14 @@ class JpegStacker internal constructor(
                     registrationReports += registration.toReport(frame.fileName)
                     logProfileRegistration(frame.fileName, registration)
                     val captureIndex = captureIndexByFrameKey.getValue(frame.key)
-                    val predicted = analysisRegistration.model.predicted(captureIndex)
-                    val selectedHypothesis = analysisRegistration.model
-                        .acceptedFrameHypotheses[frame.key]
-                    val frameVerification = analysisRegistration.verification.perFrame[frame.key]
-                    val modelGuided = analysisRegistration.modelGuidedRegistrations[frame.key]
-                    Log.i(
-                        PROFILE_REGISTRATION_TAG,
-                        "frame=${frame.fileName} " +
-                            "predictedDx=${formatMetric(predicted.first * scaleX)} " +
-                            "predictedDy=${formatMetric(predicted.second * scaleY)} " +
-                            "predictionDifferenceDx=${formatMetric(registration.dx - predicted.first * scaleX)} " +
-                            "predictionDifferenceDy=${formatMetric(registration.dy - predicted.second * scaleY)} " +
-                            "rawHypothesisDx=${formatMetric((selectedHypothesis?.dx ?: 0f) * scaleX)} " +
-                            "rawHypothesisDy=${formatMetric((selectedHypothesis?.dy ?: 0f) * scaleY)} " +
-                            "selectedDx=${formatMetric(registration.dx)} " +
-                            "selectedDy=${formatMetric(registration.dy)} " +
-                            "hypothesisRank=${analysisRegistration.selectedHypothesisRankPerFrame[frame.key] ?: -1} " +
-                            "movingSupport=${selectedHypothesis?.movingTrackSupport ?: 0} " +
-                            "stationarySupport=${selectedHypothesis?.stationaryTrackSupport ?: 0} " +
-                            "sequenceAgreement=${formatMetric(registration.transformSequenceScore)} " +
-                            "verificationRetention=${formatMetric(frameVerification?.referenceRetention ?: 0f)} " +
-                            "verificationContrast=${formatMetric(frameVerification?.contrastRatio ?: 0f)} " +
-                            "verificationSmear=${formatMetric(frameVerification?.smearRate ?: 0f)} " +
-                            "localSearchRadius=${formatMetric(modelGuided?.searchRadius ?: 0f)} " +
-                            "localCorrectionDx=${formatMetric((modelGuided?.correctionDx ?: 0f) * scaleX)} " +
-                            "localCorrectionDy=${formatMetric((modelGuided?.correctionDy ?: 0f) * scaleY)} " +
-                            "localMatches=${modelGuided?.matchedStars ?: 0} " +
-                            "localInliers=${modelGuided?.inlierStars ?: 0} " +
-                            "retryUsed=${modelGuided?.retryUsed ?: false} " +
-                            "acceptancePath=${analysisRegistration.frameAcceptancePaths[frame.key].orEmpty()} " +
-                            "accepted=${registration.isReliable}"
+                    logAnalysisRegistration(
+                        frameName = frame.fileName,
+                        frameKey = frame.key,
+                        captureIndex = captureIndex,
+                        registration = registration,
+                        diagnostics = analysisRegistration,
+                        scaleX = scaleX,
+                        scaleY = scaleY
                     )
                     if (!registration.isReliable) {
                         warnings += "Кадр ${frame.fileName} отклонён: " +
@@ -2825,10 +2805,17 @@ class JpegStacker internal constructor(
             "png_writing",
             (System.nanoTime() - pngWritingStarted) / 1_000_000L
         )
-        val enhanced = if (primary.fallbackUsed) {
-            AncillaryEnhancedPublication(attempted = false, status = "NOT_ATTEMPTED_SAFE_FALLBACK")
-        } else {
-            publishAncillaryEnhanced(
+        val enhanced = when {
+            primary.fallbackUsed -> AncillaryEnhancedPublication(
+                attempted = false,
+                status = "NOT_ATTEMPTED_SAFE_FALLBACK"
+            )
+            processingReport.presetId == AstroProcessingProfile.EXPERIMENTAL_STARS.name ->
+                AncillaryEnhancedPublication(
+                    attempted = false,
+                    status = "NOT_ATTEMPTED_EXPERIMENTAL_STARS"
+                )
+            else -> publishAncillaryEnhanced(
                 selected = primary.selected,
                 effectiveSkyAlpha = effectiveSkyAlpha,
                 confirmedStars = confirmedStars,
@@ -4627,7 +4614,7 @@ class JpegStacker internal constructor(
                         stage10Confidence = accepted.registration.confidence,
                         cancellationCheck = { context.ensureActive() }
                     )
-                    val centroid = centroidRefiner.refine(
+                    val rawCentroid = centroidRefiner.refine(
                         frameId = accepted.frame.key,
                         isReference = accepted.frame.key == selectedReference.frame.key,
                         reference = referenceSource,
@@ -4642,6 +4629,26 @@ class JpegStacker internal constructor(
                         stage10Confidence = accepted.registration.confidence,
                         cancellationCheck = { context.ensureActive() }
                     )
+                    val identityPath = registrationDiagnostics.frameAcceptancePaths[
+                        accepted.frame.key
+                    ] == FrameAcceptanceDecision.PATH_VERIFIED_IDENTITY
+                    val stationaryProvisionalPath = registrationDiagnostics.frameAcceptancePaths[
+                        accepted.frame.key
+                    ] == FrameAcceptanceDecision.PATH_STATIONARY_PROVISIONAL
+                    val centroid = if (identityPath || stationaryProvisionalPath && !rawCentroid.accepted) {
+                        val identityDecision = StellarCentroidRefinementPolicy()
+                            .decideVerifiedIdentity(rawCentroid.verification)
+                        rawCentroid.copy(
+                            refinedTransform = com.example.astrophoto.processing.jpeg.v2.model
+                                .ReferenceToSourceTransform.Identity,
+                            correctionDx = 0f,
+                            correctionDy = 0f,
+                            accepted = identityDecision.accepted,
+                            rejectionReason = identityDecision.rejectionReason
+                        )
+                    } else {
+                        rawCentroid
+                    }
                     zncc to centroid
                 }
             }
@@ -4661,9 +4668,16 @@ class JpegStacker internal constructor(
                         ).coerceIn(0f, 1f),
                     isReliable = centroidResult.accepted,
                     rejectionReason = centroidResult.rejectionReason,
-                    registrationModel = if (
-                        accepted.frame.key == selectedReference.frame.key
-                    ) "REFERENCE_IDENTITY" else "STELLAR_CENTROID_REFINED",
+                    registrationModel = when {
+                        accepted.frame.key == selectedReference.frame.key -> "REFERENCE_IDENTITY"
+                        registrationDiagnostics.frameAcceptancePaths[accepted.frame.key] ==
+                            FrameAcceptanceDecision.PATH_VERIFIED_IDENTITY -> "VERIFIED_IDENTITY"
+                        registrationDiagnostics.frameAcceptancePaths[accepted.frame.key] ==
+                            FrameAcceptanceDecision.PATH_STATIONARY_PROVISIONAL &&
+                            centroidResult.refinedTransform == com.example.astrophoto.processing.jpeg.v2.model
+                                .ReferenceToSourceTransform.Identity -> "VERIFIED_IDENTITY"
+                        else -> "STELLAR_CENTROID_REFINED"
+                    },
                     scaleFixed = true,
                     rotationAllowed = false
                 )
@@ -4692,6 +4706,68 @@ class JpegStacker internal constructor(
             centroidResultsByKey = centroidResults,
             samplingFidelity = samplingFidelity,
             warnings = warnings
+        )
+    }
+
+    private fun logSequenceIdentityVerification(
+        diagnostics: SequenceAwareRegistrationDiagnostics
+    ) {
+        val identity = diagnostics.verification.identity
+        Log.i(
+            PROFILE_REGISTRATION_TAG,
+            "sequenceIdentityRetention=${formatMetric(identity.referenceRetention)} " +
+                "sequenceIdentityContrast=${formatMetric(identity.contrastRatio)} " +
+                "sequenceIdentitySmear=${formatMetric(identity.smearRate)} " +
+                "sequenceIdentityStars=${identity.reliableStarCount} " +
+                "sequenceIdentityScore=${formatMetric(identity.score)}"
+        )
+    }
+
+    private fun logAnalysisRegistration(
+        frameName: String,
+        frameKey: String,
+        captureIndex: Int,
+        registration: RegistrationResult,
+        diagnostics: SequenceAwareRegistrationDiagnostics,
+        scaleX: Float,
+        scaleY: Float
+    ) {
+        val predicted = diagnostics.model.predicted(captureIndex)
+        val selectedHypothesis = diagnostics.model.acceptedFrameHypotheses[frameKey]
+        val verification = diagnostics.verification.perFrame[frameKey]
+        val identity = diagnostics.verification.perFrameComparisons[frameKey]?.identity
+        val local = diagnostics.modelGuidedRegistrations[frameKey]
+        Log.i(
+            PROFILE_REGISTRATION_TAG,
+            "frame=$frameName " +
+                "modelScore=${formatMetric(diagnostics.model.score)} " +
+                "predictedDx=${formatMetric(predicted.first * scaleX)} " +
+                "predictedDy=${formatMetric(predicted.second * scaleY)} " +
+                "predictionDifferenceDx=${formatMetric(registration.dx - predicted.first * scaleX)} " +
+                "predictionDifferenceDy=${formatMetric(registration.dy - predicted.second * scaleY)} " +
+                "rawHypothesisDx=${formatMetric((selectedHypothesis?.dx ?: 0f) * scaleX)} " +
+                "rawHypothesisDy=${formatMetric((selectedHypothesis?.dy ?: 0f) * scaleY)} " +
+                "selectedDx=${formatMetric(registration.dx)} selectedDy=${formatMetric(registration.dy)} " +
+                "hypothesisRank=${diagnostics.selectedHypothesisRankPerFrame[frameKey] ?: -1} " +
+                "movingSupport=${selectedHypothesis?.movingTrackSupport ?: 0} " +
+                "stationarySupport=${selectedHypothesis?.stationaryTrackSupport ?: 0} " +
+                "sequenceAgreement=${formatMetric(registration.transformSequenceScore)} " +
+                "verificationRetention=${formatMetric(verification?.referenceRetention ?: 0f)} " +
+                "verificationContrast=${formatMetric(verification?.contrastRatio ?: 0f)} " +
+                "verificationSmear=${formatMetric(verification?.smearRate ?: 0f)} " +
+                "identityRetention=${formatMetric(identity?.referenceRetention ?: 0f)} " +
+                "identityContrast=${formatMetric(identity?.contrastRatio ?: 0f)} " +
+                "identitySmear=${formatMetric(identity?.smearRate ?: 0f)} " +
+                "localSearchRadius=${formatMetric(local?.searchRadius ?: 0f)} " +
+                "localCorrectionDx=${formatMetric((local?.correctionDx ?: 0f) * scaleX)} " +
+                "localCorrectionDy=${formatMetric((local?.correctionDy ?: 0f) * scaleY)} " +
+                "localMatches=${local?.matchedStars ?: 0} localInliers=${local?.inlierStars ?: 0} " +
+                "localResidual=${formatMetric(local?.residual ?: Float.POSITIVE_INFINITY)} " +
+                "localConfidence=${formatMetric(local?.confidence ?: 0f)} " +
+                "localReason=${local?.rejectionReason.orEmpty()} " +
+                "retryUsed=${local?.retryUsed ?: false} " +
+                "acceptancePath=${diagnostics.frameAcceptancePaths[frameKey].orEmpty()} " +
+                "accepted=${registration.isReliable}"
         )
     }
 
@@ -4858,7 +4934,22 @@ class JpegStacker internal constructor(
                 motionCluster = registrationDiagnostics.trackAnalysis.clusterAt(
                     selectedReference.frame.key,
                     analysisStar
-                ),
+                ).let { cluster ->
+                    if (
+                        !registrationDiagnostics.model.motionObservable &&
+                        registrationDiagnostics.frameAcceptancePaths.values.any {
+                            it == FrameAcceptanceDecision.PATH_VERIFIED_IDENTITY ||
+                                it == FrameAcceptanceDecision.PATH_STATIONARY_PROVISIONAL
+                        } &&
+                        cluster == com.example.astrophoto.processing.jpeg.v2.registration
+                            .TemporalMotionCluster.STATIONARY_CAMERA_SPACE
+                    ) {
+                        com.example.astrophoto.processing.jpeg.v2.registration
+                            .TemporalMotionCluster.UNSTABLE_OR_UNKNOWN
+                    } else {
+                        cluster
+                    }
+                },
                 skyCoverage = fullResolutionPatchSkyCoverage(
                     fullResolutionSkyMask,
                     fullStar.x,
@@ -6982,7 +7073,7 @@ fun JpegStackingBlock(
                     modifier = Modifier.testTag(AstroTestTags.ProcessingProgress)
                 )
             }
-            if (processingUiMode == ProcessingUiMode.READY) {
+            if (!stacking && processingUiMode == ProcessingUiMode.READY) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -7090,7 +7181,7 @@ fun JpegStackingBlock(
                 }
             }
 
-            if (processingUiMode == ProcessingUiMode.MANUAL) {
+            if (!stacking && processingUiMode == ProcessingUiMode.MANUAL) {
             Card(
                 modifier = Modifier.testTag(AstroTestTags.ProcessingManual),
                 colors = CardDefaults.cardColors(

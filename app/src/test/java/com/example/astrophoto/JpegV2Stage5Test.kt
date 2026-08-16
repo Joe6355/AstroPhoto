@@ -129,6 +129,30 @@ class JpegV2Stage5Test {
         })
     }
 
+    @Test fun experimentalGateIgnoresGlobalMedianWhenNewFaintStarsExpandPopulation() {
+        val reference = candidate(ResultCandidateType.REFERENCE, gray(10), metrics())
+        val clean = candidate(ResultCandidateType.CLEAN_STACK, gray(20), metrics())
+        val processedMetrics = metrics().copy(
+            reliableStarCount = 27,
+            medianStarLocalContrast = 0.04f,
+            medianStarWidth = 2.1f,
+            medianStarEllipticity = 0.12f
+        )
+        val processed = candidate(ResultCandidateType.PROCESSED, gray(30), processedMetrics)
+
+        val decision = AstroResultQualityGate().evaluateProcessed(
+            reference,
+            clean,
+            processed,
+            AstroProcessingProfile.EXPERIMENTAL_STARS,
+            frameCount = 10
+        )
+
+        assertTrue(decision.accepted)
+        assertFalse(decision.hardFailureReasons.any { "contrast" in it })
+        assertTrue("experimental_global_star_population_expanded" in decision.warningReasons)
+    }
+
     @Test fun starComparatorRejectsExcessiveEllipticity() {
         assertHard(starComparator.compare(metrics(), metrics().copy(medianStarEllipticity = 0.30f), cleanProfile), "ellipticity")
     }
