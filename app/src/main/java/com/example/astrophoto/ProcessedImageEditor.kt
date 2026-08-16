@@ -1084,7 +1084,7 @@ fun ProcessedImageEditorScreen(
             .fillMaxSize()
             .safeDrawingPadding()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp)
+            .padding(horizontal = 8.dp)
             .padding(top = 24.dp, bottom = 36.dp)
     ) {
         AstroTopBar(title = "Редактор", onBack = onBack)

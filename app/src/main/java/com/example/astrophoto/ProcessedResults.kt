@@ -209,6 +209,13 @@ internal fun sortProcessedResultsForDisplay(
     results: Iterable<ProcessedResult>
 ): List<ProcessedResult> = results.sortedWith(processedResultDisplayOrder)
 
+internal fun findProcessedResultForEditor(
+    results: Iterable<ProcessedResult>,
+    fileName: String
+): ProcessedResult? = results.firstOrNull { result ->
+    result.fileName.equals(fileName, ignoreCase = true)
+}
+
 private data class ProcessedRenameResult(
     val fileName: String,
     val metadataUpdated: Boolean
@@ -735,7 +742,8 @@ private class ProcessedResultsRepository(private val context: Context) {
 @Composable
 fun ProcessedResultsScreen(
     session: SessionSummary,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    initialEditorFileName: String? = null
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val repository = remember {
@@ -758,6 +766,12 @@ fun ProcessedResultsScreen(
     }
     var selectedResult by remember { mutableStateOf<ProcessedResult?>(null) }
     var editingResult by remember { mutableStateOf<ProcessedResult?>(null) }
+    var pendingInitialEditorFileName by remember(
+        session.folderName,
+        initialEditorFileName
+    ) {
+        mutableStateOf(initialEditorFileName)
+    }
     var pendingDelete by remember { mutableStateOf<ProcessedResult?>(null) }
     var pendingRename by remember { mutableStateOf<ProcessedResult?>(null) }
     var renameInput by remember { mutableStateOf("") }
@@ -793,6 +807,13 @@ fun ProcessedResultsScreen(
             results = loaded.first
             firstLight = loaded.second
             comparisonSelection = emptyList()
+            pendingInitialEditorFileName?.let { requestedFileName ->
+                editingResult = findProcessedResultForEditor(
+                    loaded.first,
+                    requestedFileName
+                )
+                pendingInitialEditorFileName = null
+            }
         }.onFailure { error ->
             Log.e(
                 "AstroPhotoResults",

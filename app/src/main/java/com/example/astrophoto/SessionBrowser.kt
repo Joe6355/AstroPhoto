@@ -565,6 +565,9 @@ fun SessionDetailsScreen(
     var showingFrames by remember { mutableStateOf(false) }
     var showingProcessing by remember { mutableStateOf(false) }
     var showingProcessedResults by remember { mutableStateOf(false) }
+    var pendingEditorFileName by remember(session.folderName) {
+        mutableStateOf<String?>(null)
+    }
     var showingSessionCheck by remember(session.folderName) { mutableStateOf(false) }
     var exportInProgress by remember { mutableStateOf(false) }
     var exportStatus by remember { mutableStateOf<String?>(null) }
@@ -781,8 +784,10 @@ fun SessionDetailsScreen(
     if (showingProcessedResults) {
         ProcessedResultsScreen(
             session = currentSummary,
+            initialEditorFileName = pendingEditorFileName,
             onBack = {
                 showingProcessedResults = false
+                pendingEditorFileName = null
                 checkRefreshKey++
             }
         )
@@ -798,6 +803,11 @@ fun SessionDetailsScreen(
                 checkRefreshKey++
             },
             onStackCompleted = { checkRefreshKey++ },
+            onResultReady = { fileName ->
+                pendingEditorFileName = fileName
+                showingProcessing = false
+                showingProcessedResults = true
+            },
             onOpenHelp = onOpenHelp,
             onOpenResults = {
                 showingProcessing = false
@@ -1218,6 +1228,7 @@ private fun SessionProcessingScreen(
     refreshKey: Int,
     onBack: () -> Unit,
     onStackCompleted: () -> Unit,
+    onResultReady: (String) -> Unit,
     onOpenHelp: (HelpTopic) -> Unit,
     onOpenResults: () -> Unit,
     operationsEnabled: Boolean,
@@ -1245,6 +1256,7 @@ private fun SessionProcessingScreen(
                 session = session,
                 refreshKey = refreshKey,
                 onStackCompleted = onStackCompleted,
+                onResultReady = onResultReady,
                 onOpenHelp = onOpenHelp,
                 onOpenResults = onOpenResults,
                 operationsEnabled = operationsEnabled,

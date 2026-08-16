@@ -2374,8 +2374,13 @@ private fun ManualControlsPanel(
     val manualFocusAvailable = capabilities?.supportsManualFocus == true &&
         maxFocusDistance > 0f
     val controlsLocked = isCapturing || seriesRunning || darkFramesRunning || testShotRunning
-    val availableIsoPresets = ISO_PRESETS.filter { preset ->
-        isoRange?.contains(preset) == true
+    val availableIsoPresets = cameraIsoPresets(isoRange)
+    val availableExposurePresets = remember(exposureRange) {
+        val maximumPreset = exposureRange?.let { range ->
+            ExposurePreset("Макс. ${formatExposure(range.last)}", range.last)
+        }
+        (EXPOSURE_PRESETS + listOfNotNull(maximumPreset))
+            .distinctBy { it.nanoseconds }
     }
     var presetsExpanded by remember { mutableStateOf(false) }
     var helpTopic by remember { mutableStateOf<HelpTopic?>(null) }
@@ -2401,7 +2406,7 @@ private fun ManualControlsPanel(
     Column(
         modifier = modifier
             .verticalScroll(scrollState)
-            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .padding(horizontal = 8.dp, vertical = 8.dp)
     ) {
             ContextHelpTitle(
                 title = "Сессия",
@@ -3021,7 +3026,7 @@ private fun ManualControlsPanel(
                     .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                EXPOSURE_PRESETS.forEach { preset ->
+                availableExposurePresets.forEach { preset ->
                     val supported = exposureRange?.contains(preset.nanoseconds) == true
                     FilterChip(
                         selected = supported && exposureTimeNs == preset.nanoseconds,
@@ -3145,13 +3150,13 @@ private fun ManualControlsPanel(
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Slider(
-                    value = iso.coerceIn(isoRange.first, isoRange.last).toFloat(),
+                    value = isoSliderFraction(iso, isoRange),
                     onValueChange = { value ->
                         onIsoChanged(
-                            value.roundToInt().coerceIn(isoRange.first, isoRange.last)
+                            isoFromSliderFraction(value, isoRange)
                         )
                     },
-                    valueRange = isoRange.first.toFloat()..isoRange.last.toFloat(),
+                    valueRange = 0f..1f,
                     enabled = manualSensorAvailable && !controlsLocked,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -3170,6 +3175,17 @@ private fun ManualControlsPanel(
                         color = AstroColors.TextSecondary
                     )
                 }
+                capabilities?.sensorIsoRange?.last
+                    ?.takeIf { sensorMaximum -> isoRange.last > sensorMaximum }
+                    ?.let { sensorMaximum ->
+                        Text(
+                            text = "ISO выше $sensorMaximum использует " +
+                                "Camera2 post-RAW boost камеры.",
+                            modifier = Modifier.padding(top = 4.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = AstroColors.TextSecondary
+                        )
+                    }
             }
 
             CameraControlSectionTitle("Фокус")
@@ -3756,7 +3772,57 @@ private val EXPOSURE_PRESETS = listOf(
     ExposurePreset("120 сек", 120_000_000_000L)
 )
 
-private val ISO_PRESETS = listOf(50, 100, 200, 400, 800, 1600, 3200)
+private val ISO_PRESETS = listOf(
+    50,
+    100,
+    200,
+    400,
+    800,
+    1600,
+    3200,
+    6400,
+    12800,
+    25600,
+    51200,
+    102400
+)
+
+internal fun cameraIsoPresets(supportedRange: IntRange?): List<Int> {
+    supportedRange ?: return emptyList()
+    return (ISO_PRESETS + supportedRange.first + supportedRange.last)
+        .distinct()
+        .sorted()
+        .filter { it in supportedRange }
+}
+
+internal fun isoSliderFraction(
+    iso: Int,
+    supportedRange: IntRange
+): Float {
+    val minimum = supportedRange.first.coerceAtLeast(1)
+    val maximum = supportedRange.last.coerceAtLeast(minimum)
+    if (minimum == maximum) return 0f
+    val current = iso.coerceIn(minimum, maximum)
+    return ((ln(current.toDouble()) - ln(minimum.toDouble())) /
+        (ln(maximum.toDouble()) - ln(minimum.toDouble())))
+        .toFloat()
+        .coerceIn(0f, 1f)
+}
+
+internal fun isoFromSliderFraction(
+    fraction: Float,
+    supportedRange: IntRange
+): Int {
+    val minimum = supportedRange.first.coerceAtLeast(1)
+    val maximum = supportedRange.last.coerceAtLeast(minimum)
+    if (minimum == maximum) return minimum
+    val position = fraction.coerceIn(0f, 1f).toDouble()
+    val value = exp(
+        ln(minimum.toDouble()) +
+            (ln(maximum.toDouble()) - ln(minimum.toDouble())) * position
+    ).roundToInt()
+    return value.coerceIn(minimum, maximum)
+}
 
 internal fun exposureSliderFraction(
     exposureTimeNs: Long,

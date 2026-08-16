@@ -56,8 +56,52 @@ data class ManualCameraCapabilities(
     val supportsManualFocus: Boolean,
     val supportsTapToFocus: Boolean,
     val supportsJpegCapture: Boolean,
-    val supportsRawCapture: Boolean
+    val supportsRawCapture: Boolean,
+    val sensorIsoRange: IntRange? = isoRange,
+    val postRawSensitivityBoostRange: IntRange? = null
 )
+
+internal data class CameraIsoRequest(
+    val sensorIso: Int,
+    val postRawBoostPercent: Int
+)
+
+internal fun effectiveIsoRange(
+    sensorRange: IntRange?,
+    postRawBoostRange: IntRange?
+): IntRange? {
+    sensorRange ?: return null
+    val maximumBoost = postRawBoostRange?.last?.coerceAtLeast(100) ?: 100
+    val maximum = (sensorRange.last.toLong() * maximumBoost / 100L)
+        .coerceAtMost(Int.MAX_VALUE.toLong())
+        .toInt()
+        .coerceAtLeast(sensorRange.last)
+    return sensorRange.first..maximum
+}
+
+internal fun cameraIsoRequest(
+    effectiveIso: Int,
+    sensorRange: IntRange,
+    postRawBoostRange: IntRange?
+): CameraIsoRequest {
+    val requested = effectiveIso.coerceAtLeast(sensorRange.first)
+    if (postRawBoostRange == null || requested <= sensorRange.last) {
+        return CameraIsoRequest(
+            sensorIso = requested.coerceIn(sensorRange.first, sensorRange.last),
+            postRawBoostPercent = postRawBoostRange
+                ?.let { 100.coerceIn(it.first, it.last) }
+                ?: 100
+        )
+    }
+    val boost = ((requested.toLong() * 100L + sensorRange.last / 2L) /
+        sensorRange.last.toLong())
+        .coerceIn(postRawBoostRange.first.toLong(), postRawBoostRange.last.toLong())
+        .toInt()
+    return CameraIsoRequest(
+        sensorIso = sensorRange.last,
+        postRawBoostPercent = boost
+    )
+}
 
 data class ManualCameraParameters(
     val exposureTimeNs: Long,
@@ -825,8 +869,11 @@ class CameraPreviewView @JvmOverloads constructor(
             val exposureRange = characteristics.get(
                 CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE
             )
-            val isoRange = characteristics.get(
+            val sensorIsoRange = characteristics.get(
                 CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE
+            )
+            val postRawBoostRange = characteristics.get(
+                CameraCharacteristics.CONTROL_POST_RAW_SENSITIVITY_BOOST_RANGE
             )
             val minimumFocusDistance = characteristics.get(
                 CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE
@@ -861,7 +908,10 @@ class CameraPreviewView @JvmOverloads constructor(
             val cameraCapabilities = ManualCameraCapabilities(
                 cameraId = cameraId,
                 exposureRangeNs = exposureRange?.let { it.lower..it.upper },
-                isoRange = isoRange?.let { it.lower..it.upper },
+                isoRange = effectiveIsoRange(
+                    sensorRange = sensorIsoRange?.let { it.lower..it.upper },
+                    postRawBoostRange = postRawBoostRange?.let { it.lower..it.upper }
+                ),
                 minimumFocusDistance = minimumFocusDistance,
                 supportsManualSensor = capabilities?.contains(
                     CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR
@@ -870,7 +920,11 @@ class CameraPreviewView @JvmOverloads constructor(
                 supportsTapToFocus = maxAfRegions > 0 &&
                     availableAfModes.contains(CaptureRequest.CONTROL_AF_MODE_AUTO),
                 supportsJpegCapture = jpegCaptureAvailable,
-                supportsRawCapture = rawCaptureAvailable
+                supportsRawCapture = rawCaptureAvailable,
+                sensorIsoRange = sensorIsoRange?.let { it.lower..it.upper },
+                postRawSensitivityBoostRange = postRawBoostRange?.let {
+                    it.lower..it.upper
+                }
             )
             manualCapabilities = cameraCapabilities
             post { onCapabilitiesAvailable(cameraCapabilities) }
@@ -1025,6 +1079,7 @@ class CameraPreviewView @JvmOverloads constructor(
         val parameters = manualParameters
         val exposureRange = capabilities.exposureRangeNs
         val isoRange = capabilities.isoRange
+        val sensorIsoRange = capabilities.sensorIsoRange
         val automaticPreviewExposure = forPreview &&
             !parameters.applyLongExposureToPreview
 
@@ -1041,8 +1096,14 @@ class CameraPreviewView @JvmOverloads constructor(
         } else if (
             capabilities.supportsManualSensor &&
             exposureRange != null &&
-            isoRange != null
+            isoRange != null &&
+            sensorIsoRange != null
         ) {
+            val isoRequest = cameraIsoRequest(
+                effectiveIso = parameters.iso.coerceIn(isoRange.first, isoRange.last),
+                sensorRange = sensorIsoRange,
+                postRawBoostRange = capabilities.postRawSensitivityBoostRange
+            )
             requestBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
             requestBuilder.set(
                 CaptureRequest.SENSOR_EXPOSURE_TIME,
@@ -1050,8 +1111,14 @@ class CameraPreviewView @JvmOverloads constructor(
             )
             requestBuilder.set(
                 CaptureRequest.SENSOR_SENSITIVITY,
-                parameters.iso.coerceIn(isoRange.first, isoRange.last)
+                isoRequest.sensorIso
             )
+            capabilities.postRawSensitivityBoostRange?.let {
+                requestBuilder.set(
+                    CaptureRequest.CONTROL_POST_RAW_SENSITIVITY_BOOST,
+                    isoRequest.postRawBoostPercent
+                )
+            }
         } else {
             requestBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
         }

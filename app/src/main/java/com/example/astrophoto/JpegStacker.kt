@@ -6512,6 +6512,7 @@ fun JpegStackingBlock(
     session: SessionSummary,
     refreshKey: Int,
     onStackCompleted: () -> Unit,
+    onResultReady: (String) -> Unit = {},
     onOpenHelp: (HelpTopic) -> Unit = {},
     onOpenResults: () -> Unit = {},
     operationsEnabled: Boolean = true,
@@ -6781,6 +6782,7 @@ fun JpegStackingBlock(
                             }
                         }
                         onStackCompleted()
+                        onResultReady(it.fileName)
                     },
                     onFailure = {
                         Log.e("AstroPhotoProcessing", "Manual processing failed", it)
@@ -6832,6 +6834,7 @@ fun JpegStackingBlock(
                         }
                         rawStatus = status
                         onStackCompleted()
+                        onResultReady(created.fileName)
                     },
                     onFailure = { error ->
                         Log.e("AstroPhotoProcessing", "RAW processing failed", error)
@@ -6898,6 +6901,7 @@ fun JpegStackingBlock(
                             updateStatus = { updated -> status = updated },
                             onStackCompleted = onStackCompleted
                         )
+                        onResultReady(created.fileName)
                     },
                     onFailure = { error ->
                         status = error.message ?: "Профильная обработка не удалась"

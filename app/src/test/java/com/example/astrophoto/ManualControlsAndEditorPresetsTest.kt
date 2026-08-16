@@ -41,11 +41,55 @@ class ManualControlsAndEditorPresetsTest {
     }
 
     @Test
+    fun postRawBoostExtendsEffectiveIsoAndMapsToValidCameraRequest() {
+        val sensorRange = 50..3200
+        val boostRange = 100..3199
+
+        assertEquals(50..102368, effectiveIsoRange(sensorRange, boostRange))
+        assertEquals(
+            CameraIsoRequest(sensorIso = 3200, postRawBoostPercent = 200),
+            cameraIsoRequest(6400, sensorRange, boostRange)
+        )
+        assertEquals(
+            CameraIsoRequest(sensorIso = 800, postRawBoostPercent = 100),
+            cameraIsoRequest(800, sensorRange, boostRange)
+        )
+    }
+
+    @Test
+    fun extendedIsoSliderIsLogarithmicAndOffersHighPresets() {
+        val range = 50..102368
+        val restored = isoFromSliderFraction(isoSliderFraction(6400, range), range)
+
+        assertTrue(abs(restored - 6400) <= 1)
+        assertTrue(cameraIsoPresets(range).containsAll(listOf(6400, 12800, 102368)))
+    }
+
+    @Test
     fun editorAcceptsStackPngAndCameraJpeg() {
         assertTrue(isSupportedEditorImage("ExperimentalStars_1.png"))
         assertTrue(isSupportedEditorImage("AstroSeries_1.jpg"))
         assertTrue(isSupportedEditorImage("AstroSeries_1.JPEG"))
         assertFalse(isSupportedEditorImage("AstroSeries_1.dng"))
+    }
+
+    @Test
+    fun completedResultCanBeSelectedForImmediateEditorOpen() {
+        val result = ProcessedResult(
+            key = "result",
+            fileName = "RecoveredStars_1.png",
+            type = ProcessedResultType.RECOVERED_STARS,
+            createdAtMillis = 1L,
+            sizeBytes = 2L,
+            displayPath = "Processed/RecoveredStars_1.png",
+            contentUri = null,
+            filePath = "C:/result.png"
+        )
+
+        assertEquals(
+            result,
+            findProcessedResultForEditor(listOf(result), "recoveredstars_1.PNG")
+        )
     }
 
     @Test
