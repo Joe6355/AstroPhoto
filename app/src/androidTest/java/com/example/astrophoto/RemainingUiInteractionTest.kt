@@ -116,12 +116,13 @@ class RemainingUiInteractionTest {
         }
 
         composeRule.onNodeWithText("Открыть").performClick()
+        composeRule.onNodeWithText("Пресеты").performClick()
         composeRule.onNodeWithTag(AstroTestTags.ResultActionsMenu).performClick()
         composeRule.onNodeWithText("Редактировать").performClick()
         composeRule.onNodeWithTag(AstroTestTags.ResultActionsMenu).performClick()
         composeRule.onNodeWithText("Экспорт / поделиться").performClick()
         composeRule.runOnIdle {
-            assertEquals(listOf("open", "edit", "export"), calls)
+            assertEquals(listOf("open", "edit", "edit", "export"), calls)
         }
     }
 

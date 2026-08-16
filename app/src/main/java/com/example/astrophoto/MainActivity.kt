@@ -100,6 +100,10 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.coroutines.resume
+import kotlin.math.exp
+import kotlin.math.ln
+import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -3034,6 +3038,39 @@ private fun ManualControlsPanel(
                     )
                 }
             }
+            if (exposureRange != null && exposureRange.first < exposureRange.last) {
+                Text(
+                    text = "Ручная выдержка",
+                    modifier = Modifier.padding(top = 10.dp),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Slider(
+                    value = exposureSliderFraction(exposureTimeNs, exposureRange),
+                    onValueChange = { fraction ->
+                        onExposureChanged(
+                            exposureFromSliderFraction(fraction, exposureRange)
+                        )
+                    },
+                    valueRange = 0f..1f,
+                    enabled = manualSensorAvailable && !controlsLocked,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        formatExposure(exposureRange.first),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = AstroColors.TextSecondary
+                    )
+                    Text(
+                        formatExposure(exposureRange.last),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = AstroColors.TextSecondary
+                    )
+                }
+            }
             exposureWarning?.let { warning ->
                 Text(
                     text = warning,
@@ -3098,6 +3135,39 @@ private fun ManualControlsPanel(
                         },
                         label = { Text(preset.toString()) },
                         enabled = manualSensorAvailable && !controlsLocked
+                    )
+                }
+            }
+            if (isoRange != null && isoRange.first < isoRange.last) {
+                Text(
+                    text = "Ручной ISO",
+                    modifier = Modifier.padding(top = 10.dp),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Slider(
+                    value = iso.coerceIn(isoRange.first, isoRange.last).toFloat(),
+                    onValueChange = { value ->
+                        onIsoChanged(
+                            value.roundToInt().coerceIn(isoRange.first, isoRange.last)
+                        )
+                    },
+                    valueRange = isoRange.first.toFloat()..isoRange.last.toFloat(),
+                    enabled = manualSensorAvailable && !controlsLocked,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        "ISO ${isoRange.first}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = AstroColors.TextSecondary
+                    )
+                    Text(
+                        "ISO ${isoRange.last}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = AstroColors.TextSecondary
                     )
                 }
             }
@@ -3628,7 +3698,7 @@ private fun adaptCameraPreset(
     )
 }
 
-private val SERIES_FRAME_COUNTS = listOf(3, 5, 10, 20, 30)
+internal val SERIES_FRAME_COUNTS = listOf(3, 5, 10, 20, 30, 40, 50, 100)
 private val DARK_FRAME_COUNTS = listOf(3, 5, 10, 20)
 private val SERIES_DELAYS_SECONDS = listOf(0, 1, 2, 5)
 private val START_TIMER_SECONDS = listOf(0, 3, 5, 10)
@@ -3687,6 +3757,35 @@ private val EXPOSURE_PRESETS = listOf(
 )
 
 private val ISO_PRESETS = listOf(50, 100, 200, 400, 800, 1600, 3200)
+
+internal fun exposureSliderFraction(
+    exposureTimeNs: Long,
+    supportedRange: LongRange
+): Float {
+    val minimum = supportedRange.first.coerceAtLeast(1L)
+    val maximum = supportedRange.last.coerceAtLeast(minimum)
+    if (minimum == maximum) return 0f
+    val current = exposureTimeNs.coerceIn(minimum, maximum)
+    return ((ln(current.toDouble()) - ln(minimum.toDouble())) /
+        (ln(maximum.toDouble()) - ln(minimum.toDouble())))
+        .toFloat()
+        .coerceIn(0f, 1f)
+}
+
+internal fun exposureFromSliderFraction(
+    fraction: Float,
+    supportedRange: LongRange
+): Long {
+    val minimum = supportedRange.first.coerceAtLeast(1L)
+    val maximum = supportedRange.last.coerceAtLeast(minimum)
+    if (minimum == maximum) return minimum
+    val position = fraction.coerceIn(0f, 1f).toDouble()
+    val value = exp(
+        ln(minimum.toDouble()) +
+            (ln(maximum.toDouble()) - ln(minimum.toDouble())) * position
+    ).roundToLong()
+    return value.coerceIn(minimum, maximum)
+}
 
 private fun formatExposure(nanoseconds: Long): String {
     EXPOSURE_PRESETS.firstOrNull { it.nanoseconds == nanoseconds }?.let {

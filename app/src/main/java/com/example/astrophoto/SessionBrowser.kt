@@ -563,6 +563,7 @@ fun SessionDetailsScreen(
     var autoBadFrameCount by remember { mutableIntStateOf(0) }
     var stackingFrameCount by remember { mutableIntStateOf(0) }
     var showingFrames by remember { mutableStateOf(false) }
+    var showingProcessing by remember { mutableStateOf(false) }
     var showingProcessedResults by remember { mutableStateOf(false) }
     var showingSessionCheck by remember(session.folderName) { mutableStateOf(false) }
     var exportInProgress by remember { mutableStateOf(false) }
@@ -788,6 +789,26 @@ fun SessionDetailsScreen(
         return
     }
 
+    if (showingProcessing) {
+        SessionProcessingScreen(
+            session = currentSummary,
+            refreshKey = checkRefreshKey,
+            onBack = {
+                showingProcessing = false
+                checkRefreshKey++
+            },
+            onStackCompleted = { checkRefreshKey++ },
+            onOpenHelp = onOpenHelp,
+            onOpenResults = {
+                showingProcessing = false
+                showingProcessedResults = true
+            },
+            operationsEnabled = !exportInProgress && !managementInProgress,
+            onOperationStateChanged = { stackingInProgress = it }
+        )
+        return
+    }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -891,6 +912,13 @@ fun SessionDetailsScreen(
             )
         }
         item {
+            AstroPrimaryButton(
+                text = "Обработка: пресеты и стеккинг",
+                onClick = { showingProcessing = true },
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+        item {
             AstroSecondaryButton(
                 text = "Результаты обработки",
                 onClick = { showingProcessedResults = true },
@@ -921,17 +949,6 @@ fun SessionDetailsScreen(
                     onRefresh = { checkRefreshKey++ }
                 )
             }
-        }
-        item {
-            JpegStackingBlock(
-                session = currentSummary,
-                refreshKey = checkRefreshKey,
-                onStackCompleted = { checkRefreshKey++ },
-                onOpenHelp = onOpenHelp,
-                onOpenResults = { showingProcessedResults = true },
-                operationsEnabled = !exportInProgress && !managementInProgress,
-                onOperationStateChanged = { stackingInProgress = it }
-            )
         }
         item {
             Button(
@@ -1192,6 +1209,48 @@ fun SessionDetailsScreen(
                 }
             }
         )
+    }
+}
+
+@Composable
+private fun SessionProcessingScreen(
+    session: SessionSummary,
+    refreshKey: Int,
+    onBack: () -> Unit,
+    onStackCompleted: () -> Unit,
+    onOpenHelp: (HelpTopic) -> Unit,
+    onOpenResults: () -> Unit,
+    operationsEnabled: Boolean,
+    onOperationStateChanged: (Boolean) -> Unit
+) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .safeDrawingPadding(),
+        contentPadding = PaddingValues(16.dp, 24.dp, 16.dp, 36.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item {
+            AstroTopBar(title = "Обработка", onBack = onBack)
+            Text(
+                text = "Выберите пресет: обработка запускается одной кнопкой. " +
+                    "Ручные режимы находятся на соседней вкладке.",
+                modifier = Modifier.padding(horizontal = AstroSpacing.Lg),
+                color = AstroColors.TextSecondary,
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
+        item {
+            JpegStackingBlock(
+                session = session,
+                refreshKey = refreshKey,
+                onStackCompleted = onStackCompleted,
+                onOpenHelp = onOpenHelp,
+                onOpenResults = onOpenResults,
+                operationsEnabled = operationsEnabled,
+                onOperationStateChanged = onOperationStateChanged
+            )
+        }
     }
 }
 

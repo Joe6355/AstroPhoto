@@ -1335,6 +1335,14 @@ fun ProcessedResultActions(
         ) {
             Text("Открыть")
         }
+        AstroSecondaryButton(
+            text = "Пресеты",
+            onClick = onEdit,
+            enabled = canEdit,
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 8.dp)
+        )
         Box {
             IconButton(
                 onClick = { menuExpanded = true },

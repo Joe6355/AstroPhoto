@@ -6437,7 +6437,7 @@ private enum class StackProcessingWorkflow(val title: String) {
 }
 
 enum class ProcessingUiMode(val title: String) {
-    READY("Готовые режимы"),
+    READY("Пресеты"),
     MANUAL("Ручная обработка")
 }
 
@@ -7081,7 +7081,7 @@ fun JpegStackingBlock(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                 Text(
-                    text = "Готовые режимы",
+                    text = "Пресеты обработки",
                     style = MaterialTheme.typography.titleMedium
                 )
                 AstroProcessingProfile.entries.filterNot { it == AstroProcessingProfile.NORMAL }

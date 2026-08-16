@@ -27,6 +27,8 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
@@ -141,11 +143,20 @@ data class EditorImageMetrics(
     }
 }
 
-private data class EditorPreset(
+internal data class EditorPreset(
     val name: String,
     val description: String,
     val adjustments: ImageAdjustments
 )
+
+internal enum class EditorControlTab(val title: String) {
+    PRESETS("Пресеты"),
+    MANUAL("Ручная")
+}
+
+internal fun isSupportedEditorImage(fileName: String): Boolean =
+    fileName.substringAfterLast('.', missingDelimiterValue = "")
+        .lowercase(Locale.US) in setOf("jpg", "jpeg", "png")
 
 data class EditedImageSaveResult(
     val fileName: String,
@@ -342,17 +353,15 @@ class ProcessedImageEditor(private val context: Context) {
         resultMetrics: EditorImageMetrics?
     ): Result<EditedImageSaveResult> = withContext(Dispatchers.IO) {
         runCatching {
-            require(source.fileName.endsWith(".jpg", ignoreCase = true) ||
-                source.fileName.endsWith(".jpeg", ignoreCase = true)
-            ) {
-                "Редактор поддерживает только JPEG"
+            require(isSupportedEditorImage(source.fileName)) {
+                "Редактор поддерживает JPEG и PNG"
             }
 
             var usedPreviewFallback = false
             var fullBitmap: Bitmap? = null
             val editedAndCrop = try {
                 val full = decodeFullMutable(source)
-                    ?: error("Не удалось прочитать JPEG")
+                    ?: error("Не удалось прочитать изображение")
                 fullBitmap = full
                 applyInPlace(full, adjustments)
                 val cropPixels = cropPixels(full.width, full.height, crop)
@@ -389,7 +398,7 @@ class ProcessedImageEditor(private val context: Context) {
                 val now = System.currentTimeMillis()
                 val fileName = "Edited_${
                     SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(now))
-                }.jpg"
+                }.png"
                 val path = saveBitmap(session, edited, fileName)
                 val infoUpdated = runCatching {
                     appendSessionInfo(
@@ -520,6 +529,52 @@ class ProcessedImageEditor(private val context: Context) {
             }
             bitmap.setPixels(pixels, 0, width, 0, top, width, rows)
             top += rows
+        }
+
+        val sharpness = settings.sharpness.coerceIn(0f, 100f)
+        if (sharpness > 0f && bitmap.width > 1 && bitmap.height > 1) {
+            applySharpnessInPlace(bitmap, sharpness)
+        }
+    }
+
+    private fun applySharpnessInPlace(bitmap: Bitmap, sharpness: Float) {
+        val width = bitmap.width
+        val height = bitmap.height
+        val strength = sharpness / 100f * 1.6f
+        var previous = IntArray(width)
+        var current = IntArray(width)
+        var next = IntArray(width)
+        var spare = IntArray(width)
+        val output = IntArray(width)
+
+        bitmap.getPixels(current, 0, width, 0, 0, width, 1)
+        current.copyInto(previous)
+        bitmap.getPixels(next, 0, width, 0, 1, width, 1)
+
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                val center = current[x]
+                val left = current[if (x == 0) 0 else x - 1]
+                val right = current[if (x == width - 1) width - 1 else x + 1]
+                val up = previous[x]
+                val down = next[x]
+                output[x] = 0xFF000000.toInt() or
+                    (editorSharpenedChannel(center ushr 16 and 0xFF, left ushr 16 and 0xFF,
+                        right ushr 16 and 0xFF, up ushr 16 and 0xFF,
+                        down ushr 16 and 0xFF, strength) shl 16) or
+                    (editorSharpenedChannel(center ushr 8 and 0xFF, left ushr 8 and 0xFF,
+                        right ushr 8 and 0xFF, up ushr 8 and 0xFF,
+                        down ushr 8 and 0xFF, strength) shl 8) or
+                    editorSharpenedChannel(center and 0xFF, left and 0xFF,
+                        right and 0xFF, up and 0xFF, down and 0xFF, strength)
+            }
+            bitmap.setPixels(output, 0, width, 0, y, width, 1)
+            if (y < height - 1) {
+                spare = previous.also { previous = current }
+                current = next.also { next = spare }
+                val nextY = (y + 2).coerceAtMost(height - 1)
+                bitmap.getPixels(next, 0, width, 0, nextY, width, 1)
+            }
         }
     }
 
@@ -722,10 +777,12 @@ class ProcessedImageEditor(private val context: Context) {
         bitmap: Bitmap,
         fileName: String
     ): String {
-        val jpegQuality = CameraSettingsStore(context).load().jpegQuality
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val resolver = context.contentResolver
-            val destination = processedImageDestination(session.folderName)
+            val destination = processedImageDestination(
+                session.folderName,
+                mimeType = "image/png"
+            )
             val relativePath = destination.relativePath
             val uri = resolver.insert(
                 processedImagesCollection(destination.collection),
@@ -738,7 +795,7 @@ class ProcessedImageEditor(private val context: Context) {
             ) ?: error("Не удалось сохранить результат")
             try {
                 resolver.openOutputStream(uri, "w")?.use {
-                    if (!bitmap.compress(Bitmap.CompressFormat.JPEG, jpegQuality, it)) {
+                    if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) {
                         error("Не удалось сохранить результат")
                     }
                 } ?: error("Не удалось сохранить результат")
@@ -770,7 +827,7 @@ class ProcessedImageEditor(private val context: Context) {
         }
         val file = File(directory, fileName)
         FileOutputStream(file).use {
-            if (!bitmap.compress(Bitmap.CompressFormat.JPEG, jpegQuality, it)) {
+            if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) {
                 error("Не удалось сохранить результат")
             }
         }
@@ -796,7 +853,8 @@ class ProcessedImageEditor(private val context: Context) {
                     "gamma=${String.format(Locale.US, "%.2f", adjustments.gamma)}, " +
                     "black=${adjustments.blackPoint.toInt()}, " +
                     "white=${adjustments.whitePoint.toInt()}, " +
-                    "saturation=${adjustments.saturation.toInt()}"
+                    "saturation=${adjustments.saturation.toInt()}, " +
+                    "sharpness=${adjustments.sharpness.toInt()}"
             )
             appendLine(
                 "editedMetrics: averageBrightness=${
@@ -880,6 +938,22 @@ class ProcessedImageEditor(private val context: Context) {
     }
 }
 
+internal fun editorSharpenedChannel(
+    center: Int,
+    left: Int,
+    right: Int,
+    up: Int,
+    down: Int,
+    strength: Float
+): Int {
+    val averageNeighbor = (left + right + up + down) / 4f
+    val detail = center - averageNeighbor
+    if (kotlin.math.abs(detail) < 1.5f) return center.coerceIn(0, 255)
+    return (center + detail * strength)
+        .roundToInt()
+        .coerceIn(0, 255)
+}
+
 private fun isSafeCrop(
     crop: CropSettings,
     width: Int,
@@ -937,6 +1011,7 @@ fun ProcessedImageEditorScreen(
     var rendering by remember(source.key) { mutableStateOf(false) }
     var saving by remember(source.key) { mutableStateOf(false) }
     var showOriginal by remember(source.key) { mutableStateOf(false) }
+    var controlTab by remember(source.key) { mutableStateOf(EditorControlTab.PRESETS) }
     var status by remember(source.key) { mutableStateOf<String?>(null) }
 
     LaunchedEffect(source.key) {
@@ -946,10 +1021,8 @@ fun ProcessedImageEditorScreen(
             loading = false
             return@LaunchedEffect
         }
-        if (!source.fileName.endsWith(".jpg", true) &&
-            !source.fileName.endsWith(".jpeg", true)
-        ) {
-            status = "Редактор поддерживает только JPEG"
+        if (!isSupportedEditorImage(source.fileName)) {
+            status = "Редактор поддерживает JPEG и PNG"
             loading = false
             return@LaunchedEffect
         }
@@ -958,7 +1031,7 @@ fun ProcessedImageEditorScreen(
         sourceWidth = loaded?.sourceWidth ?: 0
         sourceHeight = loaded?.sourceHeight ?: 0
         if (loaded == null) {
-            status = "Не удалось прочитать JPEG"
+            status = "Не удалось прочитать изображение"
         } else {
             originalMetrics = editor.analyzePreview(loaded.bitmap)
         }
@@ -1044,7 +1117,7 @@ fun ProcessedImageEditorScreen(
                     contentScale = ContentScale.Fit
                 )
                 else -> Text(
-                    text = status ?: "Не удалось прочитать JPEG",
+                    text = status ?: "Не удалось прочитать изображение",
                     color = AstroColors.Error
                 )
             }
@@ -1064,284 +1137,234 @@ fun ProcessedImageEditorScreen(
             onSelected = { showOriginal = it },
             modifier = Modifier.padding(top = 8.dp)
         )
-        AstroExpandableSection(
-            title = "Гистограмма",
+        AstroSegmentedControl(
+            options = EditorControlTab.entries,
+            selected = controlTab,
+            label = { it.title },
+            onSelected = { controlTab = it },
             modifier = Modifier.padding(top = 8.dp)
-        ) {
-            EditorHistogramBlock(
-                metrics = visibleMetrics,
-                showingOriginal = showOriginal,
-                autoDataAlreadyLost = autoStillActive &&
-                    processedMetrics?.hasClipping == true,
-                modifier = Modifier.fillMaxWidth()
+        )
+
+        if (controlTab == EditorControlTab.PRESETS) {
+            Text(
+                text = "Нажмите пресет — результат сразу появится в окне выше.",
+                modifier = Modifier.padding(top = 10.dp),
+                color = AstroColors.TextSecondary,
+                style = MaterialTheme.typography.bodySmall
             )
-        }
-        AstroExpandableSection(
-            title = "Обрезка",
-            modifier = Modifier.padding(top = 8.dp)
-        ) {
-            EditorCropBlock(
-                crop = crop,
-                finalWidth = finalDimensions.first,
-                finalHeight = finalDimensions.second,
-                enabled = original != null && !saving,
-                onCropChanged = ::updateCrop,
-                onAutoCrop = {
-                val bitmap = original ?: return@EditorCropBlock
-                coroutineScope.launch {
-                    status = "Поиск чёрных краёв..."
-                    val uncropped = editor.renderPreview(
-                        bitmap,
-                        adjustments,
-                        CropSettings()
+            EDITOR_PRESETS.forEach { preset ->
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface
                     )
-                    if (uncropped == null) {
-                        status = "Не удалось выполнить автообрезку"
-                        return@launch
-                    }
-                    try {
-                        val detected = editor.detectBlackEdges(uncropped)
-                        if (!detected.found) {
-                            status = if (detected.aggressive) {
-                                "Автообрезка слишком агрессивная и не применена."
-                            } else {
-                                "Чёрные края не обнаружены."
-                            }
-                        } else {
-                            updateCrop(detected.settings)
-                            status = if (detected.aggressive) {
-                                "Автообрезка сильная, проверьте результат."
-                            } else {
-                                "Автообрезка применена"
-                            }
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(preset.name, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = preset.description,
+                            modifier = Modifier.padding(top = 3.dp),
+                            color = AstroColors.TextSecondary,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Button(
+                            onClick = {
+                                adjustments = preset.adjustments
+                                autoAdjustmentSnapshot = null
+                                showOriginal = false
+                                status = "Применён пресет «${preset.name}»"
+                            },
+                            enabled = original != null && !saving,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 52.dp)
+                                .padding(top = 8.dp)
+                        ) {
+                            Text("Применить")
                         }
-                    } finally {
-                        uncropped.recycle()
                     }
                 }
-                },
-                onResetCrop = {
-                    crop = CropSettings()
-                    status = "Обрезка сброшена"
-                },
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
-
-        AstroExpandableSection(
-            title = "Тон и цвет",
-            modifier = Modifier.padding(top = 8.dp),
-            initiallyExpanded = true
-        ) {
-        Text(
-            text = "Пресеты",
-            modifier = Modifier.padding(top = 10.dp),
-            fontWeight = FontWeight.SemiBold
-        )
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            EDITOR_PRESETS.forEach { preset ->
-                FilterChip(
-                    selected = adjustments == preset.adjustments,
-                    onClick = {
-                        adjustments = preset.adjustments
-                        autoAdjustmentSnapshot = null
-                        showOriginal = false
-                        status = preset.description
-                    },
-                    label = { Text(preset.name) }
-                )
             }
-        }
-
-        EditorSlider(
-            title = "Яркость",
-            value = adjustments.brightness,
-            valueRange = -100f..100f,
-            valueLabel = adjustments.brightness.toInt().toString(),
-            onValueChange = { adjustments = adjustments.copy(brightness = it) }
-        )
-        EditorSlider(
-            title = "Контраст",
-            value = adjustments.contrast,
-            valueRange = -100f..100f,
-            valueLabel = adjustments.contrast.toInt().toString(),
-            onValueChange = { adjustments = adjustments.copy(contrast = it) }
-        )
-        EditorSlider(
-            title = "Гамма",
-            value = adjustments.gamma,
-            valueRange = 0.5f..2.5f,
-            valueLabel = String.format(Locale.getDefault(), "%.2f", adjustments.gamma),
-            onValueChange = { adjustments = adjustments.copy(gamma = it) }
-        )
-        EditorSlider(
-            title = "Чёрная точка",
-            value = adjustments.blackPoint,
-            valueRange = 0f..100f,
-            valueLabel = adjustments.blackPoint.toInt().toString(),
-            onValueChange = { adjustments = adjustments.copy(blackPoint = it) }
-        )
-        EditorSlider(
-            title = "Белая точка",
-            value = adjustments.whitePoint,
-            valueRange = 155f..255f,
-            valueLabel = adjustments.whitePoint.toInt().toString(),
-            onValueChange = { adjustments = adjustments.copy(whitePoint = it) }
-        )
-        EditorSlider(
-            title = "Насыщенность",
-            value = adjustments.saturation,
-            valueRange = 0f..200f,
-            valueLabel = "${adjustments.saturation.toInt()}%",
-            onValueChange = { adjustments = adjustments.copy(saturation = it) }
-        )
-        EditorSlider(
-            title = "Резкость",
-            value = adjustments.sharpness,
-            valueRange = 0f..100f,
-            valueLabel = "Будет позже",
-            onValueChange = {},
-            enabled = false
-        )
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Button(
+            TextButton(
                 onClick = {
                     adjustments = ImageAdjustments()
-                    crop = CropSettings()
                     autoAdjustmentSnapshot = null
-                    status = "Настройки сброшены"
+                    showOriginal = false
+                    status = "Обработка сброшена, обрезка сохранена"
                 },
                 enabled = !saving,
-                modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = 52.dp)
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Сброс")
+                Text("Без обработки")
             }
-            Button(
-                onClick = {
-                    val bitmap = original ?: return@Button
-                    coroutineScope.launch {
-                        val automatic = editor.autoAdjustments(bitmap)
-                        if (automatic != null) {
-                            adjustments = automatic
-                            autoAdjustmentSnapshot = automatic
-                            status = "Авторастяжение применено"
-                        } else {
-                            status = "Не удалось применить автонастройку"
+        } else {
+            AstroExpandableSection(
+                title = "Гистограмма",
+                modifier = Modifier.padding(top = 8.dp)
+            ) {
+                EditorHistogramBlock(
+                    metrics = visibleMetrics,
+                    showingOriginal = showOriginal,
+                    autoDataAlreadyLost = autoStillActive &&
+                        processedMetrics?.hasClipping == true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+            AstroExpandableSection(
+                title = "Обрезка",
+                modifier = Modifier.padding(top = 8.dp)
+            ) {
+                EditorCropBlock(
+                    crop = crop,
+                    finalWidth = finalDimensions.first,
+                    finalHeight = finalDimensions.second,
+                    enabled = original != null && !saving,
+                    onCropChanged = ::updateCrop,
+                    onAutoCrop = {
+                        val bitmap = original ?: return@EditorCropBlock
+                        coroutineScope.launch {
+                            status = "Поиск чёрных краёв..."
+                            val uncropped = editor.renderPreview(
+                                bitmap,
+                                adjustments,
+                                CropSettings()
+                            )
+                            if (uncropped == null) {
+                                status = "Не удалось выполнить автообрезку"
+                                return@launch
+                            }
+                            try {
+                                val detected = editor.detectBlackEdges(uncropped)
+                                if (!detected.found) {
+                                    status = if (detected.aggressive) {
+                                        "Автообрезка слишком агрессивная и не применена."
+                                    } else {
+                                        "Чёрные края не обнаружены."
+                                    }
+                                } else {
+                                    updateCrop(detected.settings)
+                                    status = if (detected.aggressive) {
+                                        "Автообрезка сильная, проверьте результат."
+                                    } else {
+                                        "Автообрезка применена"
+                                    }
+                                }
+                            } finally {
+                                uncropped.recycle()
+                            }
                         }
-                    }
-                },
-                enabled = original != null && !saving,
-                modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = 52.dp)
-            ) {
-                Text("Авто")
+                    },
+                    onResetCrop = {
+                        crop = CropSettings()
+                        status = "Обрезка сброшена"
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
-        }
-        }
-        AstroExpandableSection(
-            title = "Астро-режимы",
-            modifier = Modifier.padding(top = 8.dp)
-        ) {
-        Button(
-            onClick = {
-                val bitmap = original ?: return@Button
-                coroutineScope.launch {
-                    val automatic = editor.astroAutoAdjustments(bitmap)
-                    if (automatic != null) {
-                        adjustments = automatic
-                        autoAdjustmentSnapshot = automatic
-                        showOriginal = false
-                        status = "Astro Auto применён: мягко вытягиваем слабые звёзды без жёсткой чёрной точки"
-                    } else {
-                        status = "Не удалось применить Astro Auto"
+
+            AstroExpandableSection(
+                title = "Тон, цвет и резкость",
+                modifier = Modifier.padding(top = 8.dp),
+                initiallyExpanded = true
+            ) {
+                EditorSlider(
+                    title = "Яркость",
+                    value = adjustments.brightness,
+                    valueRange = -100f..100f,
+                    valueLabel = adjustments.brightness.toInt().toString(),
+                    onValueChange = { adjustments = adjustments.copy(brightness = it) }
+                )
+                EditorSlider(
+                    title = "Контраст",
+                    value = adjustments.contrast,
+                    valueRange = -100f..100f,
+                    valueLabel = adjustments.contrast.toInt().toString(),
+                    onValueChange = { adjustments = adjustments.copy(contrast = it) }
+                )
+                EditorSlider(
+                    title = "Гамма",
+                    value = adjustments.gamma,
+                    valueRange = 0.5f..2.5f,
+                    valueLabel = String.format(Locale.getDefault(), "%.2f", adjustments.gamma),
+                    onValueChange = { adjustments = adjustments.copy(gamma = it) }
+                )
+                EditorSlider(
+                    title = "Чёрная точка",
+                    value = adjustments.blackPoint,
+                    valueRange = 0f..100f,
+                    valueLabel = adjustments.blackPoint.toInt().toString(),
+                    onValueChange = { adjustments = adjustments.copy(blackPoint = it) }
+                )
+                EditorSlider(
+                    title = "Белая точка",
+                    value = adjustments.whitePoint,
+                    valueRange = 155f..255f,
+                    valueLabel = adjustments.whitePoint.toInt().toString(),
+                    onValueChange = { adjustments = adjustments.copy(whitePoint = it) }
+                )
+                EditorSlider(
+                    title = "Насыщенность",
+                    value = adjustments.saturation,
+                    valueRange = 0f..200f,
+                    valueLabel = "${adjustments.saturation.toInt()}%",
+                    onValueChange = { adjustments = adjustments.copy(saturation = it) }
+                )
+                EditorSlider(
+                    title = "Резкость",
+                    value = adjustments.sharpness,
+                    valueRange = 0f..100f,
+                    valueLabel = adjustments.sharpness.toInt().toString(),
+                    onValueChange = { adjustments = adjustments.copy(sharpness = it) }
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            adjustments = ImageAdjustments()
+                            crop = CropSettings()
+                            autoAdjustmentSnapshot = null
+                            status = "Настройки сброшены"
+                        },
+                        enabled = !saving,
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 52.dp)
+                    ) {
+                        Text("Сброс")
+                    }
+                    Button(
+                        onClick = {
+                            val bitmap = original ?: return@Button
+                            coroutineScope.launch {
+                                val automatic = editor.autoAdjustments(bitmap)
+                                if (automatic != null) {
+                                    adjustments = automatic
+                                    autoAdjustmentSnapshot = automatic
+                                    showOriginal = false
+                                    status = "Авторастяжение применено"
+                                } else {
+                                    status = "Не удалось применить автонастройку"
+                                }
+                            }
+                        },
+                        enabled = original != null && !saving,
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 52.dp)
+                    ) {
+                        Text("Авто")
                     }
                 }
-            },
-            enabled = original != null && !saving,
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 52.dp)
-                .padding(top = 8.dp)
-        ) {
-            Text("Astro Auto")
-        }
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Button(
-                onClick = {
-                    val bitmap = original ?: return@Button
-                    coroutineScope.launch {
-                        val urban = editor.urbanSkyAdjustments(bitmap)
-                        if (urban != null) {
-                            adjustments = urban
-                            autoAdjustmentSnapshot = urban
-                            showOriginal = false
-                            status = "Городское небо: мягко уменьшаем засветку и сохраняем слабые точки"
-                        } else {
-                            status = "Не удалось применить профиль городского неба"
-                        }
-                    }
-                },
-                enabled = original != null && !saving,
-                modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = 52.dp)
-            ) {
-                Text("Город")
-            }
-            Button(
-                onClick = {
-                    val bitmap = original ?: return@Button
-                    coroutineScope.launch {
-                        val maxStars = editor.maxStarsAdjustments(bitmap)
-                        if (maxStars != null) {
-                            adjustments = maxStars
-                            autoAdjustmentSnapshot = maxStars
-                            showOriginal = false
-                            status = "Максимум звёзд применён. Может усилить шум."
-                        } else {
-                            status = "Не удалось применить максимум звёзд"
-                        }
-                    }
-                },
-                enabled = original != null && !saving,
-                modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = 52.dp)
-            ) {
-                Text("Макс. звёзд")
             }
         }
-        TextButton(
-            onClick = {
-                adjustments = ImageAdjustments()
-                autoAdjustmentSnapshot = null
-                showOriginal = false
-                status = "Астро-настройки сброшены, обрезка сохранена."
-            },
-            enabled = !saving,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Сбросить астро")
-        }
+
         if (adjustments.blackPoint > 24f) {
             Text(
                 text = "Риск потери слабых деталей: чёрная точка слишком высокая.",
@@ -1349,7 +1372,6 @@ fun ProcessedImageEditorScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = AstroColors.Warning
             )
-        }
         }
         Button(
             onClick = {
@@ -1637,53 +1659,53 @@ private fun EditorSlider(
     )
 }
 
-private val EDITOR_PRESETS = listOf(
+internal val EDITOR_PRESETS = listOf(
     EditorPreset(
-        name = "Мягко",
-        description = "Мягко: немного контраста и цвета.",
+        name = "Звёзды — заметно",
+        description = "Выраженный контраст и резкость как после ручного улучшения перед публикацией.",
         adjustments = ImageAdjustments(
-            contrast = 10f,
-            gamma = 1.1f,
-            saturation = 110f
+            contrast = 35f,
+            gamma = 1.25f,
+            whitePoint = 245f,
+            saturation = 110f,
+            sharpness = 40f
         )
     ),
     EditorPreset(
-        name = "Больше звёзд",
-        description = "Больше звёзд: усилены чёрная точка и контраст.",
+        name = "Звёзды — максимум",
+        description = "Самый сильный вариант: слабые точки заметнее, но шум тоже может усилиться.",
         adjustments = ImageAdjustments(
-            contrast = 28f,
-            gamma = 1.2f,
-            blackPoint = 18f,
-            saturation = 110f
+            brightness = 3f,
+            contrast = 45f,
+            gamma = 1.35f,
+            whitePoint = 235f,
+            saturation = 115f,
+            sharpness = 55f
         )
     ),
     EditorPreset(
         name = "Городское небо",
-        description = "Городское небо: меньше яркости и городской засветки.",
+        description = "Сильнее затемняет засветку, сохраняет цвет и подчёркивает звёзды.",
         adjustments = ImageAdjustments(
-            brightness = -12f,
-            contrast = 25f,
-            blackPoint = 10f,
-            saturation = 90f
+            brightness = -5f,
+            contrast = 38f,
+            gamma = 1.30f,
+            blackPoint = 4f,
+            whitePoint = 245f,
+            saturation = 92f,
+            sharpness = 34f
         )
     ),
     EditorPreset(
         name = "Луна",
-        description = "Луна: повышен контраст без сильной гаммы.",
+        description = "Сдерживает яркие области и усиливает детали диска без подъёма фона.",
         adjustments = ImageAdjustments(
-            contrast = 30f,
-            gamma = 1.0f,
-            saturation = 80f
-        )
-    ),
-    EditorPreset(
-        name = "Слабый объект",
-        description = "Слабый объект: подняты гамма и яркость.",
-        adjustments = ImageAdjustments(
-            brightness = 12f,
-            contrast = 15f,
-            gamma = 1.4f,
-            saturation = 110f
+            brightness = -6f,
+            contrast = 40f,
+            gamma = 0.92f,
+            whitePoint = 238f,
+            saturation = 82f,
+            sharpness = 48f
         )
     )
 )
