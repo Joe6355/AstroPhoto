@@ -1270,13 +1270,6 @@ private fun SessionProcessingScreen(
     ) {
         item {
             AstroTopBar(title = "Обработка", onBack = onBack)
-            Text(
-                text = "Выберите пресет: обработка запускается одной кнопкой. " +
-                    "Ручные режимы находятся на соседней вкладке.",
-                modifier = Modifier.padding(horizontal = AstroSpacing.Lg),
-                color = AstroColors.TextSecondary,
-                style = MaterialTheme.typography.bodyMedium
-            )
         }
         item {
             JpegStackingBlock(

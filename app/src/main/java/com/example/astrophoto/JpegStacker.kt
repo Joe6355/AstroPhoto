@@ -6638,6 +6638,11 @@ fun JpegStackingBlock(
         favoritesOnly = false
     )
     val cropRecords = cropsRepository.records(cropManifest, frames)
+    LaunchedEffect(cropRecords.isEmpty()) {
+        if (cropRecords.isEmpty()) {
+            stackingSource = ManualStackingSource.ORIGINAL
+        }
+    }
     val sourceSelection = resolveStackingSource(
         originals = jpegFrames,
         crops = cropRecords,
@@ -7047,35 +7052,28 @@ fun JpegStackingBlock(
                     Text("?")
                 }
             }
-            Text(
-                text = "Складывает JPEG light frames без кадров, " +
-                    "помеченных как брак.",
-                color = AstroColors.TextSecondary
-            )
-            Text("Найдено Lights/JPEG: ${jpegFrames.size}")
-            Text("Light frames используется: ${selectedFrames.size}")
-            Text("Исключено light-брака: ${badFrames.size}")
-            Text("Доступно Cropped JPEG: ${cropRecords.size}")
-            Text("Источник", fontWeight = FontWeight.SemiBold)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                ManualStackingSource.entries.forEach { option ->
-                    FilterChip(
-                        selected = stackingSource == option,
-                        onClick = { stackingSource = option },
-                        enabled = !loading && !stacking,
-                        label = {
-                            Text(
-                                if (option == ManualStackingSource.ORIGINAL) {
-                                    "Original JPEG"
-                                } else {
-                                    "Cropped JPEG"
-                                }
-                            )
-                        }
-                    )
+            if (cropRecords.isNotEmpty()) {
+                Text("Источник", fontWeight = FontWeight.SemiBold)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    ManualStackingSource.entries.forEach { option ->
+                        FilterChip(
+                            selected = stackingSource == option,
+                            onClick = { stackingSource = option },
+                            enabled = !loading && !stacking,
+                            label = {
+                                Text(
+                                    if (option == ManualStackingSource.ORIGINAL) {
+                                        "Original JPEG"
+                                    } else {
+                                        "Cropped JPEG"
+                                    }
+                                )
+                            }
+                        )
+                    }
                 }
             }
             sourceError?.let { Text(it, color = AstroColors.Error) }

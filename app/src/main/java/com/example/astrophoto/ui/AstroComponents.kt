@@ -39,7 +39,9 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -55,6 +57,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.astrophoto.ui.theme.AstroColors
+import kotlinx.coroutines.delay
 
 @Composable
 fun AstroScaffold(
@@ -425,15 +428,54 @@ fun AstroProgressPanel(
     onCancel: (() -> Unit)?,
     modifier: Modifier = Modifier
 ) {
+    var elapsedSeconds by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(Unit) {
+        val startedAtNanos = System.nanoTime()
+        while (true) {
+            delay(1_000)
+            elapsedSeconds = (System.nanoTime() - startedAtNanos) / 1_000_000_000L
+        }
+    }
+    val stagePercent = progress
+        ?.takeIf { it > 0f && it < 1f }
+        ?.let { (it * 100).toInt().coerceIn(1, 99) }
+
     AstroCard(modifier = modifier.fillMaxWidth(), containerColor = MaterialTheme.colorScheme.surfaceVariant) {
         Text(title, style = MaterialTheme.typography.titleMedium)
         Text(step, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (progress == null) {
-            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-        } else {
-            LinearProgressIndicator(progress = { progress.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "Работает · ${formatProcessingElapsed(elapsedSeconds)}",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            stagePercent?.let {
+                Text(
+                    text = "$it% этапа",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
+        // Общего линейного процента у многоэтапной обработки нет. Непрерывная
+        // анимация честно показывает, что задача продолжает выполняться.
+        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         onCancel?.let { AstroTextButton("Остановить", it, modifier = Modifier.align(Alignment.End)) }
+    }
+}
+
+internal fun formatProcessingElapsed(totalSeconds: Long): String {
+    val safeSeconds = totalSeconds.coerceAtLeast(0L)
+    val hours = safeSeconds / 3_600
+    val minutes = (safeSeconds % 3_600) / 60
+    val seconds = safeSeconds % 60
+    return if (hours > 0) {
+        "%d:%02d:%02d".format(hours, minutes, seconds)
+    } else {
+        "%02d:%02d".format(minutes, seconds)
     }
 }
 
