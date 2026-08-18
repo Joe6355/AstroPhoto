@@ -910,8 +910,8 @@ fun SessionDetailsScreen(
                     },
                     enabled = !managementInProgress,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error,
-                        contentColor = Color.White
+                        containerColor = AstroColors.Destructive,
+                        contentColor = AstroColors.OnDestructive
                     ),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -941,7 +941,7 @@ fun SessionDetailsScreen(
         }
         item {
             AstroPrimaryButton(
-                text = "Обработка: пресеты и стеккинг",
+                text = "Обработка сессии",
                 onClick = { showingProcessing = true },
                 modifier = Modifier.fillMaxWidth()
             )
@@ -1220,8 +1220,8 @@ fun SessionDetailsScreen(
                                     deleteConfirmation.trim() == "УДАЛИТЬ"
                                 ),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.error,
-                            contentColor = Color.White
+                            containerColor = AstroColors.Destructive,
+                            contentColor = AstroColors.OnDestructive
                         )
                     ) {
                         Text(if (managementInProgress) "Удаление..." else "Удалить")

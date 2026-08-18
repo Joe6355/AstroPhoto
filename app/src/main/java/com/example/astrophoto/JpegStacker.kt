@@ -6664,6 +6664,16 @@ fun JpegStackingBlock(
         null
     }
 
+    fun notifyProcessingCompleted() {
+        val settings = CameraSettingsStore(context.applicationContext).load()
+        notifyCompletionFeedback(
+            context = context,
+            vibrationEnabled = settings.vibrationAfterProcessing,
+            soundEnabled = settings.soundAfterProcessing,
+            completed = true
+        )
+    }
+
     fun applyWorkflow(selectedWorkflow: StackProcessingWorkflow) {
         workflow = selectedWorkflow
         when (selectedWorkflow) {
@@ -6794,6 +6804,7 @@ fun JpegStackingBlock(
                                 )
                             }
                         }
+                        notifyProcessingCompleted()
                         onStackCompleted()
                         onResultReady(it.fileName)
                     },
@@ -6846,6 +6857,7 @@ fun JpegStackingBlock(
                             created.warnings.forEach { append("\n$it") }
                         }
                         rawStatus = status
+                        notifyProcessingCompleted()
                         onStackCompleted()
                         onResultReady(created.fileName)
                     },
@@ -6905,6 +6917,7 @@ fun JpegStackingBlock(
                 profileResult.fold(
                     onSuccess = { created ->
                         successfulResult = created
+                        notifyProcessingCompleted()
                         AutomaticProfileCompletionCoordinator(::logPostCompletionEvent).complete(
                             existingResults = profileResults,
                             created = created,

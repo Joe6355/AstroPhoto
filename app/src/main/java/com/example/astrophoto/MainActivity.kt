@@ -1211,7 +1211,7 @@ private fun CameraScreen(
                     seriesMessage = if (seriesStopRequested) {
                         "Серия остановлена после текущего кадра"
                     } else {
-                        notifySeriesFeedback(
+                        notifyCompletionFeedback(
                             context = context,
                             vibrationEnabled = vibrationAfterSeries,
                             soundEnabled = soundAfterSeries,
@@ -1635,7 +1635,7 @@ private fun CameraScreen(
     fun requestSeriesStop() {
         if (!seriesRunning || seriesStopRequested) return
         seriesStopRequested = true
-        notifySeriesFeedback(
+        notifyCompletionFeedback(
             context = context,
             vibrationEnabled = vibrationAfterSeries,
             soundEnabled = false,
@@ -3900,7 +3900,7 @@ private fun Context.findComponentActivity(): ComponentActivity? {
 }
 
 @Suppress("DEPRECATION")
-private fun notifySeriesFeedback(
+internal fun notifyCompletionFeedback(
     context: Context,
     vibrationEnabled: Boolean,
     soundEnabled: Boolean,
@@ -3922,7 +3922,7 @@ private fun notifySeriesFeedback(
                 )
             }
         }.onSuccess {
-            Log.d("AstroPhotoFeedback", "Series vibration played")
+            Log.d("AstroPhotoFeedback", "Completion vibration played")
         }.onFailure { error ->
             Log.e("AstroPhotoFeedback", "Vibration unavailable", error)
         }
@@ -3937,7 +3937,7 @@ private fun notifySeriesFeedback(
                 240L
             )
         }.onSuccess {
-            Log.d("AstroPhotoFeedback", "Series tone played")
+            Log.d("AstroPhotoFeedback", "Completion tone played")
         }.onFailure { error ->
             Log.e("AstroPhotoFeedback", "Tone unavailable", error)
         }

@@ -13,7 +13,7 @@ enum class AstroProcessingProfile(
         minimumFrames = 2
     ),
     DEEP_SKY(
-        title = "Улучшить фото",
+        title = "Улучшение фото",
         description = "Выравнивает звёзды, складывает JPEG-кадры и безопасно улучшает видимость неба.",
         filePrefix = "DeepSky",
         minimumFrames = 4

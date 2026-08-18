@@ -46,6 +46,8 @@ object AstroColors {
     val Error = Color(0xFFFFB4AB)
     val ErrorSurface = Color(0xFF341A1C)
     val OnError = Color(0xFF5F1412)
+    val Destructive = Color(0xFFD32F2F)
+    val OnDestructive = Color(0xFFFFFFFF)
     val TextPrimary = Color(0xFFF0F3FA)
     val TextSecondary = Color(0xFFB7C2D3)
     val Disabled = Color(0xFF737E90)

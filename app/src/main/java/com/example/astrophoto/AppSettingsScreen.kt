@@ -115,6 +115,20 @@ fun AppSettingsScreen(
             item {
                 AstroExpandableSection(title = "Настройки обработки") {
                     AstroSettingRow(
+                        title = "Звук после обработки",
+                        checked = settings.soundAfterProcessing,
+                        onCheckedChange = {
+                            onSettingsChanged(settings.copy(soundAfterProcessing = it))
+                        }
+                    )
+                    AstroSettingRow(
+                        title = "Вибрация после обработки",
+                        checked = settings.vibrationAfterProcessing,
+                        onCheckedChange = {
+                            onSettingsChanged(settings.copy(vibrationAfterProcessing = it))
+                        }
+                    )
+                    AstroSettingRow(
                         title = "Сохранять пробные кадры",
                         description = "JPEG сохраняются в Tests текущей сессии",
                         checked = settings.saveTestShots,

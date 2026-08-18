@@ -26,6 +26,8 @@ data class SavedCameraSettings(
     val panelExpanded: Boolean = true,
     val vibrationAfterSeries: Boolean = true,
     val soundAfterSeries: Boolean = true,
+    val vibrationAfterProcessing: Boolean = true,
+    val soundAfterProcessing: Boolean = true,
     val histogramEnabled: Boolean = true,
     val saveTestShots: Boolean = false,
     val jpegQuality: Int = 92,
@@ -67,6 +69,11 @@ class CameraSettingsStore(context: Context) {
             panelExpanded = preferences.getBoolean("panel_expanded", true),
             vibrationAfterSeries = preferences.getBoolean("vibration_after_series", true),
             soundAfterSeries = preferences.getBoolean("sound_after_series", true),
+            vibrationAfterProcessing = preferences.getBoolean(
+                "vibration_after_processing",
+                true
+            ),
+            soundAfterProcessing = preferences.getBoolean("sound_after_processing", true),
             histogramEnabled = preferences.getBoolean("histogram_enabled", true),
             saveTestShots = preferences.getBoolean("save_test_shots", false),
             jpegQuality = preferences.getInt("jpeg_quality", 92)
@@ -117,6 +124,8 @@ class CameraSettingsStore(context: Context) {
             .putBoolean("panel_expanded", settings.panelExpanded)
             .putBoolean("vibration_after_series", settings.vibrationAfterSeries)
             .putBoolean("sound_after_series", settings.soundAfterSeries)
+            .putBoolean("vibration_after_processing", settings.vibrationAfterProcessing)
+            .putBoolean("sound_after_processing", settings.soundAfterProcessing)
             .putBoolean("histogram_enabled", settings.histogramEnabled)
             .putBoolean("save_test_shots", settings.saveTestShots)
             .putInt(
@@ -169,6 +178,8 @@ internal fun mergeAppSettings(
     applyLongExposureToPreview = updated.applyLongExposureToPreview,
     vibrationAfterSeries = updated.vibrationAfterSeries,
     soundAfterSeries = updated.soundAfterSeries,
+    vibrationAfterProcessing = updated.vibrationAfterProcessing,
+    soundAfterProcessing = updated.soundAfterProcessing,
     histogramEnabled = updated.histogramEnabled,
     saveTestShots = updated.saveTestShots,
     jpegQuality = updated.jpegQuality,
@@ -182,7 +193,9 @@ internal fun mergeCameraSettings(
     updated: SavedCameraSettings
 ): SavedCameraSettings = updated.copy(
     themeMode = persisted.themeMode,
-    deletionProtectionEnabled = persisted.deletionProtectionEnabled
+    deletionProtectionEnabled = persisted.deletionProtectionEnabled,
+    vibrationAfterProcessing = persisted.vibrationAfterProcessing,
+    soundAfterProcessing = persisted.soundAfterProcessing
 )
 
 internal fun canonicalCaptureFormat(storedValue: String?): String =
