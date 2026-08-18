@@ -270,6 +270,31 @@ class EnhancedGlobalToneProductionTest {
     }
 
     @Test
+    fun pointwiseToneMappingGeometryChangesAreWarningsNotRejections() {
+        val warnings = enhancedGlobalToneGeometryWarnings(
+            medianWidthChange = 0.04,
+            maximumWidthChange = 0.14,
+            medianEllipticityChange = 0.06,
+            maximumEllipticityChange = 0.58
+        )
+
+        assertEquals(4, warnings.size)
+        assertTrue(warnings.all { it.endsWith("after_tone_mapping") })
+    }
+
+    @Test
+    fun productionTriesVisibleGainBeforeConservativeFallback() {
+        assertEquals(
+            listOf(0.80, 0.60, GlobalToneTransform.APPROVED_GAIN),
+            EnhancedGlobalToneProcessor.PRODUCTION_GAINS
+        )
+        assertTrue(
+            EnhancedGlobalToneProcessor.PRODUCTION_GAINS.zipWithNext()
+                .all { (stronger, weaker) -> stronger > weaker }
+        )
+    }
+
+    @Test
     fun validationFailureImmediatelyRemovesGeneratedCandidate() {
         val baselineWriter = FileBackedImageWriter(
             file = File(temporaryFolder.root, "validation-baseline.argb"),
@@ -299,7 +324,8 @@ class EnhancedGlobalToneProductionTest {
                 confirmedStars: List<DetectedStar>,
                 anchors: GlobalToneAnchors,
                 generatedScaleLimitedPixelCount: Int,
-                maximumLinearChannel: Double
+                maximumLinearChannel: Double,
+                gain: Double
             ): EnhancedGlobalToneValidation = error("simulated_validation_failure")
         }
 

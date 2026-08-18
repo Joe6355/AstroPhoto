@@ -29,7 +29,8 @@ data class EnhancedGlobalToneGeneration(
     val image: FileBackedImage,
     val anchors: GlobalToneAnchors,
     val scaleLimitedPixelCount: Int,
-    val maximumLinearChannel: Double
+    val maximumLinearChannel: Double,
+    val gain: Double = GlobalToneTransform.APPROVED_GAIN
 )
 
 data class EnhancedGlobalToneValidationMetrics(
@@ -65,10 +66,11 @@ data class EnhancedGlobalToneValidationMetrics(
     val scaleLimitedSkyPixelCount: Int,
     val scaleLimitedHighlightPixelCount: Int,
     val scaleLimitedStarWindowPixelCount: Int,
-    val maximumLinearChannel: Double
+    val maximumLinearChannel: Double,
+    val appliedGain: Double = GlobalToneTransform.APPROVED_GAIN
 ) {
     fun asReportMetrics(): Map<String, Float> = linkedMapOf(
-        "gain" to GlobalToneTransform.APPROVED_GAIN.toFloat(),
+        "gain" to appliedGain.finiteFloat(),
         "evaluatedStarCount" to evaluatedStarCount.toFloat(),
         "fixedSupportEvaluatedStarCount" to evaluatedStarCount.toFloat(),
         "starContrastMedianRatio" to confirmedStarContrastMedianRatio.finiteFloat(),
@@ -118,6 +120,26 @@ data class EnhancedGlobalToneValidation(
     val metrics: EnhancedGlobalToneValidationMetrics
 )
 
+internal fun enhancedGlobalToneGeometryWarnings(
+    medianWidthChange: Double,
+    maximumWidthChange: Double,
+    medianEllipticityChange: Double,
+    maximumEllipticityChange: Double
+): List<String> = buildList {
+    if (medianWidthChange > 0.03) {
+        add("median_star_width_changed_after_tone_mapping")
+    }
+    if (maximumWidthChange > 0.05) {
+        add("maximum_star_width_changed_after_tone_mapping")
+    }
+    if (medianEllipticityChange > 0.03) {
+        add("median_star_ellipticity_changed_after_tone_mapping")
+    }
+    if (maximumEllipticityChange > 0.05) {
+        add("maximum_star_ellipticity_changed_after_tone_mapping")
+    }
+}
+
 data class EnhancedGlobalToneCandidate(
     val generation: EnhancedGlobalToneGeneration,
     val validation: EnhancedGlobalToneValidation,
@@ -161,7 +183,8 @@ class FileBackedGlobalToneTransformer(
             image = writer.finish(),
             anchors = anchors,
             scaleLimitedPixelCount = scaleLimitedPixelCount,
-            maximumLinearChannel = maximumLinearChannel
+            maximumLinearChannel = maximumLinearChannel,
+            gain = gain
         )
     }
 }
@@ -175,7 +198,8 @@ class EnhancedGlobalToneProcessor(
         baseline: FileBackedImage,
         effectiveSkyAlpha: FileBackedFloatPlane,
         confirmedStars: List<DetectedStar>,
-        store: ResultCandidateStore
+        store: ResultCandidateStore,
+        gain: Double = GlobalToneTransform.APPROVED_GAIN
     ): EnhancedGlobalToneCandidate {
         require(baseline.width == effectiveSkyAlpha.width && baseline.height == effectiveSkyAlpha.height)
         val baselineHashBefore = fileBackedPixelHash(baseline)
@@ -202,7 +226,8 @@ class EnhancedGlobalToneProcessor(
             transformer.transform(
                 baseline = baseline,
                 writer = writer,
-                anchors = anchors
+                anchors = anchors,
+                gain = gain
             )
         } catch (error: Throwable) {
             runCatching { writer.close() }
@@ -218,7 +243,8 @@ class EnhancedGlobalToneProcessor(
                 confirmedStars = confirmedStars,
                 anchors = anchors,
                 generatedScaleLimitedPixelCount = generation.scaleLimitedPixelCount,
-                maximumLinearChannel = generation.maximumLinearChannel
+                maximumLinearChannel = generation.maximumLinearChannel,
+                gain = generation.gain
             )
             val validation = if (baselineHashBefore == baselineHashAfter) {
                 measured
@@ -241,6 +267,64 @@ class EnhancedGlobalToneProcessor(
             throw error
         }
     }
+
+    fun createStrongestAcceptedCandidate(
+        baseline: FileBackedImage,
+        effectiveSkyAlpha: FileBackedFloatPlane,
+        confirmedStars: List<DetectedStar>,
+        store: ResultCandidateStore,
+        gains: List<Double> = PRODUCTION_GAINS
+    ): EnhancedGlobalToneCandidate {
+        require(gains.isNotEmpty())
+        var lastRejected: EnhancedGlobalToneCandidate? = null
+        val rejectedAttemptWarnings = mutableListOf<String>()
+        try {
+            gains.forEach { gain ->
+                val candidate = createCandidate(
+                    baseline = baseline,
+                    effectiveSkyAlpha = effectiveSkyAlpha,
+                    confirmedStars = confirmedStars,
+                    store = store,
+                    gain = gain
+                )
+                if (candidate.validation.accepted) {
+                    lastRejected?.generation?.image?.let(store::deleteTemporary)
+                    return candidate.copy(
+                        validation = candidate.validation.copy(
+                            warnings = (
+                                candidate.validation.warnings + rejectedAttemptWarnings
+                                ).distinct()
+                        )
+                    )
+                }
+                rejectedAttemptWarnings += "stronger_gain_${gain}_rejected:" +
+                    candidate.validation.hardFailureReasons.joinToString("|")
+                lastRejected?.generation?.image?.let(store::deleteTemporary)
+                lastRejected = candidate
+            }
+            val rejected = checkNotNull(lastRejected)
+            return rejected.copy(
+                validation = rejected.validation.copy(
+                    warnings = (
+                        rejected.validation.warnings + rejectedAttemptWarnings.dropLast(1)
+                        ).distinct()
+                )
+            )
+        } catch (error: Throwable) {
+            lastRejected?.generation?.image?.let { image ->
+                runCatching { store.deleteTemporary(image) }
+            }
+            throw error
+        }
+    }
+
+    companion object {
+        internal val PRODUCTION_GAINS = listOf(
+            0.80,
+            0.60,
+            GlobalToneTransform.APPROVED_GAIN
+        )
+    }
 }
 
 open class EnhancedGlobalToneValidator(
@@ -255,7 +339,8 @@ open class EnhancedGlobalToneValidator(
         confirmedStars: List<DetectedStar>,
         anchors: GlobalToneAnchors,
         generatedScaleLimitedPixelCount: Int,
-        maximumLinearChannel: Double
+        maximumLinearChannel: Double,
+        gain: Double = GlobalToneTransform.APPROVED_GAIN
     ): EnhancedGlobalToneValidation {
         require(baseline.width == candidate.width && baseline.height == candidate.height)
         require(baseline.width == effectiveSkyAlpha.width && baseline.height == effectiveSkyAlpha.height)
@@ -273,6 +358,7 @@ open class EnhancedGlobalToneValidator(
                         anchors = anchors,
                         generatedScaleLimitedPixelCount = generatedScaleLimitedPixelCount,
                         maximumLinearChannel = maximumLinearChannel,
+                        gain = gain,
                         baselineQuality = baselineQuality,
                         candidateQuality = candidateQuality,
                         newLongLineComponents = lineArtifacts.metrics.newLongLineComponents,
@@ -294,6 +380,7 @@ open class EnhancedGlobalToneValidator(
         anchors: GlobalToneAnchors,
         generatedScaleLimitedPixelCount: Int,
         maximumLinearChannel: Double,
+        gain: Double,
         baselineQuality: ResultQualityMetrics,
         candidateQuality: ResultQualityMetrics,
         newLongLineComponents: Int,
@@ -339,7 +426,8 @@ open class EnhancedGlobalToneValidator(
             candidate,
             alpha,
             fixedStarIndices,
-            anchors
+            anchors,
+            gain
         )
         val colorPatches = strongColorPatchMetrics(
             baseline,
@@ -349,7 +437,8 @@ open class EnhancedGlobalToneValidator(
         )
         val slope = transform.slopeAt(
             baselineQuality.skyMedian.toDouble(),
-            anchors
+            anchors,
+            gain
         ).coerceAtLeast(MIN_NORMALIZATION_SLOPE)
         val normalizedSkyMadRatio = normalizedRatio(
             candidateQuality.skyMad.toDouble(),
@@ -376,18 +465,6 @@ open class EnhancedGlobalToneValidator(
             }
             if (lostStars > 0) add("confirmed_star_lost")
             if (weakenedStars > 0) add("confirmed_star_weakened")
-            if (medianWidthChange > MAX_MEDIAN_GEOMETRY_CHANGE) {
-                add("median_star_width_changed_over_3_percent")
-            }
-            if (maximumWidthChange > MAX_GEOMETRY_CHANGE) {
-                add("maximum_star_width_changed_over_5_percent")
-            }
-            if (medianEllipticityChange > MAX_MEDIAN_GEOMETRY_CHANGE) {
-                add("median_star_ellipticity_changed_over_3_percent")
-            }
-            if (maximumEllipticityChange > MAX_GEOMETRY_CHANGE) {
-                add("maximum_star_ellipticity_changed_over_5_percent")
-            }
             if (
                 imageMetrics.highlightClippingIncreasePercentagePoints >
                 MATERIAL_CLIPPING_INCREASE_PERCENT &&
@@ -421,6 +498,14 @@ open class EnhancedGlobalToneValidator(
             addAll(lineHardFailures)
         }.distinct()
         val warnings = buildList {
+            addAll(
+                enhancedGlobalToneGeometryWarnings(
+                    medianWidthChange,
+                    maximumWidthChange,
+                    medianEllipticityChange,
+                    maximumEllipticityChange
+                )
+            )
             if (normalizedSkyMadRatio > 1.0) add("sky_mad_increased_visual_finish")
             if (normalizedBandingRatio > 1.0) add("banding_increased_visual_finish")
             if (normalizedGradientRatio > 1.0) add("gradient_increased_visual_finish")
@@ -467,7 +552,8 @@ open class EnhancedGlobalToneValidator(
             scaleLimitedSkyPixelCount = imageMetrics.scaleLimitedSkyPixelCount,
             scaleLimitedHighlightPixelCount = imageMetrics.scaleLimitedHighlightPixelCount,
             scaleLimitedStarWindowPixelCount = imageMetrics.scaleLimitedStarWindowPixelCount,
-            maximumLinearChannel = maximumLinearChannel
+            maximumLinearChannel = maximumLinearChannel,
+            appliedGain = gain
         )
         return EnhancedGlobalToneValidation(
             accepted = hardFailures.isEmpty(),
@@ -496,7 +582,8 @@ open class EnhancedGlobalToneValidator(
         candidate: ArgbPixelSource,
         alpha: AlphaPixelSource,
         fixedStarIndices: Set<Int>,
-        anchors: GlobalToneAnchors
+        anchors: GlobalToneAnchors,
+        gain: Double
     ): ImageMetrics {
         var fixedHighlights = 0
         var baselineClipped = 0
@@ -543,7 +630,7 @@ open class EnhancedGlobalToneValidator(
                 if (maximumEncodedChannel(baselineColor) >= 255) baselineClipped++
                 if (maximumEncodedChannel(candidateColor) >= 255) candidateClipped++
             }
-            if (transform.transformArgb(baselineColor, anchors).scaleLimited) {
+            if (transform.transformArgb(baselineColor, anchors, gain).scaleLimited) {
                 recomputedLimited++
                 if (alphaValue >= SKY_ALPHA_THRESHOLD) skyLimited++
                 if (highlight) highlightLimited++
@@ -670,8 +757,6 @@ open class EnhancedGlobalToneValidator(
         private const val MIN_MEASURABLE_STAR_WIDTH = 1e-6
         private const val MIN_ELLIPTICITY_REFERENCE = 0.05
         private const val MIN_CONFIRMED_STAR_CONTRAST_RATIO = 0.999
-        private const val MAX_MEDIAN_GEOMETRY_CHANGE = 0.03
-        private const val MAX_GEOMETRY_CHANGE = 0.05
         private const val SKY_ALPHA_THRESHOLD = 0.98f
         private const val FOREGROUND_ALPHA_THRESHOLD = 0.001f
         private const val HIGHLIGHT_ENCODED_THRESHOLD = 220

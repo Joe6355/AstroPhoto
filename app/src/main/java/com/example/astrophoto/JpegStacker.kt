@@ -102,7 +102,6 @@ import com.example.astrophoto.processing.jpeg.v2.diagnostics.artifactSessionId
 import com.example.astrophoto.processing.jpeg.v2.diagnostics.completeJournalWithSingleRetry
 import com.example.astrophoto.processing.jpeg.v2.enhancement.EnhancedAncillaryOutcome
 import com.example.astrophoto.processing.jpeg.v2.enhancement.EnhancedGlobalToneProcessor
-import com.example.astrophoto.processing.jpeg.v2.enhancement.GlobalToneTransform
 import com.example.astrophoto.processing.jpeg.v2.enhancement.fileBackedPixelHash
 import com.example.astrophoto.processing.jpeg.v2.enhancement.publishOptionalEnhanced
 import com.example.astrophoto.processing.jpeg.v2.integration.FrameWeightCalculator
@@ -298,6 +297,12 @@ data class JpegStackResult(
     val postProcessingExecuted: Boolean = false,
     val manualAlignmentSummary: String? = null
 )
+
+internal fun selectUserFacingProfileOutput(
+    safeBase: SavedProcessedImage,
+    enhanced: SavedProcessedImage?
+): Pair<SavedProcessedImage, String?> =
+    if (enhanced != null) enhanced to safeBase.fileName else safeBase to null
 
 class JpegStacker internal constructor(
     private val context: Context,
@@ -2418,7 +2423,7 @@ class JpegStacker internal constructor(
                 }
                 val saved = savedArtifacts.saved
                 val fileName = saved.fileName
-                val enhancedFileName = savedArtifacts.enhancedFileName
+                val additionalImageFileName = savedArtifacts.additionalImageFileName
                 processingReport = savedArtifacts.processingReport
                 reportJson = savedArtifacts.reportJson
 
@@ -2474,7 +2479,7 @@ class JpegStacker internal constructor(
                         emptyList()
                     }
                 }
-                val additionalFiles = reportFiles + listOfNotNull(enhancedFileName)
+                val additionalFiles = reportFiles + listOfNotNull(additionalImageFileName)
                 val publishedReport = when (reportOutcome) {
                     is ReportWriteOutcome.Written -> reportOutcome.value
                     is ReportWriteOutcome.Failed -> null
@@ -2755,7 +2760,7 @@ class JpegStacker internal constructor(
 
     private data class SavedProfileArtifacts(
         val saved: SavedProcessedImage,
-        val enhancedFileName: String?,
+        val additionalImageFileName: String?,
         val processingReport: ProcessingReport,
         val reportJson: String,
         val primaryFallbackUsed: Boolean = false,
@@ -2800,7 +2805,6 @@ class JpegStacker internal constructor(
             session = session,
             warnings = warnings
         )
-        val saved = primary.saved
         pipelineTiming.record(
             "png_writing",
             (System.nanoTime() - pngWritingStarted) / 1_000_000L
@@ -2826,6 +2830,13 @@ class JpegStacker internal constructor(
             )
         }
         warnings += enhanced.processingWarnings
+        val (userFacingSaved, additionalImageFileName) = selectUserFacingProfileOutput(
+            safeBase = primary.saved,
+            enhanced = enhanced.saved
+        )
+        if (enhanced.saved != null) {
+            warnings += "Enhanced выбран как основной результат; чистый стек сохранён отдельно"
+        }
         val effectiveReport = if (primary.fallbackUsed) {
             val cleanStage = processingReport.sensorDefectFiltering.referenceStarRetentionStages
                 .lastOrNull { it.stage == "composed_clean_result" }
@@ -2850,7 +2861,11 @@ class JpegStacker internal constructor(
         } else {
             processingReport
         }
-        val publishedOutputHash = primary.publishedOutputHash
+        val publishedOutputHash = if (enhanced.saved != null) {
+            publishedOutputHash(userFacingSaved, warnings)
+        } else {
+            primary.publishedOutputHash
+        }
         val selectedRetention = effectiveReport.sensorDefectFiltering.referenceStarRetentionStages
             .lastOrNull { it.stage == "selected_candidate" }
         val outputRetentionStages = buildList {
@@ -2862,7 +2877,7 @@ class JpegStacker internal constructor(
                         measurementBasis = "lossless_png_candidate_lineage"
                     )
                 )
-                if (publishedOutputHash != null) {
+                if (publishedOutputHash != null && enhanced.saved == null) {
                     add(
                         selected.copy(
                             stage = "published_output",
@@ -2873,7 +2888,7 @@ class JpegStacker internal constructor(
             }
         }
         val updatedReport = effectiveReport.copy(
-            outputPngDisplayName = saved.fileName,
+            outputPngDisplayName = userFacingSaved.fileName,
             sensorDefectFiltering = effectiveReport.sensorDefectFiltering.copy(
                 publishedOutputHash = publishedOutputHash,
                 referenceStarRetentionStages = outputRetentionStages
@@ -2885,11 +2900,7 @@ class JpegStacker internal constructor(
             enhancedCreated = enhanced.fileName != null,
             enhancedValidationStatus = enhanced.status,
             enhancedOutputFileName = enhanced.fileName,
-            enhancedGain = if (enhanced.attempted) {
-                GlobalToneTransform.APPROVED_GAIN.toFloat()
-            } else {
-                0f
-            },
+            enhancedGain = enhanced.metrics["gain"] ?: 0f,
             enhancedRejectionReasons = enhanced.reasons,
             enhancedValidationWarnings = enhanced.validationWarnings,
             enhancedValidationMetrics = enhanced.metrics
@@ -2905,8 +2916,8 @@ class JpegStacker internal constructor(
         )
         warnings += bookkeeping.report.warnings
         return SavedProfileArtifacts(
-            saved = saved,
-            enhancedFileName = enhanced.fileName,
+            saved = userFacingSaved,
+            additionalImageFileName = additionalImageFileName,
             processingReport = bookkeeping.report,
             reportJson = bookkeeping.reportJson,
             primaryFallbackUsed = primary.fallbackUsed,
@@ -3000,12 +3011,14 @@ class JpegStacker internal constructor(
     private data class AncillaryEnhancedPublication(
         val attempted: Boolean,
         val status: String,
-        val fileName: String? = null,
+        val saved: SavedProcessedImage? = null,
         val reasons: List<String> = emptyList(),
         val validationWarnings: List<String> = emptyList(),
         val metrics: Map<String, Float> = emptyMap(),
         val processingWarnings: List<String> = emptyList()
-    )
+    ) {
+        val fileName: String? get() = saved?.fileName
+    }
 
     private suspend fun publishAncillaryEnhanced(
         selected: StoredResultCandidate,
@@ -3025,7 +3038,7 @@ class JpegStacker internal constructor(
         val started = System.nanoTime()
         val outcome = publishOptionalEnhanced(
             createCandidate = {
-                EnhancedGlobalToneProcessor().createCandidate(
+                EnhancedGlobalToneProcessor().createStrongestAcceptedCandidate(
                     baseline = selected.image,
                     effectiveSkyAlpha = effectiveSkyAlpha,
                     confirmedStars = confirmedStars,
@@ -3053,7 +3066,7 @@ class JpegStacker internal constructor(
             is EnhancedAncillaryOutcome.Saved -> AncillaryEnhancedPublication(
                 attempted = true,
                 status = "SAVED",
-                fileName = outcome.result.fileName,
+                saved = outcome.result,
                 validationWarnings = outcome.candidate.validation.warnings,
                 metrics = outcome.candidate.validation.metrics.asReportMetrics()
             )

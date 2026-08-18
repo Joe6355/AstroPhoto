@@ -118,6 +118,28 @@ class ManualControlsAndEditorPresetsTest {
     }
 
     @Test
+    fun acceptedEnhancedResultIsOpenedWhileSafeBaseRemainsAvailable() {
+        val base = SavedProcessedImage(
+            fileName = "RecoveredStars_1.png",
+            displayPath = "Processed/RecoveredStars_1.png",
+            contentUri = null,
+            filePath = "C:/RecoveredStars_1.png"
+        )
+        val enhanced = SavedProcessedImage(
+            fileName = "Enhanced_1.png",
+            displayPath = "Processed/Enhanced_1.png",
+            contentUri = null,
+            filePath = "C:/Enhanced_1.png"
+        )
+
+        val selected = selectUserFacingProfileOutput(base, enhanced)
+
+        assertEquals(enhanced, selected.first)
+        assertEquals(base.fileName, selected.second)
+        assertEquals(base to null, selectUserFacingProfileOutput(base, null))
+    }
+
+    @Test
     fun visibleStarPresetsIncludeRealContrastAndSharpness() {
         val visible = EDITOR_PRESETS.first { it.name == "Звёзды — заметно" }.adjustments
         val maximum = EDITOR_PRESETS.first { it.name == "Звёзды — максимум" }.adjustments
