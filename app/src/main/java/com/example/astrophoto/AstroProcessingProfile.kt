@@ -13,8 +13,8 @@ enum class AstroProcessingProfile(
         minimumFrames = 2
     ),
     DEEP_SKY(
-        title = "Чистое небо",
-        description = "Для поля, штатива и тёмного неба. Мягко вытягивает слабые звёзды.",
+        title = "Улучшить фото",
+        description = "Выравнивает звёзды, складывает JPEG-кадры и безопасно улучшает видимость неба.",
         filePrefix = "DeepSky",
         minimumFrames = 4
     ),
@@ -49,3 +49,11 @@ enum class AstroProcessingProfile(
         minimumFrames = 6
     )
 }
+
+/**
+ * Профили, подтверждённые реальными прогонами и доступные пользователю.
+ *
+ * Остальные значения enum сохраняются для чтения старых результатов и отчётов.
+ */
+internal val USER_VISIBLE_PROCESSING_PROFILES: List<AstroProcessingProfile> =
+    listOf(AstroProcessingProfile.DEEP_SKY)

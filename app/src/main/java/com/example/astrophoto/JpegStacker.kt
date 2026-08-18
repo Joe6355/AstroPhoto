@@ -7098,10 +7098,10 @@ fun JpegStackingBlock(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                 Text(
-                    text = "Пресеты обработки",
+                    text = "Автоматическая обработка",
                     style = MaterialTheme.typography.titleMedium
                 )
-                AstroProcessingProfile.entries.filterNot { it == AstroProcessingProfile.NORMAL }
+                USER_VISIBLE_PROCESSING_PROFILES
                     .forEach { profile ->
                     val unavailableReason = processingProfileUnavailableReason(
                         profile = profile,
