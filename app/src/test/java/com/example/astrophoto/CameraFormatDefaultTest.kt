@@ -11,6 +11,7 @@ class CameraFormatDefaultTest {
         assertEquals("JPEG", defaults.singleFormat)
         assertEquals("JPEG", defaults.seriesFormat)
         assertEquals("JPEG", defaults.darkFramesFormat)
+        assertEquals("SERIES", defaults.captureMode)
     }
 
     @Test

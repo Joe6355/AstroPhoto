@@ -305,11 +305,6 @@ private fun CameraPanelHeader(
                 maxLines = 1
             )
         }
-        Text(
-            text = if (expanded) "Свернуть" else "Развернуть",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.primary
-        )
     }
 }
 

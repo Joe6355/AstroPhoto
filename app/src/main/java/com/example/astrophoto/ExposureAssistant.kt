@@ -49,6 +49,12 @@ data class ExposureRecommendation(
             formatAssistantFocus(focusMode)
 }
 
+internal fun ExposureRecommendation.forJpegOnlyUi(): ExposureRecommendation = copy(
+    format = AssistantCaptureFormat.JPEG,
+    frameCount = frameCount.coerceAtLeast(1),
+    explanation = explanation.replace("RAW/DNG", "JPEG")
+)
+
 fun buildExposureRecommendation(
     goal: ShootingGoal,
     testShot: TestShotResult?,

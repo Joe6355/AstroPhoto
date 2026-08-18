@@ -18,7 +18,7 @@ data class SavedCameraSettings(
     val seriesFormat: String = "JPEG",
     val darkFramesFormat: String = "JPEG",
     val darkFramesCount: Int = 3,
-    val captureMode: String = "SINGLE",
+    val captureMode: String = "SERIES",
     val seriesFrameCount: Int = 3,
     val seriesDelaySeconds: Int = 0,
     val startTimerSeconds: Int = 0,
@@ -61,7 +61,7 @@ class CameraSettingsStore(context: Context) {
             ),
             darkFramesCount = preferences.getInt("dark_frames_count", 3)
                 .takeIf { it in DARK_FRAME_COUNT_VALUES } ?: 3,
-            captureMode = preferences.getString("capture_mode", "SINGLE") ?: "SINGLE",
+            captureMode = preferences.getString("capture_mode", "SERIES") ?: "SERIES",
             seriesFrameCount = preferences.getInt("series_frame_count", 3),
             seriesDelaySeconds = preferences.getInt("series_delay_seconds", 0),
             startTimerSeconds = preferences.getInt("start_timer_seconds", 0),

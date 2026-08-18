@@ -734,24 +734,9 @@ private fun CameraScreen(
         mutableStateOf(!savedSettings.fastPreviewEnabled)
     }
     var jpegQuality by remember { mutableStateOf(savedSettings.jpegQuality) }
-    var singleFormat by remember {
-        mutableStateOf(
-            runCatching { UiCaptureType.valueOf(savedSettings.singleFormat) }
-                .getOrDefault(UiCaptureType.JPEG)
-        )
-    }
-    var seriesFormat by remember {
-        mutableStateOf(
-            runCatching { UiCaptureType.valueOf(savedSettings.seriesFormat) }
-                .getOrDefault(UiCaptureType.JPEG)
-        )
-    }
-    var captureMode by remember {
-        mutableStateOf(
-            runCatching { UiCaptureMode.valueOf(savedSettings.captureMode) }
-                .getOrDefault(UiCaptureMode.SINGLE)
-        )
-    }
+    var singleFormat by remember { mutableStateOf(UiCaptureType.JPEG) }
+    var seriesFormat by remember { mutableStateOf(UiCaptureType.JPEG) }
+    var captureMode by remember { mutableStateOf(UiCaptureMode.SERIES) }
     var seriesFrameCount by remember { mutableStateOf(savedSettings.seriesFrameCount) }
     var seriesDelaySeconds by remember { mutableStateOf(savedSettings.seriesDelaySeconds) }
     var startTimerSeconds by remember { mutableStateOf(savedSettings.startTimerSeconds) }
@@ -800,12 +785,7 @@ private fun CameraScreen(
     var seriesAction by remember { mutableStateOf("") }
     var seriesMessage by remember { mutableStateOf<String?>(null) }
     var seriesJob by remember { mutableStateOf<Job?>(null) }
-    var darkFramesFormat by remember {
-        mutableStateOf(
-            runCatching { UiCaptureType.valueOf(savedSettings.darkFramesFormat) }
-                .getOrDefault(UiCaptureType.JPEG)
-        )
-    }
+    var darkFramesFormat by remember { mutableStateOf(UiCaptureType.JPEG) }
     var darkFramesCount by remember { mutableStateOf(savedSettings.darkFramesCount) }
     var darkFramesRunning by remember { mutableStateOf(false) }
     var darkFramesStopRequested by remember { mutableStateOf(false) }
@@ -855,14 +835,10 @@ private fun CameraScreen(
         if (adaptedPreset.focusMode == CameraFocusMode.INFINITY) {
             focusDistance = 0f
         }
-        singleFormat = adaptedPreset.format
-        seriesFormat = adaptedPreset.format
-        captureMode = if (adaptedPreset.frameCount > 1) {
-            UiCaptureMode.SERIES
-        } else {
-            UiCaptureMode.SINGLE
-        }
-        seriesFrameCount = adaptedPreset.frameCount.coerceAtLeast(3)
+        singleFormat = UiCaptureType.JPEG
+        seriesFormat = UiCaptureType.JPEG
+        captureMode = UiCaptureMode.SERIES
+        seriesFrameCount = adaptedPreset.frameCount.coerceAtLeast(1)
         seriesDelaySeconds = adaptedPreset.delaySeconds
         startTimerSeconds = 0
         astroModeEnabled = false
@@ -1120,7 +1096,7 @@ private fun CameraScreen(
         if (seriesFormat == UiCaptureType.RAW &&
             capabilities?.supportsRawCapture != true
         ) {
-            seriesMessage = "RAW/DNG-серия недоступна для этой камеры"
+            seriesMessage = "Выбранный формат серии недоступен для этой камеры"
             return
         }
 
@@ -1244,7 +1220,7 @@ private fun CameraScreen(
         if (darkFramesFormat == UiCaptureType.RAW &&
             capabilities?.supportsRawCapture != true
         ) {
-            darkFramesMessage = "RAW/DNG недоступен для этой камеры"
+            darkFramesMessage = "Выбранный формат Dark Frames недоступен"
             return
         }
 
@@ -1465,31 +1441,18 @@ private fun CameraScreen(
         }
     }
 
-    fun applyExposureRecommendation(
-        recommendation: ExposureRecommendation,
-        forceSeries: Boolean
-    ) {
+    fun applyExposureRecommendation(recommendation: ExposureRecommendation) {
         iso = recommendation.iso
         exposureTimeNs = recommendation.exposureTimeNs
         focusMode = recommendation.focusMode
         if (recommendation.focusMode == CameraFocusMode.INFINITY) {
             focusDistance = 0f
         }
-        val recommendedFormat =
-            if (recommendation.format == AssistantCaptureFormat.RAW) {
-                UiCaptureType.RAW
-            } else {
-                UiCaptureType.JPEG
-            }
-        singleFormat = recommendedFormat
-        seriesFormat = recommendedFormat
-        seriesFrameCount = recommendation.frameCount.coerceAtLeast(3)
+        singleFormat = UiCaptureType.JPEG
+        seriesFormat = UiCaptureType.JPEG
+        seriesFrameCount = recommendation.frameCount.coerceAtLeast(1)
         startTimerSeconds = recommendation.timerSeconds
-        captureMode = if (forceSeries || recommendation.frameCount > 1) {
-            UiCaptureMode.SERIES
-        } else {
-            UiCaptureMode.SINGLE
-        }
+        captureMode = UiCaptureMode.SERIES
         testShotStatus = "Рекомендация применена"
     }
 
@@ -1713,7 +1676,7 @@ private fun CameraScreen(
             capabilities = it,
             currentIso = iso,
             currentExposureTimeNs = exposureTimeNs
-        )
+        )?.forJpegOnlyUi()
     }
 
     LaunchedEffect(tapFocusEvent) {
@@ -1839,11 +1802,7 @@ private fun CameraScreen(
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = if (captureMode == UiCaptureMode.SERIES) {
-                            "Серия"
-                        } else {
-                            "Одиночный кадр"
-                        },
+                        text = "Серия",
                         style = MaterialTheme.typography.titleMedium,
                         color = Color.White
                     )
@@ -1901,13 +1860,8 @@ private fun CameraScreen(
             )
         }
 
-        val selectedPanelFormat = if (captureMode == UiCaptureMode.SERIES) {
-            seriesFormat
-        } else {
-            singleFormat
-        }
         val panelSummary = buildString {
-            append(selectedPanelFormat.name)
+            append(UiCaptureType.JPEG.name)
             append(" · ")
             append(formatExposure(exposureTimeNs))
             append(" · ISO ")
@@ -1923,9 +1877,6 @@ private fun CameraScreen(
             collapsedContent = {
                 CompactCapturePanel(
                     capabilities = capabilities,
-                    captureMode = captureMode,
-                    singleFormat = singleFormat,
-                    seriesFormat = seriesFormat,
                     isCapturing = isCapturing,
                     captureStatus = captureStatus,
                     seriesRunning = seriesRunning,
@@ -1942,7 +1893,6 @@ private fun CameraScreen(
                     darkFramesMessage = darkFramesMessage,
                     testShotRunning = testShotRunning,
                     testShotStatus = testShotStatus,
-                    onSingleCapture = { requestCapture(singleFormat) },
                     onSeriesStart = ::requestSeriesStart,
                     onSeriesStop = ::requestSeriesStop,
                     onDarkFramesStop = ::requestDarkFramesStop,
@@ -1958,11 +1908,7 @@ private fun CameraScreen(
                     focusMode = focusMode,
                     applyLongExposureToPreview = applyLongExposureToPreview,
                     isCapturing = isCapturing,
-                    captureStatus = captureStatus,
                     exposureWarning = exposureWarning,
-                    captureMode = captureMode,
-                    singleFormat = singleFormat,
-                    seriesFormat = seriesFormat,
                     seriesFrameCount = seriesFrameCount,
                     seriesDelaySeconds = seriesDelaySeconds,
                     startTimerSeconds = startTimerSeconds,
@@ -1985,7 +1931,6 @@ private fun CameraScreen(
                     seriesCompletedFrames = seriesCompletedFrames,
                     seriesAction = seriesAction,
                     seriesMessage = seriesMessage,
-                    darkFramesFormat = darkFramesFormat,
                     darkFramesCount = darkFramesCount,
                     darkFramesRunning = darkFramesRunning,
                     darkFramesCurrent = darkFramesCurrent,
@@ -2023,13 +1968,13 @@ private fun CameraScreen(
                     },
                     onApplyExposureRecommendation = {
                         exposureRecommendation?.let {
-                            applyExposureRecommendation(it, forceSeries = false)
+                            applyExposureRecommendation(it)
                         }
                     },
                     onAssistantTestShot = ::requestTestShot,
                     onAssistantStartSeries = {
                         exposureRecommendation?.let {
-                            applyExposureRecommendation(it, forceSeries = true)
+                            applyExposureRecommendation(it)
                             requestSeriesStart()
                         }
                     },
@@ -2047,17 +1992,11 @@ private fun CameraScreen(
                         currentSession = null
                         saveLocationStatus = "Сессия завершена"
                     },
-                    onCaptureModeChanged = { captureMode = it },
-                    onSingleFormatChanged = { singleFormat = it },
-                    onJpegCapture = { requestCapture(UiCaptureType.JPEG) },
-                    onRawCapture = { requestCapture(UiCaptureType.RAW) },
-                    onSeriesFormatChanged = { seriesFormat = it },
                     onSeriesFrameCountChanged = { seriesFrameCount = it },
                     onSeriesDelayChanged = { seriesDelaySeconds = it },
                     onStartTimerChanged = { startTimerSeconds = it },
                     onSeriesStart = ::requestSeriesStart,
                     onSeriesStop = ::requestSeriesStop,
-                    onDarkFramesFormatChanged = { darkFramesFormat = it },
                     onDarkFramesCountChanged = { darkFramesCount = it },
                     onDarkFramesStart = ::requestDarkFramesStart,
                     onDarkFramesStop = ::requestDarkFramesStop,
@@ -2290,11 +2229,7 @@ private fun ManualControlsPanel(
     focusMode: CameraFocusMode,
     applyLongExposureToPreview: Boolean,
     isCapturing: Boolean,
-    captureStatus: String?,
     exposureWarning: String?,
-    captureMode: UiCaptureMode,
-    singleFormat: UiCaptureType,
-    seriesFormat: UiCaptureType,
     seriesFrameCount: Int,
     seriesDelaySeconds: Int,
     startTimerSeconds: Int,
@@ -2317,7 +2252,6 @@ private fun ManualControlsPanel(
     seriesCompletedFrames: Int,
     seriesAction: String,
     seriesMessage: String?,
-    darkFramesFormat: UiCaptureType,
     darkFramesCount: Int,
     darkFramesRunning: Boolean,
     darkFramesCurrent: Int,
@@ -2343,17 +2277,11 @@ private fun ManualControlsPanel(
     onPresetSelected: (CameraPreset) -> Unit,
     onNewSession: () -> Unit,
     onFinishSession: () -> Unit,
-    onCaptureModeChanged: (UiCaptureMode) -> Unit,
-    onSingleFormatChanged: (UiCaptureType) -> Unit,
-    onJpegCapture: () -> Unit,
-    onRawCapture: () -> Unit,
-    onSeriesFormatChanged: (UiCaptureType) -> Unit,
     onSeriesFrameCountChanged: (Int) -> Unit,
     onSeriesDelayChanged: (Int) -> Unit,
     onStartTimerChanged: (Int) -> Unit,
     onSeriesStart: () -> Unit,
     onSeriesStop: () -> Unit,
-    onDarkFramesFormatChanged: (UiCaptureType) -> Unit,
     onDarkFramesCountChanged: (Int) -> Unit,
     onDarkFramesStart: () -> Unit,
     onDarkFramesStop: () -> Unit,
@@ -2396,9 +2324,6 @@ private fun ManualControlsPanel(
             }
             if (!capabilities.supportsJpegCapture) {
                 add("JPEG-съёмка не поддерживается этой камерой.")
-            }
-            if (!capabilities.supportsRawCapture) {
-                add("RAW_SENSOR не поддерживается этой камерой.")
             }
         }
     }
@@ -2633,48 +2558,6 @@ private fun ManualControlsPanel(
             }
             }
 
-            CameraControlSectionTitle("Формат и съёмка")
-            Text("Режим съёмки", style = MaterialTheme.typography.titleMedium)
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                FilterChip(
-                    selected = captureMode == UiCaptureMode.SINGLE,
-                    onClick = { onCaptureModeChanged(UiCaptureMode.SINGLE) },
-                    label = { Text("Одиночный") },
-                    enabled = !controlsLocked
-                )
-                FilterChip(
-                    selected = captureMode == UiCaptureMode.SERIES,
-                    onClick = { onCaptureModeChanged(UiCaptureMode.SERIES) },
-                    label = { Text("Серия") },
-                    enabled = !controlsLocked
-                )
-            }
-
-            ContextHelpTitle(
-                title = "Формат одиночного снимка",
-                topic = HelpTopic.RAW,
-                onHelp = { helpTopic = it },
-                modifier = Modifier.padding(top = 10.dp)
-            )
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                FilterChip(
-                    selected = singleFormat == UiCaptureType.JPEG,
-                    onClick = { onSingleFormatChanged(UiCaptureType.JPEG) },
-                    label = { Text("JPEG") },
-                    enabled = !controlsLocked && capabilities?.supportsJpegCapture == true
-                )
-                FilterChip(
-                    selected = singleFormat == UiCaptureType.RAW,
-                    onClick = { onSingleFormatChanged(UiCaptureType.RAW) },
-                    label = { Text("RAW/DNG") },
-                    enabled = !controlsLocked && capabilities?.supportsRawCapture == true
-                )
-            }
-
             warnings.forEach { warning ->
                 Text(
                     text = warning,
@@ -2693,69 +2576,7 @@ private fun ManualControlsPanel(
                 )
             }
 
-            Button(
-                onClick = onJpegCapture,
-                enabled = !isCapturing &&
-                    !controlsLocked &&
-                    capabilities?.supportsJpegCapture == true,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 56.dp)
-                    .padding(top = 14.dp)
-            ) {
-                Text("Снять JPEG")
-            }
-            Button(
-                onClick = onRawCapture,
-                enabled = !isCapturing &&
-                    !controlsLocked &&
-                    capabilities?.supportsRawCapture == true,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 56.dp)
-                    .padding(top = 8.dp)
-            ) {
-                Text("Снять RAW/DNG")
-            }
-            captureStatus?.let { status ->
-                Text(
-                    text = status,
-                    modifier = Modifier.padding(top = 8.dp),
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = if (status.startsWith("Ошибка")) {
-                        AstroColors.Error
-                    } else {
-                        AstroColors.Success
-                    }
-                )
-            }
-
             CameraControlSectionTitle("Серия")
-            Text(
-                text = "Формат серии",
-                modifier = Modifier.padding(top = 10.dp),
-                style = MaterialTheme.typography.titleMedium
-            )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                FilterChip(
-                    selected = seriesFormat == UiCaptureType.JPEG,
-                    onClick = { onSeriesFormatChanged(UiCaptureType.JPEG) },
-                    label = { Text("JPEG") },
-                    enabled = !controlsLocked && capabilities?.supportsJpegCapture == true
-                )
-                FilterChip(
-                    selected = seriesFormat == UiCaptureType.RAW,
-                    onClick = { onSeriesFormatChanged(UiCaptureType.RAW) },
-                    label = { Text("RAW/DNG") },
-                    enabled = !controlsLocked && capabilities?.supportsRawCapture == true
-                )
-            }
-
             Text(
                 text = "Количество кадров",
                 modifier = Modifier.padding(top = 10.dp),
@@ -2855,10 +2676,9 @@ private fun ManualControlsPanel(
             } else {
                 Button(
                     onClick = onSeriesStart,
-                    enabled = !isCapturing && !darkFramesRunning && when (seriesFormat) {
-                        UiCaptureType.JPEG -> capabilities?.supportsJpegCapture == true
-                        UiCaptureType.RAW -> capabilities?.supportsRawCapture == true
-                    },
+                    enabled = !isCapturing &&
+                        !darkFramesRunning &&
+                        capabilities?.supportsJpegCapture == true,
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = 56.dp)
@@ -2894,27 +2714,6 @@ private fun ManualControlsPanel(
                 style = MaterialTheme.typography.bodyMedium,
                 color = AstroColors.TextSecondary
             )
-            Text(
-                text = "Формат Dark Frames",
-                modifier = Modifier.padding(top = 10.dp),
-                style = MaterialTheme.typography.titleMedium
-            )
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                FilterChip(
-                    selected = darkFramesFormat == UiCaptureType.JPEG,
-                    onClick = { onDarkFramesFormatChanged(UiCaptureType.JPEG) },
-                    label = { Text("JPEG") },
-                    enabled = !controlsLocked && capabilities?.supportsJpegCapture == true
-                )
-                FilterChip(
-                    selected = darkFramesFormat == UiCaptureType.RAW,
-                    onClick = { onDarkFramesFormatChanged(UiCaptureType.RAW) },
-                    label = { Text("RAW/DNG") },
-                    enabled = !controlsLocked && capabilities?.supportsRawCapture == true
-                )
-            }
             Text(
                 text = "Количество Dark Frames",
                 modifier = Modifier.padding(top = 10.dp),
@@ -2967,10 +2766,9 @@ private fun ManualControlsPanel(
             } else {
                 Button(
                     onClick = onDarkFramesStart,
-                    enabled = !isCapturing && !seriesRunning && when (darkFramesFormat) {
-                        UiCaptureType.JPEG -> capabilities?.supportsJpegCapture == true
-                        UiCaptureType.RAW -> capabilities?.supportsRawCapture == true
-                    },
+                    enabled = !isCapturing &&
+                        !seriesRunning &&
+                        capabilities?.supportsJpegCapture == true,
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = 56.dp)
@@ -3058,10 +2856,14 @@ private fun ManualControlsPanel(
                     },
                     valueRange = 0f..1f,
                     enabled = manualSensorAvailable && !controlsLocked,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp)
                 )
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
@@ -3158,10 +2960,14 @@ private fun ManualControlsPanel(
                     },
                     valueRange = 0f..1f,
                     enabled = manualSensorAvailable && !controlsLocked,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp)
                 )
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
@@ -3180,7 +2986,7 @@ private fun ManualControlsPanel(
                     ?.let { sensorMaximum ->
                         Text(
                             text = "ISO выше $sensorMaximum использует " +
-                                "Camera2 post-RAW boost камеры.",
+                                "дополнительное цифровое усиление Camera2.",
                             modifier = Modifier.padding(top = 4.dp),
                             style = MaterialTheme.typography.bodySmall,
                             color = AstroColors.TextSecondary
@@ -3244,9 +3050,6 @@ private fun ManualControlsPanel(
 @Composable
 private fun CompactCapturePanel(
     capabilities: ManualCameraCapabilities?,
-    captureMode: UiCaptureMode,
-    singleFormat: UiCaptureType,
-    seriesFormat: UiCaptureType,
     seriesFrameCount: Int,
     isCapturing: Boolean,
     captureStatus: String?,
@@ -3263,21 +3066,12 @@ private fun CompactCapturePanel(
     darkFramesMessage: String?,
     testShotRunning: Boolean,
     testShotStatus: String?,
-    onSingleCapture: () -> Unit,
     onSeriesStart: () -> Unit,
     onSeriesStop: () -> Unit,
     onDarkFramesStop: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val selectedFormat = if (captureMode == UiCaptureMode.SERIES) {
-        seriesFormat
-    } else {
-        singleFormat
-    }
-    val formatAvailable = when (selectedFormat) {
-        UiCaptureType.JPEG -> capabilities?.supportsJpegCapture == true
-        UiCaptureType.RAW -> capabilities?.supportsRawCapture == true
-    }
+    val formatAvailable = capabilities?.supportsJpegCapture == true
 
     Column(
         modifier = modifier
@@ -3376,30 +3170,16 @@ private fun CompactCapturePanel(
 
                 else -> {
                     Button(
-                        onClick = if (captureMode == UiCaptureMode.SERIES) {
-                            onSeriesStart
-                        } else {
-                            onSingleCapture
-                        },
+                        onClick = onSeriesStart,
                         enabled = formatAvailable,
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 56.dp)
                             .testTag(com.example.astrophoto.ui.AstroTestTags.CameraCapture)
                     ) {
-                        Text(
-                            if (captureMode == UiCaptureMode.SERIES) {
-                                "Старт серии"
-                            } else {
-                                "Снять"
-                            }
-                        )
+                        Text("Старт серии")
                     }
-                    val status = if (captureMode == UiCaptureMode.SERIES) {
-                        darkFramesMessage ?: seriesMessage
-                    } else {
-                        darkFramesMessage ?: captureStatus
-                    }
+                    val status = darkFramesMessage ?: seriesMessage
                     status?.let {
                         Text(
                             text = it,
@@ -3451,8 +3231,7 @@ private fun PresetDialog(
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = "${if (adapted.format == UiCaptureType.RAW) "RAW/DNG" else "JPEG"}" +
-                            " • ${formatFocusMode(adapted.focusMode, 0f)}" +
+                        text = "JPEG • ${formatFocusMode(adapted.focusMode, 0f)}" +
                             " • ${adapted.frameCount} кадров" +
                             " • пауза ${adapted.delaySeconds} сек",
                         modifier = Modifier.padding(top = 4.dp)
@@ -3714,7 +3493,7 @@ private fun adaptCameraPreset(
     )
 }
 
-internal val SERIES_FRAME_COUNTS = listOf(3, 5, 10, 20, 30, 40, 50, 100)
+internal val SERIES_FRAME_COUNTS = listOf(1, 3, 5, 10, 20, 30, 40, 50, 100)
 private val DARK_FRAME_COUNTS = listOf(3, 5, 10, 20)
 private val SERIES_DELAYS_SECONDS = listOf(0, 1, 2, 5)
 private val START_TIMER_SECONDS = listOf(0, 3, 5, 10)

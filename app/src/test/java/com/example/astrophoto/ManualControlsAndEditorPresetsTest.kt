@@ -36,8 +36,25 @@ class ManualControlsAndEditorPresetsTest {
 
     @Test
     fun seriesOffersRequestedLargeFrameCounts() {
-        assertTrue(SERIES_FRAME_COUNTS.containsAll(listOf(40, 50, 100)))
+        assertTrue(SERIES_FRAME_COUNTS.containsAll(listOf(1, 40, 50, 100)))
         assertEquals(SERIES_FRAME_COUNTS.sorted(), SERIES_FRAME_COUNTS)
+    }
+
+    @Test
+    fun cameraUiAdaptsRecommendationsToJpegSeries() {
+        val adapted = ExposureRecommendation(
+            iso = 800,
+            exposureTimeNs = 10_000_000_000L,
+            focusMode = CameraFocusMode.INFINITY,
+            format = AssistantCaptureFormat.RAW,
+            frameCount = 1,
+            timerSeconds = 5,
+            explanation = "Для звёзд лучше RAW/DNG"
+        ).forJpegOnlyUi()
+
+        assertEquals(AssistantCaptureFormat.JPEG, adapted.format)
+        assertEquals(1, adapted.frameCount)
+        assertFalse(adapted.explanation.contains("RAW/DNG"))
     }
 
     @Test
