@@ -30,7 +30,11 @@ data class EnhancedGlobalToneGeneration(
     val anchors: GlobalToneAnchors,
     val scaleLimitedPixelCount: Int,
     val maximumLinearChannel: Double,
-    val gain: Double = GlobalToneTransform.APPROVED_GAIN
+    val gain: Double = GlobalToneTransform.APPROVED_GAIN,
+    val luminanceDenoise: ProtectedLuminanceDenoiseMetrics =
+        ProtectedLuminanceDenoiseMetrics.NONE,
+    val faintStarEnhancement: ProtectedFaintStarEnhancementMetrics =
+        ProtectedFaintStarEnhancementMetrics.NONE
 )
 
 data class EnhancedGlobalToneValidationMetrics(
@@ -67,7 +71,19 @@ data class EnhancedGlobalToneValidationMetrics(
     val scaleLimitedHighlightPixelCount: Int,
     val scaleLimitedStarWindowPixelCount: Int,
     val maximumLinearChannel: Double,
-    val appliedGain: Double = GlobalToneTransform.APPROVED_GAIN
+    val appliedGain: Double = GlobalToneTransform.APPROVED_GAIN,
+    val luminanceDenoiseStrength: Double = 0.0,
+    val luminanceNoiseMapMean: Double = 0.0,
+    val luminanceNoiseMapP90: Double = 0.0,
+    val luminanceNoiseMapMaximum: Double = 0.0,
+    val luminanceDenoiseEligiblePixelCount: Int = 0,
+    val luminanceDenoisedPixelCount: Int = 0,
+    val luminanceProtectedStarPixelCount: Int = 0,
+    val targetedStarDiscoveredCount: Int = 0,
+    val targetedStarConsideredCount: Int = 0,
+    val targetedStarEnhancedCount: Int = 0,
+    val targetedStarChangedPixelCount: Int = 0,
+    val targetedStarMaximumResidualGain: Double = 0.0
 ) {
     fun asReportMetrics(): Map<String, Float> = linkedMapOf(
         "gain" to appliedGain.finiteFloat(),
@@ -109,7 +125,19 @@ data class EnhancedGlobalToneValidationMetrics(
         "scaleLimitedSkyPixelCount" to scaleLimitedSkyPixelCount.toFloat(),
         "scaleLimitedHighlightPixelCount" to scaleLimitedHighlightPixelCount.toFloat(),
         "scaleLimitedStarWindowPixelCount" to scaleLimitedStarWindowPixelCount.toFloat(),
-        "maximumLinearChannel" to maximumLinearChannel.finiteFloat()
+        "maximumLinearChannel" to maximumLinearChannel.finiteFloat(),
+        "luminanceDenoiseStrength" to luminanceDenoiseStrength.finiteFloat(),
+        "luminanceNoiseMapMean" to luminanceNoiseMapMean.finiteFloat(),
+        "luminanceNoiseMapP90" to luminanceNoiseMapP90.finiteFloat(),
+        "luminanceNoiseMapMaximum" to luminanceNoiseMapMaximum.finiteFloat(),
+        "luminanceDenoiseEligiblePixelCount" to luminanceDenoiseEligiblePixelCount.toFloat(),
+        "luminanceDenoisedPixelCount" to luminanceDenoisedPixelCount.toFloat(),
+        "luminanceProtectedStarPixelCount" to luminanceProtectedStarPixelCount.toFloat(),
+        "targetedStarDiscoveredCount" to targetedStarDiscoveredCount.toFloat(),
+        "targetedStarConsideredCount" to targetedStarConsideredCount.toFloat(),
+        "targetedStarEnhancedCount" to targetedStarEnhancedCount.toFloat(),
+        "targetedStarChangedPixelCount" to targetedStarChangedPixelCount.toFloat(),
+        "targetedStarMaximumResidualGain" to targetedStarMaximumResidualGain.finiteFloat()
     )
 }
 
@@ -192,7 +220,9 @@ class FileBackedGlobalToneTransformer(
 class EnhancedGlobalToneProcessor(
     private val skyStatistics: FileBackedSkyStatistics = FileBackedSkyStatistics(),
     private val transformer: FileBackedGlobalToneTransformer = FileBackedGlobalToneTransformer(),
-    private val validator: EnhancedGlobalToneValidator = EnhancedGlobalToneValidator()
+    private val validator: EnhancedGlobalToneValidator = EnhancedGlobalToneValidator(),
+    private val luminanceDenoiser: ProtectedLuminanceDenoiser = ProtectedLuminanceDenoiser(),
+    private val faintStarEnhancer: ProtectedFaintStarEnhancer = ProtectedFaintStarEnhancer()
 ) {
     fun createCandidate(
         baseline: FileBackedImage,
@@ -202,6 +232,34 @@ class EnhancedGlobalToneProcessor(
         gain: Double = GlobalToneTransform.APPROVED_GAIN
     ): EnhancedGlobalToneCandidate {
         require(baseline.width == effectiveSkyAlpha.width && baseline.height == effectiveSkyAlpha.height)
+        val prepared = luminanceDenoiser.prepareNoiseMap(
+            baseline = baseline,
+            effectiveSkyAlpha = effectiveSkyAlpha,
+            confirmedStars = confirmedStars,
+            store = store
+        )
+        return try {
+            createCandidateWithNoiseMap(
+                baseline = baseline,
+                effectiveSkyAlpha = effectiveSkyAlpha,
+                confirmedStars = confirmedStars,
+                store = store,
+                gain = gain,
+                preparedNoiseMap = prepared
+            )
+        } finally {
+            store.deleteTemporary(prepared.plane)
+        }
+    }
+
+    private fun createCandidateWithNoiseMap(
+        baseline: FileBackedImage,
+        effectiveSkyAlpha: FileBackedFloatPlane,
+        confirmedStars: List<DetectedStar>,
+        store: ResultCandidateStore,
+        gain: Double,
+        preparedNoiseMap: PreparedLuminanceNoiseMap
+    ): EnhancedGlobalToneCandidate {
         val baselineHashBefore = fileBackedPixelHash(baseline)
         val sky = FileBackedImageReader(baseline).use { image ->
             FileBackedFloatPlaneReader(effectiveSkyAlpha).use { alpha ->
@@ -222,7 +280,7 @@ class EnhancedGlobalToneProcessor(
             width = baseline.width,
             height = baseline.height
         )
-        val generation = try {
+        val toneGeneration = try {
             transformer.transform(
                 baseline = baseline,
                 writer = writer,
@@ -234,6 +292,32 @@ class EnhancedGlobalToneProcessor(
             runCatching { store.deleteTemporary(writer.image) }
             throw error
         }
+        val denoised = try {
+            luminanceDenoiser.apply(
+                input = toneGeneration.image,
+                effectiveSkyAlpha = effectiveSkyAlpha,
+                confirmedStars = confirmedStars,
+                prepared = preparedNoiseMap,
+                store = store
+            )
+        } finally {
+            store.deleteTemporary(toneGeneration.image)
+        }
+        val starEnhanced = try {
+            faintStarEnhancer.apply(
+                input = denoised.image,
+                effectiveSkyAlpha = effectiveSkyAlpha,
+                confirmedStars = confirmedStars,
+                store = store
+            )
+        } finally {
+            store.deleteTemporary(denoised.image)
+        }
+        val generation = toneGeneration.copy(
+            image = starEnhanced.image,
+            luminanceDenoise = denoised.metrics,
+            faintStarEnhancement = starEnhanced.metrics
+        )
         return try {
             val baselineHashAfter = fileBackedPixelHash(baseline)
             val measured = validator.validate(
@@ -246,13 +330,35 @@ class EnhancedGlobalToneProcessor(
                 maximumLinearChannel = generation.maximumLinearChannel,
                 gain = generation.gain
             )
+            val measuredWithDenoise = measured.copy(
+                metrics = measured.metrics.copy(
+                    luminanceDenoiseStrength = generation.luminanceDenoise.appliedStrength.toDouble(),
+                    luminanceNoiseMapMean = generation.luminanceDenoise.noiseMapMean.toDouble(),
+                    luminanceNoiseMapP90 = generation.luminanceDenoise.noiseMapP90.toDouble(),
+                    luminanceNoiseMapMaximum = generation.luminanceDenoise.noiseMapMaximum.toDouble(),
+                    luminanceDenoiseEligiblePixelCount =
+                        generation.luminanceDenoise.eligiblePixelCount,
+                    luminanceDenoisedPixelCount = generation.luminanceDenoise.changedPixelCount,
+                    luminanceProtectedStarPixelCount =
+                        generation.luminanceDenoise.protectedStarPixelCount,
+                    targetedStarDiscoveredCount =
+                        generation.faintStarEnhancement.discoveredStarCount,
+                    targetedStarConsideredCount =
+                        generation.faintStarEnhancement.consideredStarCount,
+                    targetedStarEnhancedCount = generation.faintStarEnhancement.enhancedStarCount,
+                    targetedStarChangedPixelCount =
+                        generation.faintStarEnhancement.changedPixelCount,
+                    targetedStarMaximumResidualGain =
+                        generation.faintStarEnhancement.maximumResidualGain.toDouble()
+                )
+            )
             val validation = if (baselineHashBefore == baselineHashAfter) {
-                measured
+                measuredWithDenoise
             } else {
-                measured.copy(
+                measuredWithDenoise.copy(
                     accepted = false,
                     hardFailureReasons = (
-                        measured.hardFailureReasons + "recovered_stars_baseline_changed"
+                        measuredWithDenoise.hardFailureReasons + "recovered_stars_baseline_changed"
                         ).distinct()
                 )
             }
@@ -276,16 +382,24 @@ class EnhancedGlobalToneProcessor(
         gains: List<Double> = PRODUCTION_GAINS
     ): EnhancedGlobalToneCandidate {
         require(gains.isNotEmpty())
+        require(baseline.width == effectiveSkyAlpha.width && baseline.height == effectiveSkyAlpha.height)
+        val prepared = luminanceDenoiser.prepareNoiseMap(
+            baseline = baseline,
+            effectiveSkyAlpha = effectiveSkyAlpha,
+            confirmedStars = confirmedStars,
+            store = store
+        )
         var lastRejected: EnhancedGlobalToneCandidate? = null
         val rejectedAttemptWarnings = mutableListOf<String>()
         try {
             gains.forEach { gain ->
-                val candidate = createCandidate(
+                val candidate = createCandidateWithNoiseMap(
                     baseline = baseline,
                     effectiveSkyAlpha = effectiveSkyAlpha,
                     confirmedStars = confirmedStars,
                     store = store,
-                    gain = gain
+                    gain = gain,
+                    preparedNoiseMap = prepared
                 )
                 if (candidate.validation.accepted) {
                     lastRejected?.generation?.image?.let(store::deleteTemporary)
@@ -315,6 +429,8 @@ class EnhancedGlobalToneProcessor(
                 runCatching { store.deleteTemporary(image) }
             }
             throw error
+        } finally {
+            store.deleteTemporary(prepared.plane)
         }
     }
 

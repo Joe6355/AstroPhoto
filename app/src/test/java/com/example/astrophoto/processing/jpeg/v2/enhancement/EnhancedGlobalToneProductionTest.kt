@@ -7,6 +7,7 @@ import com.example.astrophoto.processing.jpeg.v2.model.DetectedStar
 import com.example.astrophoto.processing.jpeg.v2.storage.FileBackedFloatPlane
 import com.example.astrophoto.processing.jpeg.v2.storage.FileBackedFloatPlaneWriter
 import com.example.astrophoto.processing.jpeg.v2.storage.FileBackedImage
+import com.example.astrophoto.processing.jpeg.v2.storage.FileBackedImageReader
 import com.example.astrophoto.processing.jpeg.v2.storage.FileBackedImageWriter
 import com.example.astrophoto.processing.jpeg.v2.storage.ResultCandidateStore
 import com.example.astrophoto.processing.jpeg.v2.storage.TemporaryPipelineFiles
@@ -295,6 +296,129 @@ class EnhancedGlobalToneProductionTest {
     }
 
     @Test
+    fun protectedLuminanceDenoiseReducesBackgroundVariationWithoutTouchingStarOrForeground() {
+        val size = 25
+        val baselineWriter = FileBackedImageWriter(
+            file = File(temporaryFolder.root, "denoise-baseline.argb"),
+            width = size,
+            height = size
+        )
+        repeat(size) { y ->
+            baselineWriter.writeRow(
+                y,
+                IntArray(size) { x ->
+                    when {
+                        x == 12 && y == 12 -> 0xFFE0E0E0.toInt()
+                        (x - 12) * (x - 12) + (y - 12) * (y - 12) <= 4 ->
+                            0xFF707070.toInt()
+                        (x * 17 + y * 31) % 3 == 0 -> 0xFF242424.toInt()
+                        else -> 0xFF101010.toInt()
+                    }
+                }
+            )
+        }
+        val baseline = baselineWriter.finish()
+        val alphaWriter = FileBackedFloatPlaneWriter(
+            file = File(temporaryFolder.root, "denoise-alpha.f32"),
+            width = size,
+            height = size
+        )
+        repeat(size) { y ->
+            alphaWriter.writeRow(y, FloatArray(size) { if (y >= 22) 0f else 1f })
+        }
+        val alpha = alphaWriter.finish()
+        val stars = listOf(
+            DetectedStar(
+                x = 12f,
+                y = 12f,
+                flux = 1f,
+                localBackground = 0.01f,
+                localContrast = 0.5f,
+                width = 2f,
+                ellipticity = 0.1f,
+                confidence = 1f
+            )
+        )
+        val pipelineFiles = TemporaryPipelineFiles.create(
+            temporaryFolder.newFolder("denoise-pipeline")
+        )
+        try {
+            val store = ResultCandidateStore(pipelineFiles)
+            val denoiser = ProtectedLuminanceDenoiser()
+            val prepared = denoiser.prepareNoiseMap(baseline, alpha, stars, store)
+            val result = try {
+                denoiser.apply(baseline, alpha, stars, prepared, store)
+            } finally {
+                store.deleteTemporary(prepared.plane)
+            }
+
+            assertTrue(result.metrics.eligiblePixelCount > 0)
+            assertTrue(result.metrics.changedPixelCount > 0)
+            FileBackedImageReader(baseline).use { before ->
+                FileBackedImageReader(result.image).use { after ->
+                    assertEquals(before.argbAt(12, 12), after.argbAt(12, 12))
+                    assertEquals(before.argbAt(5, 23), after.argbAt(5, 23))
+                    assertTrue(backgroundRoughness(after) < backgroundRoughness(before))
+                }
+            }
+        } finally {
+            pipelineFiles.close()
+        }
+    }
+
+    @Test
+    fun protectedFaintStarEnhancementRaisesCoreWithoutChangingBackground() {
+        val size = 25
+        val baselineWriter = FileBackedImageWriter(
+            file = File(temporaryFolder.root, "faint-star-baseline.argb"),
+            width = size,
+            height = size
+        )
+        repeat(size) { y ->
+            baselineWriter.writeRow(
+                y,
+                IntArray(size) { x ->
+                    when {
+                        x == 12 && y == 12 -> 0xFF484848.toInt()
+                        (x - 12) * (x - 12) + (y - 12) * (y - 12) <= 4 ->
+                            0xFF303030.toInt()
+                        else -> 0xFF101010.toInt()
+                    }
+                }
+            )
+        }
+        val baseline = baselineWriter.finish()
+        val alphaWriter = FileBackedFloatPlaneWriter(
+            file = File(temporaryFolder.root, "faint-star-alpha.f32"),
+            width = size,
+            height = size
+        )
+        repeat(size) { y -> alphaWriter.writeRow(y, FloatArray(size) { if (y >= 22) 0f else 1f }) }
+        val alpha = alphaWriter.finish()
+        val stars = listOf(
+            DetectedStar(12f, 12f, 1f, 0.005f, 0.05f, 2f, 0.1f, 1f)
+        )
+        val pipelineFiles = TemporaryPipelineFiles.create(
+            temporaryFolder.newFolder("faint-star-pipeline")
+        )
+        try {
+            val store = ResultCandidateStore(pipelineFiles)
+            val result = ProtectedFaintStarEnhancer().apply(baseline, alpha, stars, store)
+            assertEquals(1, result.metrics.enhancedStarCount)
+            assertTrue(result.metrics.changedPixelCount > 0)
+            FileBackedImageReader(baseline).use { before ->
+                FileBackedImageReader(result.image).use { after ->
+                    assertTrue((after.argbAt(12, 12) and 0xFF) > (before.argbAt(12, 12) and 0xFF))
+                    assertEquals(before.argbAt(3, 3), after.argbAt(3, 3))
+                    assertEquals(before.argbAt(5, 23), after.argbAt(5, 23))
+                }
+            }
+        } finally {
+            pipelineFiles.close()
+        }
+    }
+
+    @Test
     fun validationFailureImmediatelyRemovesGeneratedCandidate() {
         val baselineWriter = FileBackedImageWriter(
             file = File(temporaryFolder.root, "validation-baseline.argb"),
@@ -401,4 +525,15 @@ class EnhancedGlobalToneProductionTest {
             baselinePixelHashBefore = "baseline",
             baselinePixelHashAfter = "baseline"
         )
+
+    private fun backgroundRoughness(image: FileBackedImageReader): Long {
+        var total = 0L
+        for (y in 2 until 21) for (x in 2 until 21) {
+            if ((x - 12) * (x - 12) + (y - 12) * (y - 12) <= 49) continue
+            val first = image.argbAt(x, y) and 0xFF
+            val second = image.argbAt(x + 1, y) and 0xFF
+            total += kotlin.math.abs(first - second)
+        }
+        return total
+    }
 }
