@@ -62,8 +62,8 @@ import kotlinx.coroutines.delay
 @Composable
 fun AstroScaffold(
     title: String,
-    onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
+    onBack: (() -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {},
     content: @Composable ColumnScope.() -> Unit
 ) {
@@ -90,8 +90,8 @@ fun AstroScaffold(
 @Composable
 fun AstroTopBar(
     title: String,
-    onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
+    onBack: (() -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {}
 ) {
     Row(

@@ -37,6 +37,25 @@ data class TemporalTrackAnalysis(
     val coherentVelocityX: Float,
     val coherentVelocityY: Float
 ) {
+    private val clustersByExactStar: Map<Pair<String, DetectedStar>, TemporalMotionCluster> by lazy(
+        LazyThreadSafetyMode.NONE
+    ) {
+        buildMap {
+            tracks.forEach { track ->
+                track.observations.forEach { observation ->
+                    put(observation.frameId to observation.star, track.cluster)
+                }
+            }
+        }
+    }
+
+    private val observationsByFrame: Map<String, List<Pair<TemporalFeatureTrack, TemporalTrackObservation>>> by lazy(
+        LazyThreadSafetyMode.NONE
+    ) {
+        tracks.flatMap { track -> track.observations.map { track to it } }
+            .groupBy { (_, observation) -> observation.frameId }
+    }
+
     val stationaryTrackCount: Int
         get() = tracks.count { it.cluster == TemporalMotionCluster.STATIONARY_CAMERA_SPACE }
     val movingTrackCount: Int
@@ -45,9 +64,8 @@ data class TemporalTrackAnalysis(
         get() = tracks.count { it.cluster == TemporalMotionCluster.UNSTABLE_OR_UNKNOWN }
 
     fun clusterAt(frameId: String, star: DetectedStar, tolerance: Float = 0.35f): TemporalMotionCluster {
-        val match = tracks.asSequence()
-            .flatMap { track -> track.observations.asSequence().map { track to it } }
-            .filter { (_, observation) -> observation.frameId == frameId }
+        clustersByExactStar[frameId to star]?.let { return it }
+        val match = observationsByFrame[frameId].orEmpty().asSequence()
             .minByOrNull { (_, observation) ->
                 val dx = observation.star.x - star.x
                 val dy = observation.star.y - star.y

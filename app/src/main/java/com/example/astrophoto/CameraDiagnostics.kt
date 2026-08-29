@@ -3,6 +3,7 @@ package com.example.astrophoto
 import android.content.Context
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.os.Build
 import android.util.Range
 import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
@@ -24,18 +25,54 @@ fun readCameraDiagnostics(context: Context): Result<CameraDiagnosticInfo> = runC
     val cameraManager = context.getSystemService(CameraManager::class.java)
         ?: error("Системная служба камеры недоступна")
 
-    val rearCameraId = cameraManager.cameraIdList.firstOrNull { cameraId ->
-        cameraManager.getCameraCharacteristics(cameraId)
-            .get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK
-    } ?: error("Основная задняя камера не найдена")
+    val capabilityStore = ManualCameraCapabilityStore(context)
+    val rearCandidates = readRearCameraCandidates(
+        cameraManager = cameraManager,
+        manufacturer = Build.MANUFACTURER,
+        model = Build.MODEL,
+        cachedMaximumExposureNs = { cameraId ->
+            capabilityStore.load(cameraId).maximumExposureNs
+        }
+    )
+    val rearCameraId = selectBestRearCameraId(rearCandidates)
+        ?: error("Основная задняя камера не найдена")
 
     val characteristics = cameraManager.getCameraCharacteristics(rearCameraId)
+    val compatibilityProfile = cameraCompatibilityProfile(
+        manufacturer = Build.MANUFACTURER,
+        model = Build.MODEL
+    )
+    val storedOverrides = capabilityStore.load(rearCameraId)
     val hardwareLevel = characteristics.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL)
     val capabilities = characteristics.get(
         CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES
     )
     val isoRange = characteristics.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)
     val exposureRange = characteristics.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)
+    val exposureRangeSelection = selectManualExposureRange(
+        publicRangeNs = exposureRange?.let { it.lower..it.upper },
+        vendorRange = readVendorExposureRange(
+            characteristics = characteristics,
+            profile = compatibilityProfile
+        ),
+        cachedMaximumExposureNs = storedOverrides.maximumExposureNs
+    )
+    val postRawBoostRange = characteristics.get(
+        CameraCharacteristics.CONTROL_POST_RAW_SENSITIVITY_BOOST_RANGE
+    )
+    val effectiveIsoRange = applyIsoOverrides(
+        range = effectiveIsoRange(
+            sensorRange = isoRange?.let { it.lower..it.upper },
+            postRawBoostRange = postRawBoostRange?.let { it.lower..it.upper }
+        ),
+        minimumIso = storedOverrides.minimumIso,
+        maximumIso = storedOverrides.maximumIso
+    )
+    val physicalCameraIds = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        characteristics.physicalCameraIds
+    } else {
+        emptySet()
+    }
     val focalLengths = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
     val minimumFocusDistance = characteristics.get(
         CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE
@@ -43,9 +80,7 @@ fun readCameraDiagnostics(context: Context): Result<CameraDiagnosticInfo> = runC
     val aeModes = characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_MODES)
     val awbModes = characteristics.get(CameraCharacteristics.CONTROL_AWB_AVAILABLE_MODES)
 
-    val supportsManualSensor = capabilities?.contains(
-        CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR
-    ) == true
+    val supportsManualSensor = supportsVerifiedManualSensor(characteristics)
     val supportsRaw = capabilities?.contains(
         CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_RAW
     ) == true
@@ -74,9 +109,29 @@ fun readCameraDiagnostics(context: Context): Result<CameraDiagnosticInfo> = runC
     CameraDiagnosticInfo(
         rows = listOf(
             DiagnosticRow(
+                name = "Профиль камеры",
+                value = compatibilityProfile.displayName,
+                description = if (compatibilityProfile == CameraCompatibilityProfile.GOOGLE_PIXEL) {
+                    "Pixel использует только заявленные публичные диапазоны Camera2"
+                } else {
+                    "Политика чтения диапазонов камеры"
+                }
+            ),
+            DiagnosticRow(
                 name = "Camera ID",
                 value = rearCameraId,
-                description = "Идентификатор основной задней камеры"
+                description = "Выбранная задняя камера для ручной съёмки"
+            ),
+            DiagnosticRow(
+                name = "Задние Camera ID",
+                value = rearCandidates.joinToString { it.cameraId },
+                description = "Доступные приложению задние камеры"
+            ),
+            DiagnosticRow(
+                name = "Physical Camera ID",
+                value = physicalCameraIds.takeIf { it.isNotEmpty() }
+                    ?.joinToString() ?: "Недоступно",
+                description = "Физические камеры внутри выбранной логической камеры"
             ),
             DiagnosticRow(
                 name = "Hardware Level",
@@ -101,14 +156,37 @@ fun readCameraDiagnostics(context: Context): Result<CameraDiagnosticInfo> = runC
                 description = "Доступный диапазон чувствительности сенсора"
             ),
             DiagnosticRow(
+                name = "Эффективный ISO",
+                value = effectiveIsoRange?.let { "${it.first} - ${it.last}" }
+                    ?: "Недоступно",
+                description = "Сенсорный ISO с учётом boost и сохранённых ограничений"
+            ),
+            DiagnosticRow(
                 name = "Выдержка",
                 value = formatExposureRange(exposureRange),
                 description = "Диапазон времени экспозиции"
             ),
             DiagnosticRow(
                 name = "Макс. выдержка",
-                value = exposureRange?.upper?.let(::formatNanoseconds) ?: "Недоступно",
-                description = "Максимальная выдержка, которую сообщает камера"
+                value = exposureRangeSelection.effectiveRangeNs?.last
+                    ?.let(::formatNanoseconds) ?: "Недоступно",
+                description = if (exposureRangeSelection.usesExtendedRange) {
+                    "Расширенный максимум из ${exposureRangeSelection.source?.displayName} " +
+                        "Camera2 vendor metadata"
+                } else {
+                    "Максимальная выдержка, которую сообщает камера"
+                }
+            ),
+            DiagnosticRow(
+                name = "Vendor выдержка",
+                value = exposureRangeSelection.vendorRange?.rangeNs
+                    ?.let { range ->
+                        "${formatNanoseconds(range.first)} - ${formatNanoseconds(range.last)}"
+                    }
+                    ?: "Недоступно",
+                description = exposureRangeSelection.vendorRange?.let {
+                    "${it.source.displayName}: ${it.keyName}"
+                } ?: "Поддерживаемый vendor-диапазон не найден"
             ),
             DiagnosticRow(
                 name = "Focal Lengths",

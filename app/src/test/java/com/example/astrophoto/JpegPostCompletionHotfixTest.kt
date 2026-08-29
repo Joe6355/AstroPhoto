@@ -191,12 +191,22 @@ class JpegPostCompletionHotfixTest {
         )
         assertOrdered(
             profile,
-            "post_completion.report_published",
+            "publishProcessingReport(",
             "post_completion.session_info.start",
             "post_completion.result_created",
             "post_completion.temp_cleanup.start",
             "post_completion.journal_complete.start",
             "post_completion.profile_returned"
+        )
+        val reportPublication = source.substring(
+            source.indexOf("private suspend fun publishProcessingReport("),
+            source.indexOf("private data class PrimaryPublication(")
+        )
+        assertOrdered(
+            reportPublication,
+            "ProcessingReportWriter(context).write",
+            "runJournal.updatePublishedArtifacts(",
+            "post_completion.report_published"
         )
         val automatic = source.substring(
             source.indexOf("fun startProfile(profile:"),

@@ -3,6 +3,7 @@ package com.example.astrophoto
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
+import androidx.core.content.edit
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
@@ -74,21 +75,21 @@ class ShootingSessionStore(private val context: Context) {
     }
 
     fun save(session: ShootingSession) {
-        preferences.edit()
-            .putString("session_name", session.sessionName)
-            .putString("folder_name", session.folderName)
-            .putLong("created_at", session.createdAtMillis)
-            .putString("note", session.note)
-            .putInt("light_frames", session.lightFrames)
-            .putInt("dark_frames", session.darkFrames)
-            .putInt("test_shots", session.testShots)
-            .putString("last_test_shot_status", session.lastTestShotStatus)
-            .putLong("last_test_shot_at", session.lastTestShotAtMillis)
-            .apply()
+        preferences.edit {
+                putString("session_name", session.sessionName)
+                .putString("folder_name", session.folderName)
+                .putLong("created_at", session.createdAtMillis)
+                .putString("note", session.note)
+                .putInt("light_frames", session.lightFrames)
+                .putInt("dark_frames", session.darkFrames)
+                .putInt("test_shots", session.testShots)
+                .putString("last_test_shot_status", session.lastTestShotStatus)
+                .putLong("last_test_shot_at", session.lastTestShotAtMillis)
+            }
     }
 
     fun clear() {
-        preferences.edit().clear().apply()
+        preferences.edit {clear()}
     }
 
     fun relativeDirectory(

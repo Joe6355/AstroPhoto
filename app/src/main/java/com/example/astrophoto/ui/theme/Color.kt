@@ -54,6 +54,23 @@ object AstroColors {
     val Outline = Color(0xFF657084)
     val OutlineSubtle = Color(0xFF313C4E)
     val Scrim = Color(0xB3000308)
+
+    val RedNightBackground = Color(0xFF000000)
+    val RedNightSurface = Color(0xFF090000)
+    val RedNightSurfaceElevated = Color(0xFF190403)
+    val RedNightPrimary = Color(0xFFFF6B5E)
+    val RedNightOnPrimary = Color(0xFF320200)
+    val RedNightPrimaryContainer = Color(0xFF4A0B07)
+    val RedNightOnPrimaryContainer = Color(0xFFFFB4AB)
+    val RedNightSecondary = Color(0xFFFF8A80)
+    val RedNightOnSecondary = Color(0xFF3B0300)
+    val RedNightSecondaryContainer = Color(0xFF52110C)
+    val RedNightOnSecondaryContainer = Color(0xFFFFDAD6)
+    val RedNightTextPrimary = Color(0xFFFF8A80)
+    val RedNightTextSecondary = Color(0xFFDB6B62)
+    val RedNightOutline = Color(0xFF9F4942)
+    val RedNightOutlineSubtle = Color(0xFF4A211E)
+    val RedNightScrim = Color(0xE6000000)
 }
 
 const val ASTRO_DESIGN_SYSTEM_NAME = "AstroPhoto Night Observatory"

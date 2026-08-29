@@ -3,6 +3,7 @@ package com.example.astrophoto
 import android.content.ContentUris
 import android.content.Context
 import android.net.Uri
+import androidx.core.net.toUri
 import android.os.Build
 import android.provider.MediaStore
 import android.util.Log
@@ -147,7 +148,7 @@ internal class ProcessedImageSourceResolver(context: Context) {
         return runCatching {
             when (source) {
                 is ResolvedImageSource.Provider ->
-                    resolver.openInputStream(Uri.parse(source.record.uri))
+                    resolver.openInputStream(source.record.uri.toUri())
                 is ResolvedImageSource.LegacyFile -> File(source.absolutePath).inputStream()
                 null -> null
             }
@@ -168,7 +169,7 @@ internal class ProcessedImageSourceResolver(context: Context) {
 
     private fun lookup(diagnostics: ResolutionDiagnostics) = object : ImageSourceLookup {
         override fun providerByUri(uri: String): ProviderImageRecord? {
-            val parsed = runCatching { Uri.parse(uri) }.getOrNull()
+            val parsed = runCatching { uri.toUri() }.getOrNull()
                 ?.takeIf { it.scheme.equals("content", ignoreCase = true) }
                 ?: return null
             if (!canOpenProvider(parsed)) {

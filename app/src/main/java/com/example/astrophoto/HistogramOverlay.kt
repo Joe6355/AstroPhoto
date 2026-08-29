@@ -12,6 +12,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -27,6 +28,7 @@ fun HistogramOverlay(
     onToggleExpanded: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val locale = LocalConfiguration.current.locales[0]
     Surface(
         modifier = modifier
             .width(220.dp)
@@ -58,7 +60,7 @@ fun HistogramOverlay(
                 Text(
                     text = if (analysis != null) {
                         String.format(
-                            Locale.getDefault(),
+                            locale,
                             "Средняя яркость: %.1f\nТени: %.1f%%\nПересвет: %.2f%%",
                             analysis.averageBrightness,
                             analysis.shadowPercent,

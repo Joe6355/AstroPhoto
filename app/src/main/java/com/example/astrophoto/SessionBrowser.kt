@@ -1,9 +1,11 @@
 package com.example.astrophoto
 
+import android.Manifest
 import android.content.ContentUris
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.net.Uri
@@ -11,6 +13,8 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -28,12 +32,14 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -47,6 +53,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import androidx.core.content.ContextCompat
 import com.example.astrophoto.ui.AstroEmptyState
 import com.example.astrophoto.ui.AstroExpandableSection
 import com.example.astrophoto.ui.AstroLoadingState
@@ -376,10 +383,38 @@ fun SessionsScreen(
     var showCreateDialog by remember { mutableStateOf(false) }
     var sessionName by remember { mutableStateOf("") }
     var sessionNote by remember { mutableStateOf("") }
+    val mediaReadPermissions = when {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> arrayOf(
+            Manifest.permission.READ_MEDIA_IMAGES,
+            Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+        )
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> arrayOf(
+            Manifest.permission.READ_MEDIA_IMAGES
+        )
+        else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+    }
+    var mediaReadGranted by remember {
+        mutableStateOf(
+            mediaReadPermissions.any { permission ->
+                ContextCompat.checkSelfPermission(context, permission) ==
+                    PackageManager.PERMISSION_GRANTED
+            }
+        )
+    }
+    val mediaPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        mediaReadGranted = grants.values.any { it }
+        if (mediaReadGranted) refreshKey++
+    }
 
-    LaunchedEffect(refreshKey) {
+    LaunchedEffect(Unit) {
+        if (!mediaReadGranted) mediaPermissionLauncher.launch(mediaReadPermissions)
+    }
+
+    LaunchedEffect(refreshKey, mediaReadGranted) {
         loading = true
-        sessions = repository.loadSessions()
+        sessions = if (mediaReadGranted) repository.loadSessions() else emptyList()
         activeFolder = sessionStore.load()?.folderName
         loading = false
     }
@@ -417,6 +452,28 @@ fun SessionsScreen(
                     message = "Загружаем сессии…",
                     modifier = Modifier.weight(1f)
                 )
+            }
+
+            !mediaReadGranted -> {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(vertical = AstroSpacing.Lg),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Разрешите доступ к фото, чтобы показать старые сессии после переустановки.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    AstroPrimaryButton(
+                        text = "Разрешить доступ к фото",
+                        onClick = { mediaPermissionLauncher.launch(mediaReadPermissions) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = AstroSpacing.Md)
+                    )
+                }
             }
 
             sessions.isEmpty() -> {
@@ -509,7 +566,7 @@ private fun SessionSummaryCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
-                text = "Lights: ${session.lightFrames}  ·  Darks: ${session.darkFrames}",
+                text = "Основные: ${session.lightFrames}  ·  Тёмные: ${session.darkFrames}",
                 modifier = Modifier.padding(top = 8.dp)
             )
             Text(
@@ -544,6 +601,9 @@ fun SessionDetailsScreen(
     }
     val marksStore = remember { FrameMarksStore(context.applicationContext) }
     val exporter = remember { SessionZipExporter(context.applicationContext) }
+    val timelapseExporter = remember {
+        SessionTimelapseExporter(context.applicationContext)
+    }
     val storageChecker = remember { StorageSpaceChecker(context.applicationContext) }
     val fileManager = remember { SessionFileManager(context.applicationContext) }
     val deletionProtectionEnabled = remember {
@@ -552,6 +612,8 @@ fun SessionDetailsScreen(
             .deletionProtectionEnabled
     }
     val coroutineScope = rememberCoroutineScope()
+    val processingStates by SessionProcessingCoordinator.states.collectAsState()
+    val stackingInProgress = processingStates[session.folderName]?.running == true
     var currentSummary by remember(session.folderName) { mutableStateOf(session) }
     var active by remember {
         mutableStateOf(sessionStore.load()?.folderName == session.folderName)
@@ -564,7 +626,6 @@ fun SessionDetailsScreen(
     var autoBadFrameCount by remember { mutableIntStateOf(0) }
     var stackingFrameCount by remember { mutableIntStateOf(0) }
     var showingFrames by remember { mutableStateOf(false) }
-    var showingProcessing by remember { mutableStateOf(false) }
     var showingProcessedResults by remember { mutableStateOf(false) }
     var pendingEditorFileName by remember(session.folderName) {
         mutableStateOf<String?>(null)
@@ -580,6 +641,15 @@ fun SessionDetailsScreen(
         mutableStateOf<StorageSpaceInfo?>(null)
     }
     var exportPrecheckWarning by remember { mutableStateOf<String?>(null) }
+    var timelapseFps by remember(session.folderName) { mutableIntStateOf(5) }
+    var timelapseInProgress by remember { mutableStateOf(false) }
+    var timelapseProgress by remember {
+        mutableStateOf<SessionTimelapseProgress?>(null)
+    }
+    var timelapseStatus by remember { mutableStateOf<String?>(null) }
+    var lastTimelapseResult by remember {
+        mutableStateOf<SessionTimelapseResult?>(null)
+    }
     var renameDialogVisible by remember { mutableStateOf(false) }
     var renameInput by remember { mutableStateOf(session.sessionName) }
     var deleteDialogVisible by remember { mutableStateOf(false) }
@@ -587,7 +657,6 @@ fun SessionDetailsScreen(
     var deleteConfirmation by remember { mutableStateOf("") }
     var managementInProgress by remember { mutableStateOf(false) }
     var managementStatus by remember { mutableStateOf<String?>(null) }
-    var stackingInProgress by remember { mutableStateOf(false) }
     var deleteProgressCurrent by remember { mutableIntStateOf(0) }
     var deleteProgressTotal by remember { mutableIntStateOf(0) }
 
@@ -771,21 +840,43 @@ fun SessionDetailsScreen(
         }
     }
 
+    fun startTimelapse() {
+        if (timelapseInProgress) return
+        timelapseInProgress = true
+        timelapseStatus = null
+        timelapseProgress = SessionTimelapseProgress("Подготовка кадров", 0, 1)
+        lastTimelapseResult = null
+        coroutineScope.launch {
+            val result = timelapseExporter.export(currentSummary, timelapseFps) { progress ->
+                timelapseProgress = progress
+            }
+            timelapseInProgress = false
+            timelapseProgress = null
+            timelapseStatus = result.fold(
+                onSuccess = {
+                    lastTimelapseResult = it
+                    "MP4 сохранён: ${it.fileName}\n${it.location}\n" +
+                        "${it.frameCount} кадров, ${it.width}×${it.height}, ${it.fps} кадр/с"
+                },
+                onFailure = {
+                    "Ошибка таймлапса: ${it.message ?: "неизвестная ошибка"}"
+                }
+            )
+        }
+    }
+
     LaunchedEffect(
         pendingEditorFileName,
-        stackingInProgress,
-        showingProcessing
+        stackingInProgress
     ) {
         if (
             shouldOpenCompletedResultEditor(
                 pendingEditorFileName = pendingEditorFileName,
-                stackingInProgress = stackingInProgress,
-                showingProcessing = showingProcessing
+                stackingInProgress = stackingInProgress
             )
         ) {
             // Let the processing coroutine return before its composable scope is removed.
             yield()
-            showingProcessing = false
             showingProcessedResults = true
         }
     }
@@ -810,29 +901,6 @@ fun SessionDetailsScreen(
                 pendingEditorFileName = null
                 checkRefreshKey++
             }
-        )
-        return
-    }
-
-    if (showingProcessing) {
-        SessionProcessingScreen(
-            session = currentSummary,
-            refreshKey = checkRefreshKey,
-            onBack = {
-                showingProcessing = false
-                checkRefreshKey++
-            },
-            onStackCompleted = { checkRefreshKey++ },
-            onResultReady = { fileName ->
-                pendingEditorFileName = fileName
-            },
-            onOpenHelp = onOpenHelp,
-            onOpenResults = {
-                showingProcessing = false
-                showingProcessedResults = true
-            },
-            operationsEnabled = !exportInProgress && !managementInProgress,
-            onOperationStateChanged = { stackingInProgress = it }
         )
         return
     }
@@ -882,7 +950,7 @@ fun SessionDetailsScreen(
             AstroExpandableSection(title = "Управление сессией") {
                 Button(
                     onClick = {
-                        if (exportInProgress || stackingInProgress) {
+                        if (exportInProgress || timelapseInProgress || stackingInProgress) {
                             managementStatus = "Сначала завершите текущую операцию"
                         } else {
                             renameInput = currentSummary.sessionName
@@ -899,7 +967,7 @@ fun SessionDetailsScreen(
                 }
                 Button(
                     onClick = {
-                        if (exportInProgress || stackingInProgress) {
+                        if (exportInProgress || timelapseInProgress || stackingInProgress) {
                             managementStatus = "Сначала завершите текущую операцию"
                         } else {
                             deleteStep = 1
@@ -918,6 +986,27 @@ fun SessionDetailsScreen(
                         .heightIn(min = 52.dp)
                 ) {
                     Text("Удалить сессию")
+                }
+                AstroSecondaryButton(
+                    text = if (showingSessionCheck) {
+                        "Скрыть проверку сессии"
+                    } else {
+                        "Проверка сессии"
+                    },
+                    onClick = { showingSessionCheck = !showingSessionCheck },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (showingSessionCheck) {
+                    SessionQualityBlock(
+                        session = currentSummary,
+                        rawSupported = rawSupported,
+                        badFrameCount = badFrameCount,
+                        manualBadFrameCount = manualBadFrameCount,
+                        autoBadFrameCount = autoBadFrameCount,
+                        stackingFrameCount = stackingFrameCount,
+                        loading = checkInProgress,
+                        onRefresh = { checkRefreshKey++ }
+                    )
                 }
             }
             managementStatus?.let {
@@ -940,13 +1029,6 @@ fun SessionDetailsScreen(
             )
         }
         item {
-            AstroPrimaryButton(
-                text = "Обработка сессии",
-                onClick = { showingProcessing = true },
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
-        item {
             AstroSecondaryButton(
                 text = "Результаты обработки",
                 onClick = { showingProcessedResults = true },
@@ -954,34 +1036,125 @@ fun SessionDetailsScreen(
             )
         }
         item {
-            AstroSecondaryButton(
-                text = if (showingSessionCheck) {
-                    "Скрыть проверку сессии"
-                } else {
-                    "Проверка сессии"
-                },
-                onClick = { showingSessionCheck = !showingSessionCheck },
-                modifier = Modifier.fillMaxWidth()
+            JpegStackingBlock(
+                session = currentSummary,
+                refreshKey = checkRefreshKey,
+                onStackCompleted = { checkRefreshKey++ },
+                onResultReady = { fileName -> pendingEditorFileName = fileName },
+                onOpenHelp = onOpenHelp,
+                onOpenResults = { showingProcessedResults = true },
+                operationsEnabled = !exportInProgress &&
+                    !timelapseInProgress &&
+                    !managementInProgress,
+                onOperationStateChanged = {}
             )
         }
-        if (showingSessionCheck) {
-            item {
-                SessionQualityBlock(
-                    session = currentSummary,
-                    rawSupported = rawSupported,
-                    badFrameCount = badFrameCount,
-                    manualBadFrameCount = manualBadFrameCount,
-                    autoBadFrameCount = autoBadFrameCount,
-                    stackingFrameCount = stackingFrameCount,
-                    loading = checkInProgress,
-                    onRefresh = { checkRefreshKey++ }
+        item {
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface
                 )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        "Таймлапс звёзд",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        "MP4 из Lights JPEG без кадров, отмеченных как брак. " +
+                            "Результат: Movies/AstroPhoto.",
+                        modifier = Modifier.padding(top = 6.dp),
+                        color = AstroColors.TextSecondary
+                    )
+                    Row(
+                        modifier = Modifier.padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        SessionTimelapseExporter.SUPPORTED_FPS.sorted().forEach { fps ->
+                            FilterChip(
+                                selected = timelapseFps == fps,
+                                onClick = { timelapseFps = fps },
+                                enabled = !timelapseInProgress,
+                                label = { Text("$fps кадр/с") }
+                            )
+                        }
+                    }
+                    Button(
+                        onClick = {
+                            if (exportInProgress || stackingInProgress || managementInProgress) {
+                                timelapseStatus = "Сначала завершите текущую операцию"
+                            } else {
+                                startTimelapse()
+                            }
+                        },
+                        enabled = !timelapseInProgress && stackingFrameCount >= 2,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 52.dp)
+                            .padding(top = 8.dp)
+                    ) {
+                        Text(if (timelapseInProgress) "Создание MP4..." else "Создать MP4")
+                    }
+                    if (stackingFrameCount < 2 && !checkInProgress) {
+                        Text(
+                            "Нужно минимум 2 подходящих Lights JPEG.",
+                            modifier = Modifier.padding(top = 6.dp),
+                            color = AstroColors.TextSecondary
+                        )
+                    }
+                    if (timelapseInProgress) {
+                        timelapseProgress?.let { progress ->
+                            Text(
+                                progress.message,
+                                modifier = Modifier.padding(top = 8.dp),
+                                color = AstroColors.TextSecondary
+                            )
+                        }
+                        LinearProgressIndicator(
+                            progress = {
+                                val progress = timelapseProgress
+                                if (progress != null && progress.total > 0) {
+                                    progress.current.toFloat() / progress.total
+                                } else {
+                                    0f
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp)
+                        )
+                    }
+                    timelapseStatus?.let { status ->
+                        Text(
+                            status,
+                            modifier = Modifier.padding(top = 8.dp),
+                            color = if (status.startsWith("Ошибка")) {
+                                AstroColors.Error
+                            } else {
+                                AstroColors.Success
+                            }
+                        )
+                    }
+                    lastTimelapseResult?.let { result ->
+                        Button(
+                            onClick = {
+                                shareTimelapse(context, result)?.let { timelapseStatus = it }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp)
+                        ) {
+                            Text("Поделиться MP4")
+                        }
+                    }
+                }
             }
         }
         item {
             Button(
                 onClick = {
-                    if (stackingInProgress || managementInProgress) {
+                    if (stackingInProgress || timelapseInProgress || managementInProgress) {
                         exportStatus = "Сначала завершите текущую операцию"
                     } else {
                         requestExport()
@@ -1242,49 +1415,10 @@ fun SessionDetailsScreen(
 
 internal fun shouldOpenCompletedResultEditor(
     pendingEditorFileName: String?,
-    stackingInProgress: Boolean,
-    showingProcessing: Boolean
+    stackingInProgress: Boolean
 ): Boolean =
     !pendingEditorFileName.isNullOrBlank() &&
-        !stackingInProgress &&
-        showingProcessing
-
-@Composable
-private fun SessionProcessingScreen(
-    session: SessionSummary,
-    refreshKey: Int,
-    onBack: () -> Unit,
-    onStackCompleted: () -> Unit,
-    onResultReady: (String) -> Unit,
-    onOpenHelp: (HelpTopic) -> Unit,
-    onOpenResults: () -> Unit,
-    operationsEnabled: Boolean,
-    onOperationStateChanged: (Boolean) -> Unit
-) {
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .safeDrawingPadding(),
-        contentPadding = PaddingValues(16.dp, 24.dp, 16.dp, 36.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        item {
-            AstroTopBar(title = "Обработка", onBack = onBack)
-        }
-        item {
-            JpegStackingBlock(
-                session = session,
-                refreshKey = refreshKey,
-                onStackCompleted = onStackCompleted,
-                onResultReady = onResultReady,
-                onOpenHelp = onOpenHelp,
-                onOpenResults = onOpenResults,
-                operationsEnabled = operationsEnabled,
-                onOperationStateChanged = onOperationStateChanged
-            )
-        }
-    }
-}
+        !stackingInProgress
 
 @Composable
 private fun SessionQualityBlock(
@@ -1330,10 +1464,10 @@ private fun SessionQualityBlock(
                 modifier = Modifier.padding(top = 14.dp),
                 fontWeight = FontWeight.SemiBold
             )
-            Text("Lights/JPEG: ${session.lightsJpeg}")
-            Text("Lights/RAW: ${session.lightsRaw}")
-            Text("Darks/JPEG: ${session.darksJpeg}")
-            Text("Darks/RAW: ${session.darksRaw}")
+            Text("Основные JPEG: ${session.lightsJpeg}")
+            Text("Основные RAW: ${session.lightsRaw}")
+            Text("Тёмные JPEG: ${session.darksJpeg}")
+            Text("Тёмные RAW: ${session.darksRaw}")
             Text("Всего light frames: ${session.lightFrames}")
             Text("Всего dark frames: ${session.darkFrames}")
             Text("Всего кадров: ${session.lightFrames + session.darkFrames}")
@@ -1476,6 +1610,30 @@ private fun shareSessionZip(
     context.startActivity(Intent.createChooser(intent, "Поделиться ZIP"))
 }.exceptionOrNull()?.let {
     "Не удалось поделиться ZIP: ${it.message ?: "приложение не найдено"}"
+}
+
+private fun shareTimelapse(
+    context: Context,
+    result: SessionTimelapseResult
+): String? = runCatching {
+    val uri = result.contentUri?.let(Uri::parse)
+        ?: result.filePath?.let { path ->
+            FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                File(path)
+            )
+        }
+        ?: error("Не удалось получить доступ к MP4")
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "video/mp4"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        clipData = ClipData.newRawUri(result.fileName, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(intent, "Поделиться MP4"))
+}.exceptionOrNull()?.let {
+    "Не удалось поделиться MP4: ${it.message ?: "приложение не найдено"}"
 }
 
 private fun formatFileSize(bytes: Long): String = when {

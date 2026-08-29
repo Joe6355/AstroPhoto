@@ -6,6 +6,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import androidx.core.net.toUri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
@@ -151,7 +152,7 @@ class SessionFramesRepository(private val context: Context) {
             ) {
                 runCatching {
                     context.contentResolver.loadThumbnail(
-                        Uri.parse(frame.contentUri),
+                        frame.contentUri.toUri(),
                         Size(maxSize, maxSize),
                         null
                     )

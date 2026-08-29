@@ -6,4 +6,7 @@
     <external-path
         name="astrophoto_exports"
         path="Documents/AstroPhoto/Exports/" />
+    <external-path
+        name="astrophoto_timelapses"
+        path="Movies/AstroPhoto/" />
 </paths>

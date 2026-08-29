@@ -18,12 +18,14 @@ class SequenceAwareRegistrationEngine(
         frames: List<TemporalFeatureFrame>,
         referenceFrameId: String,
         imageWidth: Int,
-        imageHeight: Int
+        imageHeight: Int,
+        cancellationCheck: () -> Unit = {}
     ): SequenceAwareRegistrationDiagnostics {
         val ordered = frames.sortedBy { it.captureIndex }
         val reference = checkNotNull(ordered.firstOrNull { it.frameId == referenceFrameId })
-        val tracks = trackBuilder.build(ordered)
+        val tracks = trackBuilder.build(ordered, cancellationCheck)
         val candidates = ordered.map { frame ->
+            cancellationCheck()
             SequenceRegistrationCandidate(
                 frameId = frame.frameId,
                 captureIndex = frame.captureIndex,
@@ -57,6 +59,7 @@ class SequenceAwareRegistrationEngine(
         val acceptancePaths = linkedMapOf<String, String>()
         val acceptanceReasons = linkedMapOf<String, String>()
         ordered.forEach { frame ->
+            cancellationCheck()
             if (frame.frameId == referenceFrameId) {
                 registrations[frame.frameId] = referenceIdentity(reference.stars.size)
                 ranks[frame.frameId] = 0

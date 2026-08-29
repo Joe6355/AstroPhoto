@@ -1,3 +1,5 @@
+@file:Suppress("UseKtx") // KTX bitmap inlining pushes profileStack toward the JVM method-size limit.
+
 package com.example.astrophoto
 
 import android.content.ContentUris
@@ -8,6 +10,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.storage.StorageManager
 import android.provider.MediaStore
 import android.util.Log
 import android.util.Size
@@ -30,10 +33,12 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -62,6 +67,7 @@ import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.ceil
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
@@ -96,6 +102,7 @@ import com.example.astrophoto.processing.jpeg.v2.diagnostics.PipelineTimingColle
 import com.example.astrophoto.processing.jpeg.v2.diagnostics.ProcessingReport
 import com.example.astrophoto.processing.jpeg.v2.diagnostics.ProcessingReportWriter
 import com.example.astrophoto.processing.jpeg.v2.diagnostics.ReportWriteOutcome
+import com.example.astrophoto.processing.jpeg.v2.diagnostics.SavedProcessingReport
 import com.example.astrophoto.processing.jpeg.v2.diagnostics.ProcessingRunJournal
 import com.example.astrophoto.processing.jpeg.v2.diagnostics.AppSpecificProcessingReportStore
 import com.example.astrophoto.processing.jpeg.v2.diagnostics.artifactSessionId
@@ -123,6 +130,7 @@ import com.example.astrophoto.processing.jpeg.v2.model.ResultCandidateType
 import com.example.astrophoto.processing.jpeg.v2.model.SensorDefectFilteringReport
 import com.example.astrophoto.processing.jpeg.v2.model.SensorDefectConstructionStageReport
 import com.example.astrophoto.processing.jpeg.v2.model.StoredResultCandidate
+import com.example.astrophoto.processing.jpeg.v2.model.StoredFinalResultSelection
 import com.example.astrophoto.processing.jpeg.v2.model.SkyMask
 import com.example.astrophoto.processing.jpeg.v2.model.SkyMaskResult
 import com.example.astrophoto.processing.jpeg.v2.output.LosslessProcessedImageWriter
@@ -181,7 +189,11 @@ enum class JpegProfileProcessingOutcome {
 
 class JpegProfileProcessingException(
     val outcome: JpegProfileProcessingOutcome,
-    message: String
+    message: String,
+    val acceptedFrames: Int? = null,
+    val totalFrames: Int? = null,
+    val minimumFrames: Int? = null,
+    val canContinueWithUserApproval: Boolean = false
 ) : IllegalStateException(message)
 
 internal data class JpegProfileOutputPlan(
@@ -198,16 +210,28 @@ internal fun shouldRetryAutomaticIntegrationWithoutMask(
 internal fun requireMinimumRegisteredFrames(
     acceptedFrames: Int,
     totalFrames: Int,
-    profile: AstroProcessingProfile
+    profile: AstroProcessingProfile,
+    userApprovedInsufficientFrames: Boolean = false
 ) {
-    if (acceptedFrames < profile.minimumFrames) {
+    if (acceptedFrames < profile.minimumFrames &&
+        (!userApprovedInsufficientFrames || acceptedFrames == 0)
+    ) {
         throw JpegProfileProcessingException(
             JpegProfileProcessingOutcome.FAILED_REGISTRATION,
             "Регистрация не удалась: использовано $acceptedFrames/$totalFrames, " +
-                "минимум для ${profile.title} — ${profile.minimumFrames}. Файл профиля не создан."
+                "минимум для ${profile.title} — ${profile.minimumFrames}. Файл профиля не создан.",
+            acceptedFrames = acceptedFrames,
+            totalFrames = totalFrames,
+            minimumFrames = profile.minimumFrames,
+            canContinueWithUserApproval = acceptedFrames > 0
         )
     }
 }
+
+internal fun Throwable.userContinuableProfileFailure(): JpegProfileProcessingException? =
+    generateSequence(this) { it.cause }
+        .filterIsInstance<JpegProfileProcessingException>()
+        .firstOrNull { it.canContinueWithUserApproval }
 
 internal fun jpegProfileOutputPlan(
     profile: AstroProcessingProfile,
@@ -227,8 +251,41 @@ internal fun jpegProfileOutputPlan(
     ResultCandidateType.REFERENCE -> throw JpegProfileProcessingException(
         JpegProfileProcessingOutcome.FAILED_REGISTRATION,
         "Стек отклонён проверкой качества: использовано $acceptedFrames/$totalFrames; " +
-            "${failureReason ?: "reference-only result"}. Файл профиля не создан."
+            "${failureReason ?: "reference-only result"}. Файл профиля не создан.",
+        acceptedFrames = acceptedFrames,
+        totalFrames = totalFrames,
+        minimumFrames = profile.minimumFrames,
+        canContinueWithUserApproval = acceptedFrames > 0
     )
+}
+
+internal fun userApprovedProfileSelection(
+    selection: StoredFinalResultSelection,
+    cleanStack: StoredResultCandidate,
+    userApproved: Boolean
+): StoredFinalResultSelection = if (
+    userApproved && selection.selected.type == ResultCandidateType.REFERENCE
+) {
+    selection.copy(
+        selected = cleanStack,
+        fallbackUsed = true,
+        fallbackReason = "user_approved_rejected_frames",
+        internalFallbackLabel = ResultSelectionPolicy.INTERNAL_FALLBACK_LABEL
+    )
+} else {
+    selection
+}
+
+internal fun recordUserApprovedFrameWarning(
+    warnings: MutableList<String>,
+    userApproved: Boolean,
+    acceptedFrames: Int,
+    totalFrames: Int,
+    minimumFrames: Int
+) {
+    if (userApproved && acceptedFrames < minimumFrames) {
+        warnings += "Продолжено с разрешения пользователя: принято $acceptedFrames/$totalFrames кадров"
+    }
 }
 
 internal data class SavedResultBookkeeping(
@@ -309,6 +366,17 @@ class JpegStacker internal constructor(
     private val manualAlignmentFailureInjector: ManualAlignmentFailureInjector =
         NoOpManualAlignmentFailureInjector
 ) {
+    private val profileRegistrationCancellation = AtomicBoolean(false)
+    private val userApprovedInsufficientProfileFrames = AtomicBoolean(false)
+
+    fun cancelProfileRegistration() {
+        profileRegistrationCancellation.set(true)
+    }
+
+    fun setUserApprovedInsufficientProfileFrames(approved: Boolean) {
+        userApprovedInsufficientProfileFrames.set(approved)
+    }
+
     suspend fun stack(
         session: SessionSummary,
         frames: List<SessionFrame>,
@@ -1375,7 +1443,7 @@ class JpegStacker internal constructor(
             }
             val commonWidth = dimensions.minOf { it.first }
             val commonHeight = dimensions.minOf { it.second }
-            currentStage = "JPEG frame analysis"
+            currentStage = "Анализ JPEG-кадров"
             val analysisScale = minOf(
                 1f,
                 PROFILE_ANALYSIS_MAX_DIMENSION.toFloat() / maxOf(commonWidth, commonHeight)
@@ -1448,7 +1516,7 @@ class JpegStacker internal constructor(
                 (System.nanoTime() - frameAnalysisStarted) / 1_000_000L
             )
             journalRunId?.let { runJournal.update(it, "frame_analysis_completed") }
-            currentStage = "Static artifact analysis"
+            currentStage = "Анализ неподвижных артефактов"
             val staticArtifactStarted = System.nanoTime()
             val staticArtifactAnalyzer = StaticArtifactAnalyzer()
             val staticArtifactMask = staticArtifactAnalyzer.analyze(
@@ -1533,16 +1601,16 @@ class JpegStacker internal constructor(
             val registrationReports = mutableListOf<FrameRegistrationReport>()
 
             try {
-                currentStage = "Stage 1 registration"
+                currentStage = "Первичное выравнивание"
                 val registrationStarted = System.nanoTime()
                 withContext(Dispatchers.Main.immediate) {
-                    onProgress("Star alignment", 0, selectedFrames.size)
+                    onProgress("Выравнивание по звёздам", 0, selectedFrames.size)
                 }
                 referenceStars = selectedReference.analysis.reliableStarCount
                 if (referenceStars < 4) {
                     warnings += "Звёзд найдено мало: $referenceStars"
                 }
-                val analysisRegistration = SequenceAwareRegistrationEngine().register(
+                val analysisRegistration = registerProfileFramesWithWatchdog(
                     frames = selectedFrames.map { frame ->
                         val analyzed = checkNotNull(analysisByFrameKey[frame.key])
                         TemporalFeatureFrame(
@@ -1672,7 +1740,10 @@ class JpegStacker internal constructor(
                 val pixelCount = targetWidth.toLong() * targetHeight
                 val requiredCacheBytes = pixelCount * Int.SIZE_BYTES * provisionalAcceptedFrames
                 val requiredTemporaryBytes = requiredCacheBytes + pixelCount * 28L
-                require(temporaryFiles.directory.usableSpace >=
+                val allocatableTemporaryBytes = availableTemporaryBytes(
+                    temporaryFiles.directory
+                )
+                require(allocatableTemporaryBytes >=
                     requiredTemporaryBytes + MIN_CACHE_FREE_SPACE_BYTES
                 ) {
                     "Недостаточно временного места для полноразмерной JPEG-обработки"
@@ -1682,7 +1753,7 @@ class JpegStacker internal constructor(
                     targetWidth,
                     targetHeight
                 )
-                currentStage = "Full-resolution registration refinement"
+                currentStage = "Уточнение выравнивания в полном разрешении"
                 val refinementStarted = System.nanoTime()
                 val fullResolutionPreparation = prepareAndRefineFullResolutionFrames(
                     provisionalFrames = acceptedProfileFrames,
@@ -1718,7 +1789,19 @@ class JpegStacker internal constructor(
                 selectedFrames.forEach { frame ->
                     registrationReports += allRegistrationsByKey.getValue(frame.key).toReport(frame.fileName)
                 }
-                requireMinimumRegisteredFrames(acceptedFrames, selectedFrames.size, profile)
+                requireMinimumRegisteredFrames(
+                    acceptedFrames,
+                    selectedFrames.size,
+                    profile,
+                    userApprovedInsufficientProfileFrames.get()
+                )
+                recordUserApprovedFrameWarning(
+                    warnings,
+                    userApprovedInsufficientProfileFrames.get(),
+                    acceptedFrames,
+                    selectedFrames.size,
+                    profile.minimumFrames
+                )
                 pipelineTiming.record(
                     "full_resolution_refinement",
                     (System.nanoTime() - refinementStarted) / 1_000_000L
@@ -1731,10 +1814,10 @@ class JpegStacker internal constructor(
                         "samplingProductionContrast=${formatMetric(samplingFidelity.productionContrastRatio)}"
                 )
 
-                currentStage = "Calculating frame weights"
+                currentStage = "Расчёт весов кадров"
                 val weightCalculationStarted = System.nanoTime()
                 withContext(Dispatchers.Main.immediate) {
-                    onProgress("Calculating frame weights", 0, acceptedFrames)
+                    onProgress("Расчёт весов кадров", 0, acceptedFrames)
                 }
                 val frameWeights = FrameWeightCalculator().calculate(
                     acceptedProfileFrames.mapIndexed { index, accepted ->
@@ -1763,9 +1846,9 @@ class JpegStacker internal constructor(
                     "weight_calculation",
                     (System.nanoTime() - weightCalculationStarted) / 1_000_000L
                 )
-                currentStage = "Stacking full-resolution image"
+                currentStage = "Сложение изображения в полном разрешении"
                 withContext(Dispatchers.Main.immediate) {
-                    onProgress("Stacking full-resolution image", 0, 1)
+                    onProgress("Сложение изображения в полном разрешении", 0, 1)
                 }
                 journalRunId?.let { runJournal.update(it, "registration_completed") }
                 val integrationMaskEstimate = ImageAllocationEstimate.booleanMask(
@@ -1841,9 +1924,9 @@ class JpegStacker internal constructor(
                     sensorDefectFilteringReport
                 )
                 journalRunId?.let { runJournal.update(it, "integration_completed") }
-                currentStage = "Refining sky mask"
+                currentStage = "Уточнение маски неба"
                 withContext(Dispatchers.Main.immediate) {
-                    onProgress("Refining sky mask", 0, 3)
+                    onProgress("Уточнение маски неба", 0, 3)
                 }
                 val skyMaskingStarted = System.nanoTime()
                 val fullResolutionStars = scaleV2Stars(
@@ -1883,9 +1966,9 @@ class JpegStacker internal constructor(
                 )
                 journalRunId?.let { runJournal.update(it, "reference_and_mask_completed") }
 
-                currentStage = "Combining sky and foreground"
+                currentStage = "Объединение неба и переднего плана"
                 withContext(Dispatchers.Main.immediate) {
-                    onProgress("Combining sky and foreground", 2, 3)
+                    onProgress("Объединение неба и переднего плана", 2, 3)
                 }
                 val composite = composeCleanCandidate(
                     stackedSky = starPreservedStackedSky,
@@ -1919,7 +2002,7 @@ class JpegStacker internal constructor(
                 }
                 journalRunId?.let { runJournal.update(it, "clean_stack_composed") }
 
-                currentStage = "Clean stack validation"
+                currentStage = "Проверка чистого стека"
                 val qualityAnalysisStarted = System.nanoTime()
                 val fullStaticArtifactMask = staticArtifactMask.scaledTo(targetWidth, targetHeight)
                 val qualityAnalyzer = FileBackedResultQualityAnalyzer(
@@ -1995,7 +2078,7 @@ class JpegStacker internal constructor(
                 val processedDecision: QualityGateDecision
                 var adaptiveDiagnostics: AdaptiveProcessingDiagnostics? = null
                 if (stage4Executed) {
-                    currentStage = "File-backed adaptive processing"
+                    currentStage = "Адаптивная обработка с временными файлами"
                     val alignedStackStars = qualityAnalyzer.detectStars(
                         starPreservedStackedSky,
                         effectiveSkyAlpha
@@ -2062,13 +2145,17 @@ class JpegStacker internal constructor(
                         if (stage4Executed) "stage4_completed" else "stage4_skipped"
                     )
                 }
-                currentStage = "Final quality analysis"
-                val finalSelection = ResultSelectionPolicy().select(
-                    referenceCandidate,
+                currentStage = "Итоговая проверка качества"
+                val finalSelection = userApprovedProfileSelection(
+                    ResultSelectionPolicy().select(
+                        referenceCandidate,
+                        cleanStackCandidate,
+                        processedCandidate,
+                        processedDecision,
+                        cleanStackDecision
+                    ),
                     cleanStackCandidate,
-                    processedCandidate,
-                    processedDecision,
-                    cleanStackDecision
+                    userApprovedInsufficientProfileFrames.get()
                 )
                 val finalizedSensorDefectFilteringReport = candidateMaskLineage(
                     filtering = sensorDefectFilteringReport,
@@ -2393,7 +2480,7 @@ class JpegStacker internal constructor(
                 var reportJson = processingReport.toJson()
                 temporaryFiles.atomicTextFile("final-report.json", reportJson)
                 journalRunId?.let { runJournal.update(it, "report_prepared") }
-                currentStage = "Saving lossless PNG"
+                currentStage = "Сохранение PNG без потерь"
                 val savedArtifacts = savePrimaryAndAncillaryEnhanced(
                     selected = finalSelection.selected,
                     requestedFileName = requestedFileName,
@@ -2427,102 +2514,24 @@ class JpegStacker internal constructor(
                 processingReport = savedArtifacts.processingReport
                 reportJson = savedArtifacts.reportJson
 
-                currentStage = "Writing processing report"
-                val reportOutcome = try {
-                    ReportWriteOutcome.Written(
-                        ProcessingReportWriter(context).write(
-                            session,
-                            fileName,
-                            reportJson
-                        )
-                    )
-                } catch (error: CancellationException) {
-                    throw error
-                } catch (error: Exception) {
-                    ReportWriteOutcome.Failed(error.message ?: error::class.java.simpleName)
-                }
-                val reportFiles = when (reportOutcome) {
-                    is ReportWriteOutcome.Written -> {
-                        pipelineTiming.record(
-                            "report_writing",
-                            reportOutcome.value.writeDurationMillis
-                        )
-                        if (reportOutcome.value.fallbackUsed) {
-                            processingReport = processingReport.copy(
-                                reportPublicationMode = reportOutcome.value.publicationMode,
-                                reportFallbackUsed = true
-                            )
-                            reportJson = processingReport.toJson()
-                            temporaryFiles.atomicTextFile("final-report.json", reportJson)
-                            runCatching {
-                                AppSpecificProcessingReportStore(context).write(
-                                    session.folderName,
-                                    fileName,
-                                    reportJson
-                                )
-                            }.onSuccess {
-                                warnings += "Processing report stored in app-specific fallback"
-                            }.onFailure { error ->
-                                warnings += "Processing report fallback update failed: " +
-                                    (error.message ?: error::class.java.simpleName)
-                            }
-                        }
-                        listOf(reportOutcome.value.fileName)
-                    }
-                    is ReportWriteOutcome.Failed -> {
-                        warnings += "Processing report was not written: ${reportOutcome.reason}"
-                        val recovery = File(
-                            context.cacheDir,
-                            "jpeg-report-recovery-${journalRunId?.take(8) ?: "unknown"}.json"
-                        )
-                        runCatching { recovery.writeText(reportJson, Charsets.UTF_8) }
-                        emptyList()
-                    }
-                }
-                val additionalFiles = reportFiles + listOfNotNull(additionalImageFileName)
-                val publishedReport = when (reportOutcome) {
-                    is ReportWriteOutcome.Written -> reportOutcome.value
-                    is ReportWriteOutcome.Failed -> null
-                }
-                journalRunId?.let { runId ->
-                    if (publishedReport != null) {
-                        runCatching {
-                            runJournal.updatePublishedArtifacts(
-                                runId = runId,
-                                artifactSessionId = artifactSessionId(session.folderName),
-                                outputFileName = fileName,
-                                outputContentUri = saved.contentUri,
-                                outputFilePath = saved.filePath,
-                                reportFileName = publishedReport.fileName,
-                                reportContentUri = publishedReport.contentUri,
-                                reportFilePath = publishedReport.filePath
-                            )
-                        }.onFailure { error ->
-                            warnings += "Processing journal artifact identity update failed"
-                            Log.e(
-                                POST_COMPLETION_JOURNAL_TAG,
-                                "artifact identity update failed run=${runId.take(8)} " +
-                                    "operation=report_published exception=${error::class.java.simpleName}",
-                                error
-                            )
-                        }
-                    } else {
-                        runCatching { runJournal.update(runId, "report_publication_failed") }
-                            .onFailure { error ->
-                                Log.e(
-                                    POST_COMPLETION_JOURNAL_TAG,
-                                    "report failure stage update failed run=${runId.take(8)} " +
-                                        "exception=${error::class.java.simpleName}",
-                                    error
-                                )
-                            }
-                    }
-                }
-                Log.i(
-                    POST_COMPLETION_TAG,
-                    "post_completion.report_published run=${journalRunId?.take(8).orEmpty()} " +
-                        "output=$fileName report=${publishedReport != null}"
+                currentStage = "Запись отчёта обработки"
+                val reportPublication = publishProcessingReport(
+                    session = session,
+                    fileName = fileName,
+                    outputContentUri = saved.contentUri,
+                    outputFilePath = saved.filePath,
+                    initialReport = processingReport,
+                    initialReportJson = reportJson,
+                    temporaryFiles = temporaryFiles,
+                    pipelineTiming = pipelineTiming,
+                    warnings = warnings,
+                    journalRunId = journalRunId,
+                    runJournal = runJournal
                 )
+                processingReport = reportPublication.processingReport
+                reportJson = reportPublication.reportJson
+                val reportFiles = reportPublication.reportFiles
+                val additionalFiles = reportFiles + listOfNotNull(additionalImageFileName)
                 Log.i(
                     "AstroPhotoJpegMemory",
                     "peakEstimated=${memoryTracker.peakEstimatedResidentBytes} " +
@@ -2758,6 +2767,37 @@ class JpegStacker internal constructor(
         finalizedStackResult
     }
 
+    private fun registerProfileFramesWithWatchdog(
+        frames: List<TemporalFeatureFrame>,
+        referenceFrameId: String,
+        imageWidth: Int,
+        imageHeight: Int
+    ): SequenceAwareRegistrationDiagnostics {
+        profileRegistrationCancellation.set(false)
+        val deadlineNanos = System.nanoTime() + PROFILE_REGISTRATION_TIMEOUT_MILLIS * 1_000_000L
+        return try {
+            SequenceAwareRegistrationEngine().register(
+                frames = frames,
+                referenceFrameId = referenceFrameId,
+                imageWidth = imageWidth,
+                imageHeight = imageHeight,
+                cancellationCheck = {
+                    if (profileRegistrationCancellation.get()) {
+                        throw CancellationException("Profile registration cancelled")
+                    }
+                    if (System.nanoTime() >= deadlineNanos) {
+                        throw ProfileRegistrationTimeoutException()
+                    }
+                }
+            )
+        } catch (_: ProfileRegistrationTimeoutException) {
+            error(
+                "Выравнивание звёзд превысило безопасный лимит времени. " +
+                    "Попробуйте исключить кадры без звёзд или с сильным смазом."
+            )
+        }
+    }
+
     private data class SavedProfileArtifacts(
         val saved: SavedProcessedImage,
         val additionalImageFileName: String?,
@@ -2766,6 +2806,119 @@ class JpegStacker internal constructor(
         val primaryFallbackUsed: Boolean = false,
         val primaryFallbackReason: String? = null
     )
+
+    private data class PublishedProfileReport(
+        val processingReport: ProcessingReport,
+        val reportJson: String,
+        val reportFiles: List<String>
+    )
+
+    private suspend fun publishProcessingReport(
+        session: SessionSummary,
+        fileName: String,
+        outputContentUri: String?,
+        outputFilePath: String?,
+        initialReport: ProcessingReport,
+        initialReportJson: String,
+        temporaryFiles: TemporaryPipelineFiles,
+        pipelineTiming: PipelineTimingCollector,
+        warnings: MutableList<String>,
+        journalRunId: String?,
+        runJournal: ProcessingRunJournal
+    ): PublishedProfileReport {
+        var processingReport = initialReport
+        var reportJson = initialReportJson
+        val reportOutcome: ReportWriteOutcome<SavedProcessingReport> = try {
+            ReportWriteOutcome.Written(
+                ProcessingReportWriter(context).write(session, fileName, reportJson)
+            )
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            ReportWriteOutcome.Failed(error.message ?: error::class.java.simpleName)
+        }
+        val reportFiles = when (reportOutcome) {
+            is ReportWriteOutcome.Written -> {
+                pipelineTiming.record(
+                    "report_writing",
+                    reportOutcome.value.writeDurationMillis
+                )
+                if (reportOutcome.value.fallbackUsed) {
+                    processingReport = processingReport.copy(
+                        reportPublicationMode = reportOutcome.value.publicationMode,
+                        reportFallbackUsed = true
+                    )
+                    reportJson = processingReport.toJson()
+                    temporaryFiles.atomicTextFile("final-report.json", reportJson)
+                    runCatching {
+                        AppSpecificProcessingReportStore(context).write(
+                            session.folderName,
+                            fileName,
+                            reportJson
+                        )
+                    }.onSuccess {
+                        warnings += "Отчёт обработки сохранён во внутреннее хранилище"
+                    }.onFailure { error ->
+                        warnings += "Не удалось обновить резервный отчёт обработки: " +
+                            (error.message ?: error::class.java.simpleName)
+                    }
+                }
+                listOf(reportOutcome.value.fileName)
+            }
+            is ReportWriteOutcome.Failed -> {
+                warnings += "Не удалось записать отчёт обработки: ${reportOutcome.reason}"
+                val recovery = File(
+                    context.cacheDir,
+                    "jpeg-report-recovery-${journalRunId?.take(8) ?: "unknown"}.json"
+                )
+                runCatching { recovery.writeText(reportJson, Charsets.UTF_8) }
+                emptyList()
+            }
+        }
+        val publishedReport = (
+            reportOutcome as? ReportWriteOutcome.Written<SavedProcessingReport>
+            )?.value
+        journalRunId?.let { runId ->
+            if (publishedReport != null) {
+                runCatching {
+                    runJournal.updatePublishedArtifacts(
+                        runId = runId,
+                        artifactSessionId = artifactSessionId(session.folderName),
+                        outputFileName = fileName,
+                        outputContentUri = outputContentUri,
+                        outputFilePath = outputFilePath,
+                        reportFileName = publishedReport.fileName,
+                        reportContentUri = publishedReport.contentUri,
+                        reportFilePath = publishedReport.filePath
+                    )
+                }.onFailure { error ->
+                    warnings += "Не удалось обновить данные отчёта в журнале обработки"
+                    Log.e(
+                        POST_COMPLETION_JOURNAL_TAG,
+                        "artifact identity update failed run=${runId.take(8)} " +
+                            "operation=report_published exception=${error::class.java.simpleName}",
+                        error
+                    )
+                }
+            } else {
+                runCatching { runJournal.update(runId, "report_publication_failed") }
+                    .onFailure { error ->
+                        Log.e(
+                            POST_COMPLETION_JOURNAL_TAG,
+                            "report failure stage update failed run=${runId.take(8)} " +
+                                "exception=${error::class.java.simpleName}",
+                            error
+                        )
+                    }
+            }
+        }
+        Log.i(
+            POST_COMPLETION_TAG,
+            "post_completion.report_published run=${journalRunId?.take(8).orEmpty()} " +
+                "output=$fileName report=${publishedReport != null}"
+        )
+        return PublishedProfileReport(processingReport, reportJson, reportFiles)
+    }
 
     private data class PrimaryPublication(
         val saved: SavedProcessedImage,
@@ -2794,7 +2947,7 @@ class JpegStacker internal constructor(
         onProgress: suspend (message: String, current: Int, total: Int) -> Unit
     ): SavedProfileArtifacts {
         withContext(Dispatchers.Main.immediate) {
-            onProgress("Saving lossless PNG", 3, 3)
+            onProgress("Сохранение PNG без потерь", 3, 3)
         }
         val pngWritingStarted = System.nanoTime()
         val primary = publishPrimaryWithExperimentalFallback(
@@ -2977,6 +3130,14 @@ class JpegStacker internal constructor(
                 (error.message ?: error::class.java.simpleName)
         }
         .getOrNull()
+
+    private fun availableTemporaryBytes(directory: File): Long = runCatching {
+        val storageManager = context.getSystemService(StorageManager::class.java)
+        val storageUuid = storageManager.getUuidForPath(directory)
+        storageManager.getAllocatableBytes(storageUuid)
+    }.getOrElse {
+        directory.usableSpace
+    }
 
     private fun deletePublishedOutput(saved: SavedProcessedImage): Boolean = when {
         saved.contentUri != null -> context.contentResolver.delete(
@@ -3790,12 +3951,7 @@ class JpegStacker internal constructor(
             return decoded
         }
         return try {
-            Bitmap.createScaledBitmap(
-                decoded,
-                targetWidth,
-                targetHeight,
-                true
-            )
+            Bitmap.createScaledBitmap(decoded, targetWidth, targetHeight, true)
         } finally {
             decoded.recycle()
         }
@@ -5109,11 +5265,7 @@ class JpegStacker internal constructor(
             total: Int
         ) -> Unit
     ): ManualCalibratedAverage {
-        val output = Bitmap.createBitmap(
-            targetWidth,
-            targetHeight,
-            Bitmap.Config.ARGB_8888
-        )
+        val output = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
         val alignmentShifts = mutableListOf<AlignmentShift>()
         var sensorDefectFallback: Bitmap? = null
         try {
@@ -5591,7 +5743,11 @@ class JpegStacker internal constructor(
     }
 
     private fun createShiftedBitmapCopy(source: Bitmap, dx: Int, dy: Int): Bitmap {
-        val output = Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888)
+        val output = Bitmap.createBitmap(
+            source.width,
+            source.height,
+            Bitmap.Config.ARGB_8888
+        )
         val rowCount = 32
         val pixels = IntArray(source.width * rowCount)
         var top = 0
@@ -6318,6 +6474,7 @@ class JpegStacker internal constructor(
         private const val MAX_SIGMA_FRAMES = 30
         private const val MAX_SIGMA_PIXELS = 8_000_000L
         private const val MAX_PROFILE_FRAMES = 30
+        private const val PROFILE_REGISTRATION_TIMEOUT_MILLIS = 120_000L
         private const val PROFILE_ANALYSIS_MAX_DIMENSION = 960
         private const val PROFILE_REGISTRATION_TAG = "AstroPhotoJpegV2"
         private const val ADAPTIVE_PROCESSING_TAG = "AstroPhotoJpegStage4"
@@ -6520,6 +6677,15 @@ private const val MAX_MEDIAN_FRAMES_UI = 30
 private const val MAX_SIGMA_FRAMES_UI = 30
 private const val MAX_PROFILE_FRAMES_UI = 30
 
+private class ProfileRegistrationTimeoutException : RuntimeException()
+
+private data class PendingProfileContinuation(
+    val profile: AstroProcessingProfile,
+    val acceptedFrames: Int,
+    val totalFrames: Int,
+    val minimumFrames: Int
+)
+
 @Composable
 fun JpegStackingBlock(
     session: SessionSummary,
@@ -6541,6 +6707,8 @@ fun JpegStackingBlock(
     val rawStacker = remember { RawStacker(context.applicationContext) }
     val rawSidecarStore = remember { AstroRawSidecarStore(context.applicationContext) }
     val coroutineScope = rememberCoroutineScope()
+    val processingStates by SessionProcessingCoordinator.states.collectAsState()
+    val sessionProcessingState = processingStates[session.folderName]
 
     var frames by remember(session.folderName) {
         mutableStateOf<List<SessionFrame>>(emptyList())
@@ -6564,9 +6732,12 @@ fun JpegStackingBlock(
     var autoStretchAfterStacking by remember(session.folderName) {
         mutableStateOf(false)
     }
-    var sigmaValue by remember(session.folderName) { mutableStateOf(2.0) }
+    var sigmaValue by remember(session.folderName) { mutableDoubleStateOf(2.0) }
     var showSigmaConfirmation by remember(session.folderName) {
         mutableStateOf(false)
+    }
+    var pendingProfileContinuation by remember(session.folderName) {
+        mutableStateOf<PendingProfileContinuation?>(null)
     }
     var helpTopic by remember(session.folderName) {
         mutableStateOf<HelpTopic?>(null)
@@ -6613,11 +6784,21 @@ fun JpegStackingBlock(
             loading = false
         }
     }
-    LaunchedEffect(stacking) {
-        onOperationStateChanged(stacking)
+    LaunchedEffect(sessionProcessingState) {
+        sessionProcessingState?.let { state ->
+            stacking = state.running
+            status = state.status
+            progressCurrent = state.current
+            progressTotal = state.total
+        }
+        onOperationStateChanged(sessionProcessingState?.running == true)
     }
     DisposableEffect(Unit) {
-        onDispose { onOperationStateChanged(false) }
+        onDispose {
+            onOperationStateChanged(
+                SessionProcessingCoordinator.isActive(session.folderName)
+            )
+        }
     }
 
     val jpegFrames = frames.filter {
@@ -6702,8 +6883,24 @@ fun JpegStackingBlock(
         }
     }
 
+    fun reportProcessing(message: String, current: Int, total: Int) {
+        status = message
+        progressCurrent = current
+        progressTotal = total
+        SessionProcessingCoordinator.update(session.folderName, message, current, total)
+    }
+
+    fun reportProcessing(message: String) {
+        status = message
+        SessionProcessingCoordinator.update(session.folderName, message)
+    }
+
     fun startStacking() {
-        if (!canStartProcessing(stacking, processingJob?.isActive == true)) return
+        if (!canStartProcessing(
+                stacking,
+                SessionProcessingCoordinator.isActive(session.folderName)
+            )
+        ) return
         stacking = true
         progressCurrent = 0
         progressTotal = when {
@@ -6714,7 +6911,13 @@ fun JpegStackingBlock(
         }
         result = null
         status = "Подготовка кадров..."
-        processingJob = coroutineScope.launch {
+        processingJob = SessionProcessingCoordinator.start(
+            context = context,
+            sessionFolder = session.folderName,
+            label = "JPEG-стеккинг",
+            initialStatus = checkNotNull(status),
+            initialTotal = progressTotal
+        ) {
             try {
                 val stackResult = when {
                     sigmaMode -> stacker.sigmaStack(
@@ -6726,9 +6929,7 @@ fun JpegStackingBlock(
                         autoStretch = autoStretchAfterStacking,
                         source = stackingSource
                     ) { message, current, total ->
-                        progressCurrent = current
-                        progressTotal = total
-                        status = message
+                        reportProcessing(message, current, total)
                     }
                     medianMode -> stacker.medianStack(
                         session = session,
@@ -6738,9 +6939,7 @@ fun JpegStackingBlock(
                         autoStretch = autoStretchAfterStacking,
                         source = stackingSource
                     ) { message, current, total ->
-                        progressCurrent = current
-                        progressTotal = total
-                        status = message
+                        reportProcessing(message, current, total)
                     }
                     useDarkFrames -> stacker.stackWithDarkFrames(
                         session = session,
@@ -6753,9 +6952,7 @@ fun JpegStackingBlock(
                         source = stackingSource,
                         darkCrop = darkCropResult?.getOrNull()
                     ) { message, current, total ->
-                        progressCurrent = current
-                        progressTotal = total
-                        status = message
+                        reportProcessing(message, current, total)
                     }
                     else -> stacker.stack(
                         session = session,
@@ -6765,15 +6962,11 @@ fun JpegStackingBlock(
                         autoStretch = autoStretchAfterStacking,
                         source = stackingSource,
                         onProgress = { current, total ->
-                            progressCurrent = current
-                            progressTotal = total
                             val message = "Обработка кадра $current из $total"
-                            status = message
+                            reportProcessing(message, current, total)
                         },
                         onAlignment = { current, total, message ->
-                            progressCurrent = current
-                            progressTotal = total
-                            status = message
+                            reportProcessing(message, current, total)
                         }
                     )
                 }
@@ -6786,10 +6979,10 @@ fun JpegStackingBlock(
                         status = buildString {
                             append("Готово: ${it.fileName}")
                             if (it.additionalFiles.isNotEmpty()) {
-                                append("\nadditional: ${it.additionalFiles.joinToString()}")
+                                append("\nДополнительные файлы: ${it.additionalFiles.joinToString()}")
                             }
                             it.manualAlignmentSummary?.let { summary ->
-                                append("\nManual alignment: $summary")
+                                append("\nРучное выравнивание: $summary")
                             }
                             if (!it.sessionInfoUpdated) {
                                 append(
@@ -6800,15 +6993,16 @@ fun JpegStackingBlock(
                             if (it.downscaled) {
                                 append(
                                     if (sigmaMode) {
-                                        "\nSigma результат сохранён в уменьшенном " +
+                                        "\nРезультат сигма-клиппинга сохранён в уменьшенном " +
                                             "размере из-за ограничений памяти."
                                     } else {
-                                        "\nMedian сохранён в уменьшенном " +
+                                        "\nМедианный результат сохранён в уменьшенном " +
                                             "размере из-за ограничений памяти."
                                     }
                                 )
                             }
                         }
+                        reportProcessing(checkNotNull(status))
                         notifyProcessingCompleted()
                         onStackCompleted()
                         onResultReady(it.fileName)
@@ -6816,15 +7010,15 @@ fun JpegStackingBlock(
                     onFailure = {
                         Log.e("AstroPhotoProcessing", "Manual processing failed", it)
                         val message = it.message ?: "Не удалось сохранить результат"
-                        status = message
+                        reportProcessing(message)
                     }
                 )
             } catch (error: CancellationException) {
-                status = "Обработка остановлена"
+                reportProcessing("Обработка остановлена")
                 throw error
             } catch (error: Throwable) {
                 Log.e("AstroPhotoProcessing", "Manual processing crashed", error)
-                status = error.message ?: "Не удалось выполнить обработку"
+                reportProcessing(error.message ?: "Не удалось выполнить обработку")
             } finally {
                 stacking = false
                 processingJob = null
@@ -6833,23 +7027,31 @@ fun JpegStackingBlock(
     }
 
     fun startRawStacking() {
-        if (!canStartProcessing(stacking, processingJob?.isActive == true)) return
+        if (!canStartProcessing(
+                stacking,
+                SessionProcessingCoordinator.isActive(session.folderName)
+            )
+        ) return
         stacking = true
         progressCurrent = 0
         progressTotal = usableRawFrames.size
         result = null
         status = "Подготовка линейных RAW-кадров…"
         rawStatus = status
-        processingJob = coroutineScope.launch {
+        processingJob = SessionProcessingCoordinator.start(
+            context = context,
+            sessionFolder = session.folderName,
+            label = "RAW-стеккинг",
+            initialStatus = checkNotNull(status),
+            initialTotal = progressTotal
+        ) {
             try {
                 val rawResult = rawStacker.stack(
                     session = session,
                     frames = usableRawFrames
                 ) { message, current, total ->
-                    status = message
+                    reportProcessing(message, current, total)
                     rawStatus = message
-                    progressCurrent = current
-                    progressTotal = total
                 }
                 rawResult.exceptionOrNull()?.let { error ->
                     if (error is CancellationException) throw error
@@ -6862,23 +7064,24 @@ fun JpegStackingBlock(
                             created.warnings.forEach { append("\n$it") }
                         }
                         rawStatus = status
+                        reportProcessing(checkNotNull(status))
                         notifyProcessingCompleted()
                         onStackCompleted()
                         onResultReady(created.fileName)
                     },
                     onFailure = { error ->
                         Log.e("AstroPhotoProcessing", "RAW processing failed", error)
-                        status = error.message ?: "Не удалось обработать RAW"
+                        reportProcessing(error.message ?: "Не удалось обработать RAW")
                         rawStatus = status
                     }
                 )
             } catch (error: CancellationException) {
-                status = "Обработка RAW остановлена"
+                reportProcessing("Обработка RAW остановлена")
                 rawStatus = status
                 throw error
             } catch (error: Throwable) {
                 Log.e("AstroPhotoProcessing", "RAW processing crashed", error)
-                status = error.message ?: "Не удалось обработать RAW"
+                reportProcessing(error.message ?: "Не удалось обработать RAW")
                 rawStatus = status
             } finally {
                 stacking = false
@@ -6887,8 +7090,14 @@ fun JpegStackingBlock(
         }
     }
 
-    fun startProfile(profile: AstroProcessingProfile) {
-        if (!canStartProcessing(stacking, processingJob?.isActive == true)) return
+    fun startProfile(profile: AstroProcessingProfile,
+        userApprovedInsufficientFrames: Boolean = false
+    ) {
+        if (!canStartProcessing(
+                stacking,
+                SessionProcessingCoordinator.isActive(session.folderName)
+            )
+        ) return
         val validSource = sourceSelection as? StackingSourceSelection.Valid
         if (validSource == null) {
             status = sourceError ?: "Источник кадров недоступен"
@@ -6902,7 +7111,14 @@ fun JpegStackingBlock(
         progressCurrent = 0
         progressTotal = validSource.frames.size
         status = "Подготовка профиля ${profile.title}..."
-        processingJob = coroutineScope.launch {
+        stacker.setUserApprovedInsufficientProfileFrames(userApprovedInsufficientFrames)
+        processingJob = SessionProcessingCoordinator.start(
+            context = context,
+            sessionFolder = session.folderName,
+            label = "Профиль ${profile.title}",
+            initialStatus = checkNotNull(status),
+            initialTotal = progressTotal
+        ) {
             var successfulResult: JpegStackResult? = null
             try {
                 val profileResult = stacker.profileStack(
@@ -6912,9 +7128,7 @@ fun JpegStackingBlock(
                     source = stackingSource,
                     framesRejected = badFrames.size + validSource.missingCropCount
                 ) { message, current, total ->
-                    status = message
-                    progressCurrent = current
-                    progressTotal = total
+                    reportProcessing(message, current, total)
                 }
                 profileResult.exceptionOrNull()?.let { error ->
                     if (error is CancellationException) throw error
@@ -6929,17 +7143,30 @@ fun JpegStackingBlock(
                             totalInputFrames = validSource.frames.size,
                             selectedResultTitle = resultCandidateTitle(created.selectedResultType),
                             updateResults = { updated -> profileResults = updated },
-                            updateStatus = { updated -> status = updated },
+                            updateStatus = { updated -> reportProcessing(updated) },
                             onStackCompleted = onStackCompleted
                         )
                         onResultReady(created.fileName)
+                        reportProcessing(checkNotNull(status))
                     },
                     onFailure = { error ->
-                        status = error.message ?: "Профильная обработка не удалась"
+                        val continuable = error.userContinuableProfileFailure()
+                        if (!userApprovedInsufficientFrames && continuable != null) {
+                            pendingProfileContinuation = PendingProfileContinuation(
+                                profile = profile,
+                                acceptedFrames = checkNotNull(continuable.acceptedFrames),
+                                totalFrames = checkNotNull(continuable.totalFrames),
+                                minimumFrames = checkNotNull(continuable.minimumFrames)
+                            )
+                            status = "Обработка приостановлена: требуется подтверждение"
+                        } else {
+                            status = error.message ?: "Профильная обработка не удалась"
+                        }
+                        reportProcessing(checkNotNull(status))
                     }
                 )
             } catch (error: CancellationException) {
-                status = "Обработка остановлена"
+                reportProcessing("Обработка остановлена")
                 throw error
             } catch (error: Throwable) {
                 val created = successfulResult
@@ -6953,11 +7180,12 @@ fun JpegStackingBlock(
                 )
                 if (created != null) {
                     profileResults = appendUniqueResult(profileResults, created)
-                    status = "Готово: ${created.fileName}\n$POST_COMPLETION_WARNING"
+                    reportProcessing("Готово: ${created.fileName}\n$POST_COMPLETION_WARNING")
                 } else {
-                    status = error.message ?: "Профильная обработка не удалась"
+                    reportProcessing(error.message ?: "Профильная обработка не удалась")
                 }
             } finally {
+                stacker.setUserApprovedInsufficientProfileFrames(false)
                 stacking = false
                 processingJob = null
             }
@@ -7066,9 +7294,9 @@ fun JpegStackingBlock(
                             label = {
                                 Text(
                                     if (option == ManualStackingSource.ORIGINAL) {
-                                        "Original JPEG"
+                                        "Исходные JPEG"
                                     } else {
-                                        "Cropped JPEG"
+                                        "Обрезанные JPEG"
                                     }
                                 )
                             }
@@ -7096,7 +7324,8 @@ fun JpegStackingBlock(
                     },
                     onCancel = {
                         status = "Остановка обработки…"
-                        processingJob?.cancel()
+                        stacker.cancelProfileRegistration()
+                        SessionProcessingCoordinator.cancel(session.folderName)
                     },
                     modifier = Modifier.testTag(AstroTestTags.ProcessingProgress)
                 )
@@ -7232,7 +7461,7 @@ fun JpegStackingBlock(
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                text = "Average, Average + Dark, Median, Sigma и детальные настройки.",
+                                text = "Среднее, среднее с тёмным кадром, медиана, сигма-клиппинг и детальные настройки.",
                                 color = AstroColors.TextSecondary,
                                 style = MaterialTheme.typography.bodySmall
                             )
@@ -7312,7 +7541,7 @@ fun JpegStackingBlock(
                 }
             }
             Text(
-                text = "SAFE применяет сдвиг только при уверенном совпадении; AGGRESSIVE оставлен для ручных экспериментов.",
+                text = "Безопасный режим применяет сдвиг только при уверенном совпадении; усиленный оставлен для ручных экспериментов.",
                 color = AstroColors.TextSecondary,
                 style = MaterialTheme.typography.bodySmall
             )
@@ -7369,7 +7598,7 @@ fun JpegStackingBlock(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text("Astro Stretch after stacking")
+                Text("Астрономическая растяжка после стеккинга")
                 Switch(
                     checked = autoStretchAfterStacking,
                     onCheckedChange = {
@@ -7387,11 +7616,11 @@ fun JpegStackingBlock(
 
             if (useDarkFrames) {
                 Text(
-                    text = "Dark Frames",
+                    text = "Тёмные кадры",
                     style = MaterialTheme.typography.titleMedium
                 )
-                Text("Найдено Darks/JPEG: ${darkFrames.size}")
-                Text("Dark frames используется: ${usableDarkFrames.size}")
+                Text("Найдено тёмных JPEG: ${darkFrames.size}")
+                Text("Используется тёмных кадров: ${usableDarkFrames.size}")
                 Text("Исключено dark-брака: ${badDarkFrames.size}")
                 Text(
                     text = "Компенсация тени",
@@ -7413,7 +7642,7 @@ fun JpegStackingBlock(
 
                 if (darkFrames.isEmpty()) {
                     Text(
-                        text = "Dark frames не найдены. Можно выполнить обычный " +
+                        text = "Тёмные кадры не найдены. Можно выполнить обычный " +
                             "stacking без вычитания шума.",
                         color = AstroColors.Warning
                     )
@@ -7427,7 +7656,7 @@ fun JpegStackingBlock(
                             .fillMaxWidth()
                             .heightIn(min = 52.dp)
                     ) {
-                        Text("Продолжить без Dark Frames")
+                        Text("Продолжить без тёмных кадров")
                     }
                 } else if (usableDarkFrames.isEmpty()) {
                     Text(
@@ -7444,7 +7673,7 @@ fun JpegStackingBlock(
             }
             if (medianMode && selectedFrames.size > MAX_MEDIAN_FRAMES_UI) {
                 Text(
-                    text = "Median может быть медленным. Будут использованы " +
+                    text = "Медианная обработка может быть медленной. Будут использованы " +
                         "первые $MAX_MEDIAN_FRAMES_UI кадров.",
                     color = AstroColors.Warning
                 )
@@ -7456,7 +7685,7 @@ fun JpegStackingBlock(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Sigma",
+                        text = "Сигма-клиппинг",
                         fontWeight = FontWeight.SemiBold
                     )
                     TextButton(
@@ -7492,7 +7721,7 @@ fun JpegStackingBlock(
                 }
                 if (selectedFrames.size > MAX_SIGMA_FRAMES_UI) {
                     Text(
-                        text = "Sigma clipping может быть медленным. Будут " +
+                        text = "Сигма-клиппинг может быть медленным. Будут " +
                             "использованы первые $MAX_SIGMA_FRAMES_UI кадров.",
                         color = AstroColors.Warning
                     )
@@ -7528,7 +7757,7 @@ fun JpegStackingBlock(
                             }
                         }
                         useDarkFrames && darkFrames.isEmpty() -> {
-                            status = "Dark frames не найдены"
+                            status = "Тёмные кадры не найдены"
                         }
                         useDarkFrames && usableDarkFrames.isEmpty() -> {
                             status = "Все dark frames помечены как брак"
@@ -7553,7 +7782,7 @@ fun JpegStackingBlock(
                         sigmaMode -> "Sigma JPEG"
                         medianMode && alignFrames -> "Median JPEG + Alignment"
                         medianMode -> "Median JPEG"
-                        useDarkFrames -> "Сложить JPEG с Dark Frames"
+                        useDarkFrames -> "Сложить JPEG с тёмными кадрами"
                         else -> "Сложить JPEG"
                     }
                 )
@@ -7596,7 +7825,7 @@ fun JpegStackingBlock(
                     )
                     stackResult.masterDarkDisplayPath?.let { masterPath ->
                         Text(
-                            text = "Master Dark: $masterPath",
+                            text = "Мастер тёмного кадра: $masterPath",
                             color = AstroColors.TextSecondary,
                             style = MaterialTheme.typography.bodySmall
                         )
@@ -7653,6 +7882,47 @@ fun JpegStackingBlock(
             dismissButton = {
                 TextButton(
                     onClick = { showSigmaConfirmation = false }
+                ) {
+                    Text("Отмена")
+                }
+            }
+        )
+    }
+
+    pendingProfileContinuation?.let { pending ->
+        AlertDialog(
+            onDismissRequest = {
+                pendingProfileContinuation = null
+                status = "Продолжение обработки отменено"
+            },
+            title = { Text("Продолжить с прошедшими кадрами?") },
+            text = {
+                Text(
+                    "Проверку прошли ${pending.acceptedFrames} из ${pending.totalFrames} кадров. " +
+                        "Для режима «${pending.profile.title}» обычно нужно минимум " +
+                        "${pending.minimumFrames}. Отклонённые кадры не будут использованы. " +
+                        "Результат может быть шумнее или содержать меньше деталей."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingProfileContinuation = null
+                        startProfile(
+                            pending.profile,
+                            userApprovedInsufficientFrames = true
+                        )
+                    }
+                ) {
+                    Text("Продолжить обработку")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        pendingProfileContinuation = null
+                        status = "Продолжение обработки отменено"
+                    }
                 ) {
                     Text("Отмена")
                 }

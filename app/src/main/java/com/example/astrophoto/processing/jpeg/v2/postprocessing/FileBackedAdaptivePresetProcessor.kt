@@ -75,7 +75,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
             )
         },
         safeFallback = { error ->
-            onProgress("Experimental processing failed; preserving CLEAN", TOTAL_STAGES, TOTAL_STAGES)
+            onProgress("Дополнительная обработка не удалась; сохранён чистый стек", TOTAL_STAGES, TOTAL_STAGES)
             experimentalProcessingFallback(
                 stackedSky,
                 referenceForeground,
@@ -122,7 +122,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
                 }
             }
 
-        onProgress("Analyzing sky", 0, TOTAL_STAGES)
+        onProgress("Анализ неба", 0, TOTAL_STAGES)
         var stageStarted = System.nanoTime()
         val before = fileStatistics(stackedSky)
         durations["sky_statistics"] = elapsed(stageStarted)
@@ -142,7 +142,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
             )
         }
 
-        onProgress("Removing light pollution", 1, TOTAL_STAGES)
+        onProgress("Удаление светового загрязнения", 1, TOTAL_STAGES)
         stageStarted = System.nanoTime()
         var working = gradientPass(
             stackedSky,
@@ -160,7 +160,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
         durations["gradient_removal"] = elapsed(stageStarted)
         var currentStatistics = fileStatistics(workingImage)
 
-        onProgress("Balancing sky color", 2, TOTAL_STAGES)
+        onProgress("Коррекция цвета неба", 2, TOTAL_STAGES)
         stageStarted = System.nanoTime()
         val neutralized = neutralizationPass(
             workingImage,
@@ -179,7 +179,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
         durations["background_neutralization"] = elapsed(stageStarted)
         currentStatistics = fileStatistics(workingImage)
 
-        onProgress("Stretching faint stars", 3, TOTAL_STAGES)
+        onProgress("Проявление слабых звёзд", 3, TOTAL_STAGES)
         stageStarted = System.nanoTime()
         val stretched = stretchPass(
             workingImage,
@@ -202,7 +202,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
         durations["stretch"] = elapsed(stageStarted)
         currentStatistics = fileStatistics(workingImage)
 
-        onProgress("Reducing color noise", 4, TOTAL_STAGES)
+        onProgress("Подавление цветного шума", 4, TOTAL_STAGES)
         stageStarted = System.nanoTime()
         val chroma = chromaPass(
             workingImage,
@@ -220,7 +220,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
         val chromaDiagnostics = chroma.second
         durations["chroma_reduction"] = elapsed(stageStarted)
 
-        onProgress("Enhancing stars", 5, TOTAL_STAGES)
+        onProgress("Усиление звёзд", 5, TOTAL_STAGES)
         currentStatistics = fileStatistics(workingImage)
         stageStarted = System.nanoTime()
         val enhanced = if (profile == AstroProcessingProfile.EXPERIMENTAL_STARS) {

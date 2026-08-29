@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -66,6 +67,9 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -110,18 +114,34 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val previousProcessingFailure = PreviousProcessingFailureDetector(this).detect()
+        val interruptedProcessing = if (previousProcessingFailure == null) {
+            ProcessingRecoveryStore(this).takeInterrupted()
+        } else {
+            null
+        }
         setContent {
             AstroPhotoTheme(darkTheme = true, dynamicColor = false) {
-                AstroPhotoApp(previousProcessingFailure)
+                AstroPhotoApp(
+                    initialProcessingFailure = previousProcessingFailure,
+                    initialInterruptedProcessing = if (previousProcessingFailure == null) {
+                        interruptedProcessing
+                    } else {
+                        null
+                    }
+                )
             }
         }
     }
 }
 
 @Composable
-private fun AstroPhotoApp(initialProcessingFailure: ProcessingFailureSummary? = null) {
+private fun AstroPhotoApp(
+    initialProcessingFailure: ProcessingFailureSummary? = null,
+    initialInterruptedProcessing: InterruptedSessionProcessing? = null
+) {
     var showSplash by remember { mutableStateOf(true) }
     var processingFailure by remember { mutableStateOf(initialProcessingFailure) }
+    var interruptedProcessing by remember { mutableStateOf(initialInterruptedProcessing) }
 
     LaunchedEffect(Unit) {
         delay(700L)
@@ -210,7 +230,8 @@ private fun AstroPhotoApp(initialProcessingFailure: ProcessingFailureSummary? = 
     AstroPhotoTheme(
         darkTheme = appSettings.themeMode != AppThemeMode.LIGHT.name,
         dynamicColor = false,
-        veryDark = appSettings.themeMode == AppThemeMode.VERY_DARK.name
+        veryDark = appSettings.themeMode == AppThemeMode.VERY_DARK.name,
+        redNight = appSettings.themeMode == AppThemeMode.RED_NIGHT.name
     ) {
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -433,6 +454,23 @@ private fun AstroPhotoApp(initialProcessingFailure: ProcessingFailureSummary? = 
             }
         )
     }
+    interruptedProcessing?.let { interrupted ->
+        AlertDialog(
+            onDismissRequest = { interruptedProcessing = null },
+            title = { Text("Обработка была прервана") },
+            text = {
+                Text(
+                    "${interrupted.label} в сессии «${interrupted.sessionFolder}» не завершена. " +
+                        "Исходные кадры сохранены: откройте сессию и запустите обработку снова."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { interruptedProcessing = null }) {
+                    Text("Понятно")
+                }
+            }
+        )
+    }
     }
 }
 
@@ -487,7 +525,7 @@ private fun StarSplashScreen() {
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = "Manual Night Camera",
+                text = "Ручная ночная камера",
                 modifier = Modifier.padding(top = 8.dp),
                 style = MaterialTheme.typography.titleMedium,
                 color = AstroColors.TextSecondary
@@ -712,7 +750,6 @@ private fun CameraScreen(
     var sessionNoteInput by remember { mutableStateOf("") }
     var saveLocationStatus by remember { mutableStateOf<String?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
-    var cameraStatus by remember { mutableStateOf("camera starting") }
     var tapFocusEvent by remember { mutableStateOf<TapFocusEvent?>(null) }
     var captureStatus by remember { mutableStateOf<String?>(null) }
     var pendingCaptureType by remember { mutableStateOf<UiCaptureType?>(null) }
@@ -721,9 +758,9 @@ private fun CameraScreen(
     var exposureWarning by remember { mutableStateOf<String?>(null) }
     var isCapturing by remember { mutableStateOf(false) }
     var capabilities by remember { mutableStateOf<ManualCameraCapabilities?>(null) }
-    var exposureTimeNs by remember { mutableStateOf(savedSettings.exposureTimeNs) }
-    var iso by remember { mutableStateOf(savedSettings.iso) }
-    var focusDistance by remember { mutableStateOf(savedSettings.focusDistance) }
+    var exposureTimeNs by remember { mutableLongStateOf(savedSettings.exposureTimeNs) }
+    var iso by remember { mutableIntStateOf(savedSettings.iso) }
+    var focusDistance by remember { mutableFloatStateOf(savedSettings.focusDistance) }
     var focusMode by remember {
         mutableStateOf(
             runCatching { CameraFocusMode.valueOf(savedSettings.focusMode) }
@@ -733,13 +770,13 @@ private fun CameraScreen(
     var applyLongExposureToPreview by remember {
         mutableStateOf(!savedSettings.fastPreviewEnabled)
     }
-    var jpegQuality by remember { mutableStateOf(savedSettings.jpegQuality) }
+    var jpegQuality by remember { mutableIntStateOf(savedSettings.jpegQuality) }
     var singleFormat by remember { mutableStateOf(UiCaptureType.JPEG) }
     var seriesFormat by remember { mutableStateOf(UiCaptureType.JPEG) }
     var captureMode by remember { mutableStateOf(UiCaptureMode.SERIES) }
-    var seriesFrameCount by remember { mutableStateOf(savedSettings.seriesFrameCount) }
-    var seriesDelaySeconds by remember { mutableStateOf(savedSettings.seriesDelaySeconds) }
-    var startTimerSeconds by remember { mutableStateOf(savedSettings.startTimerSeconds) }
+    var seriesFrameCount by remember { mutableIntStateOf(savedSettings.seriesFrameCount) }
+    var seriesDelaySeconds by remember { mutableIntStateOf(savedSettings.seriesDelaySeconds) }
+    var startTimerSeconds by remember { mutableIntStateOf(savedSettings.startTimerSeconds) }
     var astroModeEnabled by remember { mutableStateOf(savedSettings.astroModeEnabled) }
     var panelAnchor by rememberCameraPanelAnchor(
         if (savedSettings.panelExpanded) {
@@ -766,9 +803,7 @@ private fun CameraScreen(
     var testShotStatus by remember { mutableStateOf<String?>(null) }
     var lastTestShot by remember { mutableStateOf<TestShotResult?>(null) }
     var pendingTestShotStart by remember { mutableStateOf(false) }
-    var seriesPreflightReason by remember {
-        mutableStateOf<SeriesPreflightReason?>(null)
-    }
+    var seriesConfirmationVisible by remember { mutableStateOf(false) }
     var shootingGoal by remember {
         mutableStateOf(
             runCatching { ShootingGoal.valueOf(savedSettings.shootingGoal) }
@@ -780,17 +815,19 @@ private fun CameraScreen(
     var astroDefaultsApplied by remember { mutableStateOf(false) }
     var seriesRunning by remember { mutableStateOf(false) }
     var seriesStopRequested by remember { mutableStateOf(false) }
-    var seriesCurrentFrame by remember { mutableStateOf(0) }
-    var seriesCompletedFrames by remember { mutableStateOf(0) }
+    var seriesCurrentFrame by remember { mutableIntStateOf(0) }
+    var seriesCompletedFrames by remember { mutableIntStateOf(0) }
+    var seriesEstimatedEndElapsedMillis by remember { mutableLongStateOf(0L) }
+    var seriesRemainingMillis by remember { mutableLongStateOf(0L) }
     var seriesAction by remember { mutableStateOf("") }
     var seriesMessage by remember { mutableStateOf<String?>(null) }
     var seriesJob by remember { mutableStateOf<Job?>(null) }
     var darkFramesFormat by remember { mutableStateOf(UiCaptureType.JPEG) }
-    var darkFramesCount by remember { mutableStateOf(savedSettings.darkFramesCount) }
+    var darkFramesCount by remember { mutableIntStateOf(savedSettings.darkFramesCount) }
     var darkFramesRunning by remember { mutableStateOf(false) }
     var darkFramesStopRequested by remember { mutableStateOf(false) }
-    var darkFramesCurrent by remember { mutableStateOf(0) }
-    var darkFramesCompleted by remember { mutableStateOf(0) }
+    var darkFramesCurrent by remember { mutableIntStateOf(0) }
+    var darkFramesCompleted by remember { mutableIntStateOf(0) }
     var darkFramesAction by remember { mutableStateOf("") }
     var darkFramesMessage by remember { mutableStateOf<String?>(null) }
     var darkFramesJob by remember { mutableStateOf<Job?>(null) }
@@ -942,6 +979,19 @@ private fun CameraScreen(
             },
             frameCount = seriesFrameCount
         )
+    }
+
+    LaunchedEffect(seriesRunning, seriesEstimatedEndElapsedMillis) {
+        if (!seriesRunning || seriesEstimatedEndElapsedMillis <= 0L) {
+            if (!seriesRunning) seriesRemainingMillis = 0L
+            return@LaunchedEffect
+        }
+        while (true) {
+            seriesRemainingMillis = (
+                seriesEstimatedEndElapsedMillis - SystemClock.elapsedRealtime()
+            ).coerceAtLeast(0L)
+            delay(1_000L)
+        }
     }
 
     LaunchedEffect(capabilities, astroModeEnabled) {
@@ -1119,6 +1169,15 @@ private fun CameraScreen(
         seriesStopRequested = false
         seriesCurrentFrame = 0
         seriesCompletedFrames = 0
+        val initialDurationMillis = estimatedSeriesDurationMillis(
+            exposureTimeNs = exposureTimeNs,
+            frameCount = selectedFrameCount,
+            delaySeconds = selectedDelaySeconds,
+            startTimerSeconds = selectedStartTimerSeconds
+        )
+        seriesEstimatedEndElapsedMillis =
+            SystemClock.elapsedRealtime() + initialDurationMillis
+        seriesRemainingMillis = initialDurationMillis
         seriesAction = if (selectedStartTimerSeconds > 0) {
             "Старт через $selectedStartTimerSeconds..."
         } else {
@@ -1143,6 +1202,7 @@ private fun CameraScreen(
                     return@launch
                 }
 
+                val captureStartedElapsedMillis = SystemClock.elapsedRealtime()
                 for (frameIndex in 1..selectedFrameCount) {
                     if (seriesStopRequested) break
 
@@ -1175,6 +1235,16 @@ private fun CameraScreen(
 
                     recordSessionFrame(dark = false, format = selectedFormat)
                     seriesCompletedFrames = frameIndex
+                    val nowElapsedMillis = SystemClock.elapsedRealtime()
+                    val remainingEstimate = estimatedRemainingSeriesDurationMillis(
+                        elapsedCaptureMillis =
+                            nowElapsedMillis - captureStartedElapsedMillis,
+                        completedFrames = frameIndex,
+                        totalFrames = selectedFrameCount,
+                        delaySeconds = selectedDelaySeconds
+                    )
+                    seriesEstimatedEndElapsedMillis = nowElapsedMillis + remainingEstimate
+                    seriesRemainingMillis = remainingEstimate
                     if (seriesStopRequested || frameIndex == selectedFrameCount) break
 
                     if (selectedDelaySeconds > 0) {
@@ -1198,6 +1268,8 @@ private fun CameraScreen(
                 }
             } finally {
                 seriesRunning = false
+                seriesEstimatedEndElapsedMillis = 0L
+                seriesRemainingMillis = 0L
                 seriesAction = ""
                 seriesJob = null
             }
@@ -1206,6 +1278,10 @@ private fun CameraScreen(
 
     fun startDarkFrames() {
         if (darkFramesRunning || seriesRunning || isCapturing || testShotRunning) return
+        if (darkFramesCount == 0) {
+            darkFramesMessage = "Dark Frames отключены"
+            return
+        }
         val preview = previewViewHolder[0]
         if (preview == null) {
             darkFramesMessage = "Камера ещё не готова"
@@ -1566,17 +1642,15 @@ private fun CameraScreen(
     }
 
     fun requestSeriesStart() {
-        seriesPreflightReason = when {
-            lastTestShot == null -> SeriesPreflightReason.MISSING
-            lastTestShot?.isGood != true -> SeriesPreflightReason.BAD
-            else -> null
-        }
-        if (seriesPreflightReason == null) {
-            requestSeriesStartAfterTestCheck()
-        }
+        if (seriesRunning || darkFramesRunning || isCapturing || testShotRunning) return
+        seriesConfirmationVisible = true
     }
 
     fun requestDarkFramesStart() {
+        if (darkFramesCount == 0) {
+            darkFramesMessage = "Dark Frames отключены"
+            return
+        }
         checkStorageBeforeCapture(
             darkFramesFormat,
             darkFramesCount,
@@ -1710,9 +1784,6 @@ private fun CameraScreen(
                         val maxFocus = detectedCapabilities.minimumFocusDistance ?: 0f
                         focusDistance = focusDistance.coerceIn(0f, maxFocus)
                     },
-                    onCameraStatus = { status ->
-                        cameraStatus = status
-                    },
                     onExposureAnalysis = { analysis ->
                         liveExposureAnalysis = analysis
                         histogramError = null
@@ -1787,7 +1858,7 @@ private fun CameraScreen(
                 .safeDrawingPadding()
                 .padding(start = 12.dp, top = 12.dp, end = 12.dp),
             color = Color.Black.copy(alpha = 0.62f),
-            contentColor = Color.White,
+            contentColor = MaterialTheme.colorScheme.onSurface,
             shape = MaterialTheme.shapes.medium
         ) {
             Row(
@@ -1798,13 +1869,13 @@ private fun CameraScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 TextButton(onClick = ::handleBack) {
-                    Text("Назад", color = Color.White)
+                    Text("Назад", color = MaterialTheme.colorScheme.onSurface)
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Серия",
                         style = MaterialTheme.typography.titleMedium,
-                        color = Color.White
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
                         text = when {
@@ -1814,18 +1885,11 @@ private fun CameraScreen(
                             else -> "${formatExposure(exposureTimeNs)} · ISO $iso"
                         },
                         style = MaterialTheme.typography.bodySmall,
-                        color = AstroColors.TextSecondary,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                Text(
-                    text = cameraStatus,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = AstroColors.TextSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
             }
         }
 
@@ -1883,6 +1947,7 @@ private fun CameraScreen(
                     seriesCurrentFrame = seriesCurrentFrame,
                     seriesFrameCount = seriesFrameCount,
                     seriesCompletedFrames = seriesCompletedFrames,
+                    seriesRemainingMillis = seriesRemainingMillis,
                     seriesAction = seriesAction,
                     seriesMessage = seriesMessage,
                     darkFramesRunning = darkFramesRunning,
@@ -1929,6 +1994,7 @@ private fun CameraScreen(
                     seriesRunning = seriesRunning,
                     seriesCurrentFrame = seriesCurrentFrame,
                     seriesCompletedFrames = seriesCompletedFrames,
+                    seriesRemainingMillis = seriesRemainingMillis,
                     seriesAction = seriesAction,
                     seriesMessage = seriesMessage,
                     darkFramesCount = darkFramesCount,
@@ -2030,51 +2096,54 @@ private fun CameraScreen(
                 onDismiss = { selectedPreset = null }
             )
         }
-        seriesPreflightReason?.let { reason ->
+        if (seriesConfirmationVisible) {
+            val expectedDurationMillis = estimatedSeriesDurationMillis(
+                exposureTimeNs = exposureTimeNs,
+                frameCount = seriesFrameCount,
+                delaySeconds = seriesDelaySeconds,
+                startTimerSeconds = startTimerSeconds
+            )
             AlertDialog(
-                onDismissRequest = { seriesPreflightReason = null },
-                title = { Text("Проверка перед серией") },
+                onDismissRequest = { seriesConfirmationVisible = false },
+                title = { Text("Перед запуском серии") },
                 text = {
-                    Text(
-                        when (reason) {
-                            SeriesPreflightReason.MISSING ->
-                                "Пробный кадр не сделан. Настройки могут быть неверными."
-                            SeriesPreflightReason.BAD ->
-                                "Последний пробный кадр: ${
-                                    lastTestShot?.status?.title?.lowercase()
-                                        ?: "не удалось оценить"
-                                }."
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "Ожидаемое время: ≈ ${
+                                formatSeriesDuration(expectedDurationMillis)
+                            }",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            "$seriesFrameCount кадров × ${formatExposure(exposureTimeNs)}"
+                        )
+                        if (seriesDelaySeconds > 0 || startTimerSeconds > 0) {
+                            Text(
+                                "Пауза: $seriesDelaySeconds сек · " +
+                                    "таймер: $startTimerSeconds сек"
+                            )
                         }
-                    )
+                        Text(
+                            "Фактическое время может быть больше из-за сохранения " +
+                                "и обработки кадров камерой.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 },
                 confirmButton = {
                     Button(
                         onClick = {
-                            seriesPreflightReason = null
-                            if (reason == SeriesPreflightReason.MISSING) {
-                                requestTestShot()
-                            } else {
-                                panelAnchor = CameraPanelAnchor.EXPANDED
-                            }
-                        }
-                    ) {
-                        Text(
-                            if (reason == SeriesPreflightReason.MISSING) {
-                                "Сделать пробный кадр"
-                            } else {
-                                "Исправить"
-                            }
-                        )
-                    }
-                },
-                dismissButton = {
-                    TextButton(
-                        onClick = {
-                            seriesPreflightReason = null
+                            seriesConfirmationVisible = false
                             requestSeriesStartAfterTestCheck()
                         }
                     ) {
-                        Text("Начать всё равно")
+                        Text("Начать серию")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { seriesConfirmationVisible = false }) {
+                        Text("Отмена")
                     }
                 }
             )
@@ -2250,6 +2319,7 @@ private fun ManualControlsPanel(
     seriesRunning: Boolean,
     seriesCurrentFrame: Int,
     seriesCompletedFrames: Int,
+    seriesRemainingMillis: Long,
     seriesAction: String,
     seriesMessage: String?,
     darkFramesCount: Int,
@@ -2301,6 +2371,8 @@ private fun ManualControlsPanel(
         isoRange != null
     val manualFocusAvailable = capabilities?.supportsManualFocus == true &&
         maxFocusDistance > 0f
+    val vendorExtendedExposureSelected = capabilities?.usesExtendedExposure == true &&
+        capabilities.publicExposureRangeNs?.let { exposureTimeNs > it.last } == true
     val controlsLocked = isCapturing || seriesRunning || darkFramesRunning || testShotRunning
     val availableIsoPresets = cameraIsoPresets(isoRange)
     val availableExposurePresets = remember(exposureRange) {
@@ -2419,12 +2491,12 @@ private fun ManualControlsPanel(
             FilterChip(
                 selected = astroModeEnabled,
                 onClick = { onAstroModeChanged(!astroModeEnabled) },
-                label = { Text("Astro Mode") },
+                label = { Text("Астрорежим") },
                 enabled = !controlsLocked,
                 modifier = Modifier.padding(top = 6.dp)
             )
             Text(
-                text = "Astro Mode: JPEG, ∞, длинная выдержка, серия кадров",
+                text = "Астрорежим: JPEG, ∞, длинная выдержка, серия кадров",
                 modifier = Modifier.padding(top = 4.dp),
                 style = MaterialTheme.typography.bodyMedium,
                 color = AstroColors.TextSecondary
@@ -2656,14 +2728,26 @@ private fun ManualControlsPanel(
                     modifier = Modifier.padding(top = 4.dp),
                     color = AstroColors.Secondary
                 )
-                LinearProgressIndicator(
-                    progress = {
-                        seriesCompletedFrames.toFloat() / seriesFrameCount.coerceAtLeast(1)
-                    },
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 8.dp)
-                )
+                        .padding(top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    LinearProgressIndicator(
+                        progress = {
+                            seriesCompletedFrames.toFloat() /
+                                seriesFrameCount.coerceAtLeast(1)
+                        },
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        text = seriesRemainingLabel(seriesRemainingMillis),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = AstroColors.TextSecondary
+                    )
+                }
                 Button(
                     onClick = onSeriesStop,
                     modifier = Modifier
@@ -2701,7 +2785,7 @@ private fun ManualControlsPanel(
             }
 
             ContextHelpTitle(
-                title = "Dark Frames",
+                title = "Тёмные кадры",
                 topic = HelpTopic.DARKS,
                 onHelp = { helpTopic = it },
                 modifier = Modifier.padding(top = 20.dp),
@@ -2709,13 +2793,13 @@ private fun ManualControlsPanel(
             )
             Text(
                 text = "Закройте камеру/объектив и не двигайте телефон. " +
-                    "Dark frames снимаются с теми же ISO, выдержкой и фокусом.",
+                    "Тёмные кадры снимаются с теми же ISO, выдержкой и фокусом.",
                 modifier = Modifier.padding(top = 6.dp),
                 style = MaterialTheme.typography.bodyMedium,
                 color = AstroColors.TextSecondary
             )
             Text(
-                text = "Количество Dark Frames",
+                text = "Количество тёмных кадров",
                 modifier = Modifier.padding(top = 10.dp),
                 style = MaterialTheme.typography.titleMedium
             )
@@ -2725,7 +2809,7 @@ private fun ManualControlsPanel(
                     .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                DARK_FRAME_COUNTS.forEach { count ->
+                CameraSettingsStore.DARK_FRAME_COUNT_VALUES.forEach { count ->
                     FilterChip(
                         selected = darkFramesCount == count,
                         onClick = { onDarkFramesCountChanged(count) },
@@ -2734,9 +2818,17 @@ private fun ManualControlsPanel(
                     )
                 }
             }
+            if (darkFramesCount == 0) {
+                Text(
+                    text = "0 — не снимать тёмные кадры",
+                    modifier = Modifier.padding(top = 6.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AstroColors.TextSecondary
+                )
+            }
             if (darkFramesRunning) {
                 Text(
-                    text = "Dark frame $darkFramesCurrent из $darkFramesCount",
+                    text = "Тёмный кадр $darkFramesCurrent из $darkFramesCount",
                     modifier = Modifier.padding(top = 12.dp),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
@@ -2768,13 +2860,14 @@ private fun ManualControlsPanel(
                     onClick = onDarkFramesStart,
                     enabled = !isCapturing &&
                         !seriesRunning &&
+                        darkFramesCount > 0 &&
                         capabilities?.supportsJpegCapture == true,
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = 56.dp)
                         .padding(top = 12.dp)
                 ) {
-                    Text("Снять Dark Frames")
+                    Text("Снять тёмные кадры")
                 }
             }
             darkFramesMessage?.let { message ->
@@ -2887,17 +2980,26 @@ private fun ManualControlsPanel(
                 )
             }
             FilterChip(
-                selected = applyLongExposureToPreview,
+                selected = applyLongExposureToPreview && !vendorExtendedExposureSelected,
                 onClick = {
                     onApplyLongExposureToPreviewChanged(!applyLongExposureToPreview)
                 },
                 label = {
                     Text("Применять длинную выдержку к preview")
                 },
-                enabled = !controlsLocked,
+                enabled = !controlsLocked && !vendorExtendedExposureSelected,
                 modifier = Modifier.padding(top = 8.dp)
             )
-            if (!applyLongExposureToPreview && exposureTimeNs > 1_000_000_000L) {
+            if (vendorExtendedExposureSelected) {
+                Text(
+                    text = "${capabilities.extendedExposureProvider ?: "Камера"}: " +
+                        "расширенная выдержка применяется только к снимку; " +
+                        "preview остаётся быстрым.",
+                    modifier = Modifier.padding(top = 4.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AstroColors.TextSecondary
+                )
+            } else if (!applyLongExposureToPreview && exposureTimeNs > 1_000_000_000L) {
                 Text(
                     text = "Для плавности preview используется безопасная выдержка 1/30 сек.",
                     modifier = Modifier.padding(top = 4.dp),
@@ -2981,7 +3083,7 @@ private fun ManualControlsPanel(
                         color = AstroColors.TextSecondary
                     )
                 }
-                capabilities?.sensorIsoRange?.last
+                capabilities.sensorIsoRange?.last
                     ?.takeIf { sensorMaximum -> isoRange.last > sensorMaximum }
                     ?.let { sensorMaximum ->
                         Text(
@@ -3056,6 +3158,7 @@ private fun CompactCapturePanel(
     seriesRunning: Boolean,
     seriesCurrentFrame: Int,
     seriesCompletedFrames: Int,
+    seriesRemainingMillis: Long,
     seriesAction: String,
     seriesMessage: String?,
     darkFramesRunning: Boolean,
@@ -3082,7 +3185,7 @@ private fun CompactCapturePanel(
         when {
                 darkFramesRunning -> {
                     Text(
-                        text = "Dark frame $darkFramesCurrent из $darkFramesCount",
+                        text = "Тёмный кадр $darkFramesCurrent из $darkFramesCount",
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
@@ -3126,14 +3229,24 @@ private fun CompactCapturePanel(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    LinearProgressIndicator(
-                        progress = {
-                            seriesCompletedFrames.toFloat() /
-                                seriesFrameCount.coerceAtLeast(1)
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        LinearProgressIndicator(
+                            progress = {
+                                seriesCompletedFrames.toFloat() /
+                                    seriesFrameCount.coerceAtLeast(1)
+                            },
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            text = seriesRemainingLabel(seriesRemainingMillis),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     Button(
                         onClick = onSeriesStop,
                         modifier = Modifier
@@ -3424,11 +3537,6 @@ private enum class UiCaptureMode {
     SERIES
 }
 
-private enum class SeriesPreflightReason {
-    MISSING,
-    BAD
-}
-
 internal fun canStartSingleCapture(
     isCapturing: Boolean,
     seriesRunning: Boolean,
@@ -3440,6 +3548,57 @@ internal fun canStartSingleCapture(
     !darkFramesRunning &&
     !testShotRunning &&
     !permissionRequestPending
+
+internal fun estimatedSeriesDurationMillis(
+    exposureTimeNs: Long,
+    frameCount: Int,
+    delaySeconds: Int,
+    startTimerSeconds: Int
+): Long {
+    val frames = frameCount.coerceAtLeast(0).toLong()
+    val exposureMillis = (exposureTimeNs.coerceAtLeast(0L) / 1_000_000L) +
+        if (exposureTimeNs.coerceAtLeast(0L) % 1_000_000L == 0L) 0L else 1L
+    val pauses = (frameCount - 1).coerceAtLeast(0).toLong()
+    return frames * exposureMillis +
+        pauses * delaySeconds.coerceAtLeast(0).toLong() * 1_000L +
+        startTimerSeconds.coerceAtLeast(0).toLong() * 1_000L
+}
+
+internal fun estimatedRemainingSeriesDurationMillis(
+    elapsedCaptureMillis: Long,
+    completedFrames: Int,
+    totalFrames: Int,
+    delaySeconds: Int
+): Long {
+    val completed = completedFrames.coerceIn(0, totalFrames.coerceAtLeast(0))
+    val remainingFrames = (totalFrames - completed).coerceAtLeast(0)
+    if (completed == 0 || remainingFrames == 0) return 0L
+    val delayMillis = delaySeconds.coerceAtLeast(0).toLong() * 1_000L
+    val elapsedDelays = (completed - 1).toLong() * delayMillis
+    val observedCaptureMillis = (elapsedCaptureMillis - elapsedDelays).coerceAtLeast(1L)
+    val averageCaptureMillis = observedCaptureMillis / completed
+    return remainingFrames.toLong() * (averageCaptureMillis + delayMillis)
+}
+
+internal fun formatSeriesDuration(durationMillis: Long): String {
+    val totalSeconds = durationMillis.coerceAtLeast(0L) / 1_000L +
+        if (durationMillis.coerceAtLeast(0L) % 1_000L == 0L) 0L else 1L
+    val hours = totalSeconds / 3_600L
+    val minutes = totalSeconds % 3_600L / 60L
+    val seconds = totalSeconds % 60L
+    return buildList {
+        if (hours > 0L) add("$hours ч")
+        if (minutes > 0L) add("$minutes мин")
+        if (seconds > 0L || isEmpty()) add("$seconds сек")
+    }.joinToString(" ")
+}
+
+internal fun seriesRemainingLabel(remainingMillis: Long): String =
+    if (remainingMillis > 0L) {
+        "Осталось ≈ ${formatSeriesDuration(remainingMillis)}"
+    } else {
+        "Завершение…"
+    }
 
 private data class AdaptedCameraPreset(
     val iso: Int,
@@ -3493,8 +3652,9 @@ private fun adaptCameraPreset(
     )
 }
 
-internal val SERIES_FRAME_COUNTS = listOf(1, 3, 5, 10, 20, 30, 40, 50, 100)
-private val DARK_FRAME_COUNTS = listOf(3, 5, 10, 20)
+internal val SERIES_FRAME_COUNTS = listOf(
+    1, 3, 5, 10, 20, 30, 40, 50, 100, 150, 200, 300, 500
+)
 private val SERIES_DELAYS_SECONDS = listOf(0, 1, 2, 5)
 private val START_TIMER_SECONDS = listOf(0, 3, 5, 10)
 

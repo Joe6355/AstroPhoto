@@ -43,6 +43,37 @@ class JpegV2Stage8Test {
     private val sequence = regressionSequence()
     private val tracks by lazy { TemporalFeatureTrackBuilder().build(sequence) }
 
+    @Test fun sequenceRegistrationChecksCancellationInsideTrackSearch() {
+        var checks = 0
+        val failure = runCatching {
+            SequenceAwareRegistrationEngine().register(
+                frames = sequence,
+                referenceFrameId = sequence.first().frameId,
+                imageWidth = 100,
+                imageHeight = 100,
+                cancellationCheck = {
+                    checks++
+                    if (checks == 5) error("cancelled-for-test")
+                }
+            )
+        }.exceptionOrNull()
+
+        assertEquals("cancelled-for-test", failure?.message)
+        assertEquals(5, checks)
+    }
+
+    @Test fun trackClusterLookupKeepsExactAndNearbySemantics() {
+        val observation = tracks.tracks.first().observations.first()
+        val exact = tracks.clusterAt(observation.frameId, observation.star)
+        val nearby = tracks.clusterAt(
+            observation.frameId,
+            observation.star.copy(x = observation.star.x + 0.1f)
+        )
+
+        assertEquals(tracks.tracks.first().cluster, exact)
+        assertEquals(exact, nearby)
+    }
+
     @Test fun stationaryStarLikeTracksAreClassifiedInCameraSpace() {
         assertTrue(tracks.stationaryTrackCount >= 8)
         assertTrue(tracks.tracks.filter {

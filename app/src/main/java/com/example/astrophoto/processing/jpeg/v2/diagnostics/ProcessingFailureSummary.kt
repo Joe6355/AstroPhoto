@@ -5,6 +5,8 @@ import android.util.Log
 
 data class ProcessingFailureSummary(
     val runId: String,
+    val sessionFolder: String,
+    val preset: String,
     val lastCompletedStage: String,
     val exitKind: PreviousProcessExitKind,
     val message: String,
@@ -43,14 +45,20 @@ class PreviousProcessingFailureDetector(private val context: Context) {
             )
         }
         val message = if (classification == PreviousRunClassification.PROCESSING_COMPLETED_UI_FAILURE) {
-            "JPEG-результат был сохранён, но приложение завершилось при обновлении интерфейса. " +
+            "JPEG-результат сессии «${unfinished.sessionFolder}» был сохранён, " +
+                "но приложение завершилось при обновлении интерфейса. " +
                 "Файлы сессии не удалялись."
         } else {
-            "Предыдущая JPEG-обработка остановилась на этапе «${unfinished.lastCompletedStage}». " +
-                "Android сообщил: ${kind.displayName}. Файлы сессии не удалялись."
+            "Обработка сессии «${unfinished.sessionFolder}» профилем " +
+                "«${unfinished.preset}» остановилась на этапе " +
+                "«${unfinished.lastCompletedStage.displayStage()}». Android сообщил: " +
+                "${kind.displayName}. Исходные кадры сохранены; откройте сессию и " +
+                "запустите обработку снова."
         }
         return ProcessingFailureSummary(
             runId = unfinished.runId,
+            sessionFolder = unfinished.sessionFolder,
+            preset = unfinished.preset,
             lastCompletedStage = unfinished.lastCompletedStage,
             exitKind = kind,
             message = message,
@@ -65,4 +73,19 @@ class PreviousProcessingFailureDetector(private val context: Context) {
     companion object {
         private const val TAG = "AstroPhotoJpegExit"
     }
+}
+
+private fun String.displayStage(): String = when (this) {
+    "journal_created" -> "подготовка"
+    "frame_analysis_completed" -> "анализ кадров"
+    "registration_completed" -> "выравнивание кадров"
+    "integration_completed" -> "сложение кадров"
+    "reference_and_mask_completed" -> "построение маски неба"
+    "clean_stack_composed" -> "создание чистого стека"
+    "clean_stack_validated" -> "проверка чистого стека"
+    "adaptive_processing_completed" -> "адаптивная обработка"
+    "final_candidate_selected" -> "выбор результата"
+    "report_prepared" -> "подготовка отчёта"
+    "report_published" -> "сохранение отчёта"
+    else -> this.replace('_', ' ')
 }

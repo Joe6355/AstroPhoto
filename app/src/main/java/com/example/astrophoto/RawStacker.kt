@@ -2,6 +2,7 @@ package com.example.astrophoto
 
 import android.content.Context
 import android.graphics.Bitmap
+import androidx.core.graphics.createBitmap
 import android.graphics.Matrix
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -69,11 +70,7 @@ class RawStacker(private val context: Context) {
             average = cropLinearToCommonRegion(average, shifts)
             reportProgress(onProgress, "Растяжка и сохранение RAW-стека", frames.size, frames.size)
             val displayImage = toneMapLinearToArgb(average)
-            val sourceBitmap = Bitmap.createBitmap(
-                displayImage.width,
-                displayImage.height,
-                Bitmap.Config.ARGB_8888
-            ).apply {
+            val sourceBitmap = createBitmap(displayImage.width, displayImage.height).apply {
                 setPixels(
                     displayImage.pixels,
                     0,

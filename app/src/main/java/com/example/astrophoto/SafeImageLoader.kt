@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import androidx.core.net.toUri
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -263,7 +264,7 @@ class SafeImageLoader(private val context: Context) {
 
     private fun openSource(pathOrUri: String): InputStream? {
         if (pathOrUri.isBlank()) throw FileNotFoundException("Empty image path")
-        val uri = Uri.parse(pathOrUri)
+        val uri = pathOrUri.toUri()
         return when (uri.scheme?.lowercase()) {
             "content", "android.resource" -> runCatching {
                 context.contentResolver.openInputStream(uri)

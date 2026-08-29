@@ -2,6 +2,7 @@ package com.example.astrophoto.processing.jpeg.v2.diagnostics
 
 import android.content.Context
 import android.net.Uri
+import androidx.core.net.toUri
 import java.io.File
 import java.io.InputStream
 import java.security.MessageDigest
@@ -44,7 +45,7 @@ internal class PublishedArtifactVerifier(
 ) {
     constructor(context: Context) : this({ contentUri, filePath ->
         when {
-            !contentUri.isNullOrBlank() -> context.contentResolver.openInputStream(Uri.parse(contentUri))
+            !contentUri.isNullOrBlank() -> context.contentResolver.openInputStream(contentUri.toUri())
             !filePath.isNullOrBlank() -> File(filePath).takeIf(File::isFile)?.inputStream()
             else -> null
         }

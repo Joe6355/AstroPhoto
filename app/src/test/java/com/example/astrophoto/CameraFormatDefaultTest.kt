@@ -60,7 +60,7 @@ class CameraFormatDefaultTest {
     @Test
     fun cameraSettingsMergeDoesNotOverwriteAppSettings() {
         val persisted = SavedCameraSettings(
-            themeMode = AppThemeMode.VERY_DARK.name,
+            themeMode = AppThemeMode.RED_NIGHT.name,
             deletionProtectionEnabled = false,
             vibrationAfterProcessing = false,
             soundAfterProcessing = false
@@ -80,7 +80,7 @@ class CameraFormatDefaultTest {
         assertEquals("RAW", merged.seriesFormat)
         assertEquals("RAW", merged.darkFramesFormat)
         assertEquals(10, merged.darkFramesCount)
-        assertEquals(AppThemeMode.VERY_DARK.name, merged.themeMode)
+        assertEquals(AppThemeMode.RED_NIGHT.name, merged.themeMode)
         assertEquals(false, merged.deletionProtectionEnabled)
         assertEquals(false, merged.vibrationAfterProcessing)
         assertEquals(false, merged.soundAfterProcessing)

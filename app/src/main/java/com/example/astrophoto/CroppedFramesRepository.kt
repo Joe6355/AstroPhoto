@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
+import androidx.core.net.toUri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -132,7 +133,7 @@ class CroppedFramesRepository(private val context: Context) {
         }
 
     private fun openFrame(frame: SessionFrame) = when {
-        frame.contentUri != null -> context.contentResolver.openInputStream(Uri.parse(frame.contentUri))
+        frame.contentUri != null -> context.contentResolver.openInputStream(frame.contentUri.toUri())
         frame.filePath != null -> File(frame.filePath).inputStream()
         else -> null
     }

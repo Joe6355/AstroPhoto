@@ -23,6 +23,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -249,6 +250,7 @@ fun TestShotResultCard(
     onInfinityFocus: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val locale = LocalConfiguration.current.locales[0]
     Card(
         modifier = modifier,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -281,7 +283,7 @@ fun TestShotResultCard(
                     text = "${result.status.title}, ${
                         SimpleDateFormat(
                             "HH:mm",
-                            Locale.getDefault()
+                            locale
                         ).format(Date(result.analyzedAtMillis))
                     }",
                     modifier = Modifier.padding(top = 6.dp),
@@ -290,7 +292,7 @@ fun TestShotResultCard(
                 )
                 Text(
                     text = String.format(
-                        Locale.getDefault(),
+                        locale,
                         "Яркость: %.1f • Пересвет: %.2f%% • Резкость: %.1f",
                         result.exposure.averageBrightness,
                         result.exposure.highlightPercent,

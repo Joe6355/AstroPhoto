@@ -134,4 +134,34 @@ class CameraPanelStateTest {
             )
         )
     }
+
+    @Test
+    fun seriesDurationIncludesExposurePausesAndStartTimer() {
+        assertEquals(
+            323_000L,
+            estimatedSeriesDurationMillis(
+                exposureTimeNs = 30_000_000_000L,
+                frameCount = 10,
+                delaySeconds = 2,
+                startTimerSeconds = 5
+            )
+        )
+        assertEquals("5 мин 23 сек", formatSeriesDuration(323_000L))
+        assertEquals("4 ч 10 мин", formatSeriesDuration(15_000_000L))
+    }
+
+    @Test
+    fun remainingDurationAdaptsToObservedCaptureSpeed() {
+        assertEquals(
+            264_000L,
+            estimatedRemainingSeriesDurationMillis(
+                elapsedCaptureMillis = 64_000L,
+                completedFrames = 2,
+                totalFrames = 10,
+                delaySeconds = 2
+            )
+        )
+        assertEquals("Осталось ≈ 4 мин 24 сек", seriesRemainingLabel(264_000L))
+        assertEquals("Завершение…", seriesRemainingLabel(0L))
+    }
 }

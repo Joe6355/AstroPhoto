@@ -167,6 +167,7 @@ fun AppSettingsScreen(
                                 AppThemeMode.LIGHT -> "Светлая"
                                 AppThemeMode.DARK -> "Тёмная"
                                 AppThemeMode.VERY_DARK -> "Очень тёмная"
+                                AppThemeMode.RED_NIGHT -> "Красная"
                             }
                         },
                         onSelected = {

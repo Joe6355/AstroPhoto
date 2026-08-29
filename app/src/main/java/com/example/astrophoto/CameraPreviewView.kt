@@ -58,7 +58,13 @@ data class ManualCameraCapabilities(
     val supportsJpegCapture: Boolean,
     val supportsRawCapture: Boolean,
     val sensorIsoRange: IntRange? = isoRange,
-    val postRawSensitivityBoostRange: IntRange? = null
+    val postRawSensitivityBoostRange: IntRange? = null,
+    val publicExposureRangeNs: LongRange? = exposureRangeNs,
+    val vendorExposureRangeNs: LongRange? = null,
+    val vendorExposureKeyName: String? = null,
+    val extendedExposureProvider: String? = null,
+    val usesExtendedExposure: Boolean = false,
+    val physicalCameraIds: Set<String> = emptySet()
 )
 
 internal data class CameraIsoRequest(
@@ -153,6 +159,7 @@ class CameraPreviewView @JvmOverloads constructor(
 ) : TextureView(context, attrs), DefaultLifecycleObserver {
 
     private val cameraManager = context.getSystemService(CameraManager::class.java)
+    private val manualCapabilityStore = ManualCameraCapabilityStore(context)
     private val lifecycleOwner = context.findActivity()
     private var backgroundThread: HandlerThread? = null
     private var backgroundHandler: Handler? = null
@@ -185,6 +192,7 @@ class CameraPreviewView @JvmOverloads constructor(
     private var active = false
     private var openingCamera = false
     private var previewStarted = false
+    private var previewPausedForExtendedCapture = false
     private var captureInProgress = false
     private var activeCaptureType: CaptureType? = null
     private var captureResultCallback: ((Result<String>) -> Unit)? = null
@@ -207,7 +215,6 @@ class CameraPreviewView @JvmOverloads constructor(
 
     init {
         isClickable = true
-        setOnTouchListener { _, event -> handlePreviewTouch(event) }
         surfaceTextureListener = object : SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(
                 surface: SurfaceTexture,
@@ -239,10 +246,13 @@ class CameraPreviewView @JvmOverloads constructor(
 
     override fun performClick(): Boolean {
         super.performClick()
+        val focusX = if (touchDownTime > 0L) touchDownX else width / 2f
+        val focusY = if (touchDownTime > 0L) touchDownY else height / 2f
+        requestTapFocus(focusX, focusY)
         return true
     }
 
-    private fun handlePreviewTouch(event: MotionEvent): Boolean {
+    override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 touchDownX = event.x
@@ -258,7 +268,6 @@ class CameraPreviewView @JvmOverloads constructor(
                     event.eventTime - touchDownTime <= MAX_TAP_FOCUS_TOUCH_DURATION_MS
                 if (isTap) {
                     performClick()
-                    requestTapFocus(event.x, event.y)
                 }
                 return true
             }
@@ -601,15 +610,25 @@ class CameraPreviewView @JvmOverloads constructor(
                     set(CaptureRequest.JPEG_ORIENTATION, calculateJpegOrientation())
                 }
                 applyManualParameters(captureRequest)
+                pausePreviewForExtendedCapture(session)
 
                 session.capture(
                     captureRequest.build(),
                     object : CameraCaptureSession.CaptureCallback() {
+                        override fun onCaptureCompleted(
+                            session: CameraCaptureSession,
+                            request: CaptureRequest,
+                            result: TotalCaptureResult
+                        ) {
+                            handleManualCaptureCompleted(request, result)
+                        }
+
                         override fun onCaptureFailed(
                             session: CameraCaptureSession,
                             request: CaptureRequest,
                             failure: CaptureFailure
                         ) {
+                            handleManualCaptureFailure(request)
                             finishCapture(
                                 Result.failure(
                                     IllegalStateException("Камера не смогла сделать JPEG-снимок")
@@ -629,6 +648,7 @@ class CameraPreviewView @JvmOverloads constructor(
                     handler
                 )
             } catch (exception: Exception) {
+                handleManualCaptureSubmissionFailure()
                 finishCapture(
                     Result.failure(
                         IllegalStateException(
@@ -689,6 +709,7 @@ class CameraPreviewView @JvmOverloads constructor(
                     set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
                 }
                 applyManualParameters(captureRequest)
+                pausePreviewForExtendedCapture(session)
 
                 session.capture(
                     captureRequest.build(),
@@ -698,6 +719,7 @@ class CameraPreviewView @JvmOverloads constructor(
                             request: CaptureRequest,
                             result: TotalCaptureResult
                         ) {
+                            handleManualCaptureCompleted(request, result)
                             if (activeCaptureType != CaptureType.RAW) return
                             pendingRawResult = result
                             saveRawWhenReady()
@@ -708,6 +730,7 @@ class CameraPreviewView @JvmOverloads constructor(
                             request: CaptureRequest,
                             failure: CaptureFailure
                         ) {
+                            handleManualCaptureFailure(request)
                             clearPendingRaw()
                             finishCapture(
                                 Result.failure(
@@ -729,6 +752,7 @@ class CameraPreviewView @JvmOverloads constructor(
                     handler
                 )
             } catch (exception: Exception) {
+                handleManualCaptureSubmissionFailure()
                 clearPendingRaw()
                 finishCapture(
                     Result.failure(
@@ -785,14 +809,24 @@ class CameraPreviewView @JvmOverloads constructor(
                     set(CaptureRequest.JPEG_ORIENTATION, calculateJpegOrientation())
                 }
                 applyManualParameters(captureRequest)
+                pausePreviewForExtendedCapture(session)
                 session.capture(
                     captureRequest.build(),
                     object : CameraCaptureSession.CaptureCallback() {
+                        override fun onCaptureCompleted(
+                            session: CameraCaptureSession,
+                            request: CaptureRequest,
+                            result: TotalCaptureResult
+                        ) {
+                            handleManualCaptureCompleted(request, result)
+                        }
+
                         override fun onCaptureFailed(
                             session: CameraCaptureSession,
                             request: CaptureRequest,
                             failure: CaptureFailure
                         ) {
+                            handleManualCaptureFailure(request)
                             finishTestCapture(
                                 Result.failure(
                                     IllegalStateException(
@@ -818,6 +852,7 @@ class CameraPreviewView @JvmOverloads constructor(
                     handler
                 )
             } catch (exception: Exception) {
+                handleManualCaptureSubmissionFailure()
                 finishTestCapture(
                     Result.failure(
                         IllegalStateException(
@@ -852,11 +887,15 @@ class CameraPreviewView @JvmOverloads constructor(
         }
 
         try {
-            val cameraId = manager.cameraIdList.firstOrNull { id ->
-                manager.getCameraCharacteristics(id)
-                    .get(CameraCharacteristics.LENS_FACING) ==
-                    CameraCharacteristics.LENS_FACING_BACK
-            } ?: run {
+            val rearCandidates = readRearCameraCandidates(
+                cameraManager = manager,
+                manufacturer = Build.MANUFACTURER,
+                model = Build.MODEL,
+                cachedMaximumExposureNs = { id ->
+                    manualCapabilityStore.load(id).maximumExposureNs
+                }
+            )
+            val cameraId = selectBestRearCameraId(rearCandidates) ?: run {
                 reportError("Основная задняя камера не найдена")
                 return
             }
@@ -866,8 +905,20 @@ class CameraPreviewView @JvmOverloads constructor(
             val capabilities = characteristics.get(
                 CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES
             )
-            val exposureRange = characteristics.get(
+            val publicExposureRange = characteristics.get(
                 CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE
+            )?.let { it.lower..it.upper }
+            val storedOverrides = manualCapabilityStore.load(cameraId)
+            val exposureRangeSelection = selectManualExposureRange(
+                publicRangeNs = publicExposureRange,
+                vendorRange = readVendorExposureRange(
+                    characteristics = characteristics,
+                    profile = cameraCompatibilityProfile(
+                        manufacturer = Build.MANUFACTURER,
+                        model = Build.MODEL
+                    )
+                ),
+                cachedMaximumExposureNs = storedOverrides.maximumExposureNs
             )
             val sensorIsoRange = characteristics.get(
                 CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE
@@ -907,15 +958,17 @@ class CameraPreviewView @JvmOverloads constructor(
             val rawCaptureAvailable = rawSize?.let(::createRawImageReader) == true
             val cameraCapabilities = ManualCameraCapabilities(
                 cameraId = cameraId,
-                exposureRangeNs = exposureRange?.let { it.lower..it.upper },
-                isoRange = effectiveIsoRange(
-                    sensorRange = sensorIsoRange?.let { it.lower..it.upper },
-                    postRawBoostRange = postRawBoostRange?.let { it.lower..it.upper }
+                exposureRangeNs = exposureRangeSelection.effectiveRangeNs,
+                isoRange = applyIsoOverrides(
+                    range = effectiveIsoRange(
+                        sensorRange = sensorIsoRange?.let { it.lower..it.upper },
+                        postRawBoostRange = postRawBoostRange?.let { it.lower..it.upper }
+                    ),
+                    minimumIso = storedOverrides.minimumIso,
+                    maximumIso = storedOverrides.maximumIso
                 ),
                 minimumFocusDistance = minimumFocusDistance,
-                supportsManualSensor = capabilities?.contains(
-                    CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR
-                ) == true,
+                supportsManualSensor = supportsVerifiedManualSensor(characteristics),
                 supportsManualFocus = (minimumFocusDistance ?: 0f) > 0f,
                 supportsTapToFocus = maxAfRegions > 0 &&
                     availableAfModes.contains(CaptureRequest.CONTROL_AF_MODE_AUTO),
@@ -924,6 +977,18 @@ class CameraPreviewView @JvmOverloads constructor(
                 sensorIsoRange = sensorIsoRange?.let { it.lower..it.upper },
                 postRawSensitivityBoostRange = postRawBoostRange?.let {
                     it.lower..it.upper
+                },
+                publicExposureRangeNs = exposureRangeSelection.publicRangeNs,
+                vendorExposureRangeNs = exposureRangeSelection.vendorRange?.rangeNs,
+                vendorExposureKeyName = exposureRangeSelection.vendorRange?.keyName,
+                extendedExposureProvider = exposureRangeSelection.source
+                    ?.takeIf { exposureRangeSelection.usesExtendedRange }
+                    ?.displayName,
+                usesExtendedExposure = exposureRangeSelection.usesExtendedRange,
+                physicalCameraIds = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    characteristics.physicalCameraIds
+                } else {
+                    emptySet()
                 }
             )
             manualCapabilities = cameraCapabilities
@@ -1080,8 +1145,13 @@ class CameraPreviewView @JvmOverloads constructor(
         val exposureRange = capabilities.exposureRangeNs
         val isoRange = capabilities.isoRange
         val sensorIsoRange = capabilities.sensorIsoRange
-        val automaticPreviewExposure = forPreview &&
-            !parameters.applyLongExposureToPreview
+        val automaticPreviewExposure = shouldUseAutomaticPreviewExposure(
+            forPreview = forPreview,
+            applyLongExposureToPreview = parameters.applyLongExposureToPreview,
+            requestedExposureTimeNs = parameters.exposureTimeNs,
+            publicExposureRangeNs = capabilities.publicExposureRangeNs,
+            usesExtendedExposure = capabilities.usesExtendedExposure
+        )
 
         requestBuilder.set(
             CaptureRequest.CONTROL_AWB_MODE,
@@ -1177,12 +1247,179 @@ class CameraPreviewView @JvmOverloads constructor(
             )
             if (!previewStarted) {
                 previewStarted = true
-                reportStatus("preview repeating started")
             }
             startExposureAnalyzerIfNeeded()
         } catch (exception: Exception) {
             reportError(exception.message ?: "Не удалось обновить параметры preview")
         }
+    }
+
+    private fun pausePreviewForExtendedCapture(session: CameraCaptureSession) {
+        val capabilities = manualCapabilities ?: return
+        val publicMaximum = capabilities.publicExposureRangeNs?.last ?: return
+        if (
+            !capabilities.usesExtendedExposure ||
+            manualParameters.exposureTimeNs <= publicMaximum
+        ) {
+            return
+        }
+        session.stopRepeating()
+        previewPausedForExtendedCapture = true
+        exposureAnalyzer.stop()
+        reportStatus("preview paused for vendor extended exposure")
+    }
+
+    private fun handleManualCaptureCompleted(
+        request: CaptureRequest,
+        result: TotalCaptureResult
+    ) {
+        val capabilities = manualCapabilities ?: return
+        if (!capabilities.supportsManualSensor) return
+
+        val requestedExposure = request.get(CaptureRequest.SENSOR_EXPOSURE_TIME)
+        val actualExposure = result.get(CaptureResult.SENSOR_EXPOSURE_TIME)
+        val exposureLimit = if (
+            requestedExposure != null &&
+            actualExposure != null &&
+            materiallyLowerThanRequested(requestedExposure, actualExposure)
+        ) {
+            actualExposure.coerceAtLeast(
+                capabilities.publicExposureRangeNs?.first
+                    ?: capabilities.exposureRangeNs?.first
+                    ?: 1L
+            )
+        } else {
+            null
+        }
+
+        val requestedSensorIso = request.get(CaptureRequest.SENSOR_SENSITIVITY)
+        val requestedBoost = request.get(
+            CaptureRequest.CONTROL_POST_RAW_SENSITIVITY_BOOST
+        ) ?: 100
+        val actualSensorIso = result.get(CaptureResult.SENSOR_SENSITIVITY)
+        val actualBoostValue = result.get(
+            CaptureResult.CONTROL_POST_RAW_SENSITIVITY_BOOST
+        )
+        val requestedEffectiveIso = effectiveCaptureIso(
+            sensorIso = requestedSensorIso,
+            boostPercent = requestedBoost
+        )
+        val actualEffectiveIso = if (requestedBoost > 100 && actualBoostValue == null) {
+            null
+        } else {
+            effectiveCaptureIso(
+                sensorIso = actualSensorIso,
+                boostPercent = actualBoostValue ?: 100
+            )
+        }
+        val isoMinimum = if (
+            requestedEffectiveIso != null &&
+            actualEffectiveIso != null &&
+            materiallyHigherThanRequested(requestedEffectiveIso, actualEffectiveIso)
+        ) {
+            actualEffectiveIso
+        } else {
+            null
+        }
+        val isoMaximum = if (
+            requestedEffectiveIso != null &&
+            actualEffectiveIso != null &&
+            materiallyLowerThanRequested(requestedEffectiveIso, actualEffectiveIso)
+        ) {
+            actualEffectiveIso
+        } else {
+            null
+        }
+
+        updateManualCapabilityLimits(
+            maximumExposureNs = exposureLimit,
+            minimumIso = isoMinimum,
+            maximumIso = isoMaximum
+        )
+    }
+
+    private fun handleManualCaptureFailure(request: CaptureRequest) {
+        val requestedExposure = request.get(CaptureRequest.SENSOR_EXPOSURE_TIME) ?: return
+        downgradeExtendedExposureAfterFailure(requestedExposure)
+    }
+
+    private fun handleManualCaptureSubmissionFailure() {
+        downgradeExtendedExposureAfterFailure(manualParameters.exposureTimeNs)
+    }
+
+    private fun downgradeExtendedExposureAfterFailure(requestedExposureNs: Long) {
+        val capabilities = manualCapabilities ?: return
+        val publicMaximum = capabilities.publicExposureRangeNs?.last ?: return
+        if (!capabilities.usesExtendedExposure || requestedExposureNs <= publicMaximum) return
+        updateManualCapabilityLimits(maximumExposureNs = publicMaximum)
+    }
+
+    private fun updateManualCapabilityLimits(
+        maximumExposureNs: Long? = null,
+        minimumIso: Int? = null,
+        maximumIso: Int? = null
+    ) {
+        val current = manualCapabilities ?: return
+        if (maximumExposureNs == null && minimumIso == null && maximumIso == null) return
+        maximumExposureNs?.let {
+            manualCapabilityStore.limitMaximumExposure(current.cameraId, it)
+        }
+        if (minimumIso != null || maximumIso != null) {
+            manualCapabilityStore.limitIsoRange(
+                cameraId = current.cameraId,
+                minimumIso = minimumIso,
+                maximumIso = maximumIso
+            )
+        }
+        val stored = manualCapabilityStore.load(current.cameraId)
+        val updatedExposureRange = applyExposureMaximumOverride(
+            current.exposureRangeNs,
+            stored.maximumExposureNs
+        )
+        val updatedIsoRange = applyIsoOverrides(
+            current.isoRange,
+            stored.minimumIso,
+            stored.maximumIso
+        )
+        val stillUsesExtendedExposure = current.usesExtendedExposure &&
+            updatedExposureRange?.last?.let { maximum ->
+                current.publicExposureRangeNs?.let { maximum > it.last } ?: true
+            } == true
+        val updated = current.copy(
+            exposureRangeNs = updatedExposureRange,
+            isoRange = updatedIsoRange,
+            usesExtendedExposure = stillUsesExtendedExposure
+        )
+        if (updated == current) return
+        manualCapabilities = updated
+        manualParameters = manualParameters.copy(
+            exposureTimeNs = updatedExposureRange?.let {
+                manualParameters.exposureTimeNs.coerceIn(it.first, it.last)
+            } ?: manualParameters.exposureTimeNs,
+            iso = updatedIsoRange?.let {
+                manualParameters.iso.coerceIn(it.first, it.last)
+            } ?: manualParameters.iso
+        )
+        reportStatus("manual camera limits adjusted from capture result")
+        post { onCapabilitiesAvailable(updated) }
+    }
+
+    private fun effectiveCaptureIso(sensorIso: Int?, boostPercent: Int): Int? {
+        sensorIso ?: return null
+        if (sensorIso <= 0 || boostPercent <= 0) return null
+        return (sensorIso.toLong() * boostPercent.toLong() / 100L)
+            .coerceAtMost(Int.MAX_VALUE.toLong())
+            .toInt()
+    }
+
+    private fun resumePreviewAfterExtendedCapture() {
+        if (!previewPausedForExtendedCapture) return
+        previewPausedForExtendedCapture = false
+        if (!active) return
+        val requestBuilder = previewRequestBuilder ?: return
+        applyManualParameters(requestBuilder, forPreview = true)
+        submitRepeatingRequest(requestBuilder)
+        reportStatus("preview resumed after vendor extended exposure")
     }
 
     private fun saveAvailableJpeg(reader: ImageReader) {
@@ -1490,6 +1727,7 @@ class CameraPreviewView @JvmOverloads constructor(
         if (!captureInProgress) return
         captureInProgress = false
         activeCaptureType = null
+        resumePreviewAfterExtendedCapture()
         val callback = captureResultCallback
         captureResultCallback = null
         captureStageCallback = null
@@ -1503,6 +1741,7 @@ class CameraPreviewView @JvmOverloads constructor(
         if (!captureInProgress || activeCaptureType != CaptureType.TEST_JPEG) return
         captureInProgress = false
         activeCaptureType = null
+        resumePreviewAfterExtendedCapture()
         val callback = testShotResultCallback
         testShotResultCallback = null
         captureStageCallback = null
@@ -1593,6 +1832,7 @@ class CameraPreviewView @JvmOverloads constructor(
     private fun closeCamera() {
         openingCamera = false
         previewStarted = false
+        previewPausedForExtendedCapture = false
         exposureAnalyzer.stop()
         backgroundHandler?.removeCallbacks(previewUpdateRunnable)
         clearTapFocusState()

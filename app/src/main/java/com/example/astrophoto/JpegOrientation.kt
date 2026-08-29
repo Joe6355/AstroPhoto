@@ -3,7 +3,7 @@ package com.example.astrophoto
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
-import android.media.ExifInterface
+import androidx.exifinterface.media.ExifInterface
 import java.io.InputStream
 
 enum class JpegOrientation(val swapsDimensions: Boolean) {

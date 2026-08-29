@@ -41,11 +41,13 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -989,12 +991,13 @@ fun ProcessedImageEditorScreen(
     onBack: () -> Unit,
     onSaved: () -> Unit
 ) {
+    val locale = LocalConfiguration.current.locales[0]
     val context = androidx.compose.ui.platform.LocalContext.current
     val editor = remember { ProcessedImageEditor(context.applicationContext) }
     val coroutineScope = rememberCoroutineScope()
     var original by remember(source.key) { mutableStateOf<Bitmap?>(null) }
-    var sourceWidth by remember(source.key) { mutableStateOf(0) }
-    var sourceHeight by remember(source.key) { mutableStateOf(0) }
+    var sourceWidth by remember(source.key) { mutableIntStateOf(0) }
+    var sourceHeight by remember(source.key) { mutableIntStateOf(0) }
     var processed by remember(source.key) { mutableStateOf<Bitmap?>(null) }
     var originalMetrics by remember(source.key) {
         mutableStateOf<EditorImageMetrics?>(null)
@@ -1287,7 +1290,7 @@ fun ProcessedImageEditorScreen(
                     title = "Гамма",
                     value = adjustments.gamma,
                     valueRange = 0.5f..2.5f,
-                    valueLabel = String.format(Locale.getDefault(), "%.2f", adjustments.gamma),
+                    valueLabel = String.format(locale, "%.2f", adjustments.gamma),
                     onValueChange = { adjustments = adjustments.copy(gamma = it) }
                 )
                 EditorSlider(
@@ -1453,6 +1456,7 @@ private fun EditorCropBlock(
     onResetCrop: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val locale = LocalConfiguration.current.locales[0]
     Column(
         modifier = modifier
             .background(MaterialTheme.colorScheme.surface, MaterialTheme.shapes.medium)
@@ -1472,7 +1476,7 @@ private fun EditorCropBlock(
             title = "Слева",
             value = crop.leftPercent,
             valueRange = 0f..30f,
-            valueLabel = String.format(Locale.getDefault(), "%.1f%%", crop.leftPercent),
+            valueLabel = String.format(locale, "%.1f%%", crop.leftPercent),
             onValueChange = { onCropChanged(crop.copy(leftPercent = it)) },
             enabled = enabled
         )
@@ -1480,7 +1484,7 @@ private fun EditorCropBlock(
             title = "Справа",
             value = crop.rightPercent,
             valueRange = 0f..30f,
-            valueLabel = String.format(Locale.getDefault(), "%.1f%%", crop.rightPercent),
+            valueLabel = String.format(locale, "%.1f%%", crop.rightPercent),
             onValueChange = { onCropChanged(crop.copy(rightPercent = it)) },
             enabled = enabled
         )
@@ -1488,7 +1492,7 @@ private fun EditorCropBlock(
             title = "Сверху",
             value = crop.topPercent,
             valueRange = 0f..30f,
-            valueLabel = String.format(Locale.getDefault(), "%.1f%%", crop.topPercent),
+            valueLabel = String.format(locale, "%.1f%%", crop.topPercent),
             onValueChange = { onCropChanged(crop.copy(topPercent = it)) },
             enabled = enabled
         )
@@ -1496,7 +1500,7 @@ private fun EditorCropBlock(
             title = "Снизу",
             value = crop.bottomPercent,
             valueRange = 0f..30f,
-            valueLabel = String.format(Locale.getDefault(), "%.1f%%", crop.bottomPercent),
+            valueLabel = String.format(locale, "%.1f%%", crop.bottomPercent),
             onValueChange = { onCropChanged(crop.copy(bottomPercent = it)) },
             enabled = enabled
         )

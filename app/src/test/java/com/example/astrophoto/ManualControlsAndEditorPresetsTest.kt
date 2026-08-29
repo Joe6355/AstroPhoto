@@ -36,8 +36,33 @@ class ManualControlsAndEditorPresetsTest {
 
     @Test
     fun seriesOffersRequestedLargeFrameCounts() {
-        assertTrue(SERIES_FRAME_COUNTS.containsAll(listOf(1, 40, 50, 100)))
+        assertTrue(
+            SERIES_FRAME_COUNTS.containsAll(
+                listOf(1, 40, 50, 100, 150, 200, 300, 500)
+            )
+        )
         assertEquals(SERIES_FRAME_COUNTS.sorted(), SERIES_FRAME_COUNTS)
+    }
+
+    @Test
+    fun darkFramesCanBeDisabledWithZero() {
+        assertEquals(listOf(0, 3, 5, 10, 20), CameraSettingsStore.DARK_FRAME_COUNT_VALUES)
+    }
+
+    @Test
+    fun helpAndOnboardingDescribeCurrentCaptureOptions() {
+        val help = ASTROPHOTO_HELP_SECTIONS.joinToString(" ") { it.text }
+        val onboarding = ASTROPHOTO_ONBOARDING_PAGES.joinToString(" ") {
+            "${it.first} ${it.second}"
+        }
+
+        assertTrue(help.contains("500"))
+        assertTrue(help.contains("20 и 30 кадр/с"))
+        assertTrue(help.contains("Значение 0 отключает"))
+        assertTrue(onboarding.contains("до 500 кадров"))
+        assertTrue(onboarding.contains("до 30 кадр/с"))
+        assertFalse(help.contains("пробн", ignoreCase = true))
+        assertFalse(onboarding.contains("пробн", ignoreCase = true))
     }
 
     @Test
@@ -114,22 +139,19 @@ class ManualControlsAndEditorPresetsTest {
         assertFalse(
             shouldOpenCompletedResultEditor(
                 pendingEditorFileName = "RecoveredStars_1.png",
-                stackingInProgress = true,
-                showingProcessing = true
+                stackingInProgress = true
             )
         )
         assertFalse(
             shouldOpenCompletedResultEditor(
                 pendingEditorFileName = null,
-                stackingInProgress = false,
-                showingProcessing = true
+                stackingInProgress = false
             )
         )
         assertTrue(
             shouldOpenCompletedResultEditor(
                 pendingEditorFileName = "RecoveredStars_1.png",
-                stackingInProgress = false,
-                showingProcessing = true
+                stackingInProgress = false
             )
         )
     }

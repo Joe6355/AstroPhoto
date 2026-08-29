@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import androidx.core.net.toUri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -33,6 +34,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -260,7 +262,7 @@ private class JpegAutoSelector(private val context: Context) {
 
     private fun openFrame(frame: SessionFrame): InputStream? =
         if (frame.contentUri != null) {
-            context.contentResolver.openInputStream(Uri.parse(frame.contentUri))
+            context.contentResolver.openInputStream(frame.contentUri.toUri())
         } else {
             frame.filePath?.let { File(it).inputStream() }
         }
@@ -551,6 +553,7 @@ private fun AutoAnalysisCard(
     result: AutoFrameAnalysis,
     favorite: Boolean
 ) {
+    val locale = LocalConfiguration.current.locales[0]
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
@@ -558,7 +561,7 @@ private fun AutoAnalysisCard(
             Text(result.frame.fileName, fontWeight = FontWeight.SemiBold)
             Text(
                 text = String.format(
-                    Locale.getDefault(),
+                    locale,
                     "Яркость: %.1f • Пересвет: %.2f%% • Резкость: %.1f",
                     result.brightness,
                     result.clippedPercent,

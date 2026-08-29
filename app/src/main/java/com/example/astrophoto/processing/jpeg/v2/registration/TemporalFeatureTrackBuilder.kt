@@ -4,7 +4,10 @@ import com.example.astrophoto.processing.jpeg.v2.model.DetectedStar
 import kotlin.math.hypot
 
 class TemporalFeatureTrackBuilder {
-    fun build(frames: List<TemporalFeatureFrame>): TemporalTrackAnalysis {
+    fun build(
+        frames: List<TemporalFeatureFrame>,
+        cancellationCheck: () -> Unit = {}
+    ): TemporalTrackAnalysis {
         val ordered = frames.sortedBy { it.captureIndex }
         if (ordered.size < 3 || ordered.first().stars.isEmpty()) {
             return TemporalTrackAnalysis(emptyList(), false, 0f, 0f)
@@ -18,6 +21,7 @@ class TemporalFeatureTrackBuilder {
             .sortedByDescending { quality(it.value) }
             .take(MAX_TRACK_SEEDS)
             .mapNotNull { indexed ->
+                cancellationCheck()
                 if (usedByFrame.getValue(first.frameId)[indexed.index]) return@mapNotNull null
                 val seed = indexed.value
                 val delta = (anchor.captureIndex - first.captureIndex).coerceAtLeast(1)
@@ -30,6 +34,7 @@ class TemporalFeatureTrackBuilder {
                     }
                 }.distinctBy { velocityKey(it.first, it.second) }
                 val best = velocities.map { velocity ->
+                    cancellationCheck()
                     observationsFor(seed, first, ordered, velocity, usedByFrame)
                 }.filter { it.size >= MIN_TRACK_OBSERVATIONS }
                     .minWithOrNull(

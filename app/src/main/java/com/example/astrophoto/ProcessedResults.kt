@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import androidx.core.net.toUri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
@@ -50,6 +51,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -288,14 +290,14 @@ private class ProcessedResultsRepository(private val context: Context) {
             val deleted = if (result.contentUri != null) {
                 require(
                     mediaStoreResultBelongsToSession(
-                        Uri.parse(result.contentUri),
+                        result.contentUri.toUri(),
                         session
                     )
                 ) {
                     "Файл не принадлежит Processed текущей сессии"
                 }
                 context.contentResolver.delete(
-                    Uri.parse(result.contentUri),
+                    result.contentUri.toUri(),
                     null,
                     null
                 ) > 0
@@ -345,7 +347,7 @@ private class ProcessedResultsRepository(private val context: Context) {
             if (result.contentUri != null) {
                 require(
                     mediaStoreResultBelongsToSession(
-                        Uri.parse(result.contentUri),
+                        result.contentUri.toUri(),
                         session
                     )
                 ) {
@@ -358,7 +360,7 @@ private class ProcessedResultsRepository(private val context: Context) {
                     "Файл с таким именем уже существует"
                 }
                 val updated = context.contentResolver.update(
-                    Uri.parse(result.contentUri),
+                    result.contentUri.toUri(),
                     ContentValues().apply {
                         put(MediaStore.Images.Media.DISPLAY_NAME, newName)
                     },
@@ -1771,7 +1773,7 @@ private fun ComparisonPane(
 }
 
 private class ResultImageZoomState {
-    var scale by mutableStateOf(1f)
+    var scale by mutableFloatStateOf(1f)
         private set
     var offset by mutableStateOf(Offset.Zero)
         private set
@@ -1905,7 +1907,7 @@ private fun SessionFrame.toComparisonImage(): ComparisonImage =
 
 private fun resultContentUri(context: Context, result: ProcessedResult): Uri? =
     when (val resolved = ProcessedImageSourceResolver(context).resolve(result.imageSource())) {
-        is ResolvedImageSource.Provider -> Uri.parse(resolved.record.uri)
+        is ResolvedImageSource.Provider -> resolved.record.uri.toUri()
         is ResolvedImageSource.LegacyFile ->
             runCatching {
                 FileProvider.getUriForFile(

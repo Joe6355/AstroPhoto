@@ -1,11 +1,13 @@
 package com.example.astrophoto
 
 import android.content.Context
+import androidx.core.content.edit
 
 enum class AppThemeMode {
     LIGHT,
     DARK,
-    VERY_DARK
+    VERY_DARK,
+    RED_NIGHT
 }
 
 data class SavedCameraSettings(
@@ -95,51 +97,51 @@ class CameraSettingsStore(context: Context) {
             shootingGoal = preferences.getString("shooting_goal", "STARS") ?: "STARS"
         )
     }.getOrElse {
-        preferences.edit().clear().apply()
+        preferences.edit {clear()}
         SavedCameraSettings()
     }
 
     fun save(settings: SavedCameraSettings) {
-        preferences.edit()
-            .putLong("exposure_time_ns", settings.exposureTimeNs)
-            .putInt("iso", settings.iso)
-            .putFloat("focus_distance", settings.focusDistance)
-            .putString("focus_mode", settings.focusMode)
-            .putBoolean(
-                "apply_long_exposure_to_preview",
-                settings.applyLongExposureToPreview
-            )
-            .putString("single_format", settings.singleFormat)
-            .putString("series_format", settings.seriesFormat)
-            .putString("dark_frames_format", settings.darkFramesFormat)
-            .putInt(
-                "dark_frames_count",
-                settings.darkFramesCount.takeIf { it in DARK_FRAME_COUNT_VALUES } ?: 3
-            )
-            .putString("capture_mode", settings.captureMode)
-            .putInt("series_frame_count", settings.seriesFrameCount)
-            .putInt("series_delay_seconds", settings.seriesDelaySeconds)
-            .putInt("start_timer_seconds", settings.startTimerSeconds)
-            .putBoolean("astro_mode_enabled", settings.astroModeEnabled)
-            .putBoolean("panel_expanded", settings.panelExpanded)
-            .putBoolean("vibration_after_series", settings.vibrationAfterSeries)
-            .putBoolean("sound_after_series", settings.soundAfterSeries)
-            .putBoolean("vibration_after_processing", settings.vibrationAfterProcessing)
-            .putBoolean("sound_after_processing", settings.soundAfterProcessing)
-            .putBoolean("histogram_enabled", settings.histogramEnabled)
-            .putBoolean("save_test_shots", settings.saveTestShots)
-            .putInt(
-                "jpeg_quality",
-                settings.jpegQuality.takeIf { it in JPEG_QUALITY_VALUES } ?: 92
-            )
-            .putBoolean("fast_preview_enabled", settings.fastPreviewEnabled)
-            .putString("theme_mode", settings.themeMode)
-            .putBoolean(
-                "deletion_protection_enabled",
-                settings.deletionProtectionEnabled
-            )
-            .putString("shooting_goal", settings.shootingGoal)
-            .apply()
+        preferences.edit {
+                putLong("exposure_time_ns", settings.exposureTimeNs)
+                .putInt("iso", settings.iso)
+                .putFloat("focus_distance", settings.focusDistance)
+                .putString("focus_mode", settings.focusMode)
+                .putBoolean(
+                    "apply_long_exposure_to_preview",
+                    settings.applyLongExposureToPreview
+                )
+                .putString("single_format", settings.singleFormat)
+                .putString("series_format", settings.seriesFormat)
+                .putString("dark_frames_format", settings.darkFramesFormat)
+                .putInt(
+                    "dark_frames_count",
+                    settings.darkFramesCount.takeIf { it in DARK_FRAME_COUNT_VALUES } ?: 3
+                )
+                .putString("capture_mode", settings.captureMode)
+                .putInt("series_frame_count", settings.seriesFrameCount)
+                .putInt("series_delay_seconds", settings.seriesDelaySeconds)
+                .putInt("start_timer_seconds", settings.startTimerSeconds)
+                .putBoolean("astro_mode_enabled", settings.astroModeEnabled)
+                .putBoolean("panel_expanded", settings.panelExpanded)
+                .putBoolean("vibration_after_series", settings.vibrationAfterSeries)
+                .putBoolean("sound_after_series", settings.soundAfterSeries)
+                .putBoolean("vibration_after_processing", settings.vibrationAfterProcessing)
+                .putBoolean("sound_after_processing", settings.soundAfterProcessing)
+                .putBoolean("histogram_enabled", settings.histogramEnabled)
+                .putBoolean("save_test_shots", settings.saveTestShots)
+                .putInt(
+                    "jpeg_quality",
+                    settings.jpegQuality.takeIf { it in JPEG_QUALITY_VALUES } ?: 92
+                )
+                .putBoolean("fast_preview_enabled", settings.fastPreviewEnabled)
+                .putString("theme_mode", settings.themeMode)
+                .putBoolean(
+                    "deletion_protection_enabled",
+                    settings.deletionProtectionEnabled
+                )
+                .putString("shooting_goal", settings.shootingGoal)
+            }
     }
 
     fun saveAppSettings(settings: SavedCameraSettings) {
@@ -151,7 +153,7 @@ class CameraSettingsStore(context: Context) {
     }
 
     fun reset(): SavedCameraSettings {
-        preferences.edit().clear().apply()
+        preferences.edit {clear()}
         return SavedCameraSettings()
     }
 
@@ -160,14 +162,14 @@ class CameraSettingsStore(context: Context) {
     }.getOrDefault(false)
 
     fun setOnboardingSeen(seen: Boolean) {
-        preferences.edit()
-            .putBoolean("onboarding_seen", seen)
-            .apply()
+        preferences.edit {
+                putBoolean("onboarding_seen", seen)
+            }
     }
 
     companion object {
         val JPEG_QUALITY_VALUES = setOf(85, 92, 100)
-        val DARK_FRAME_COUNT_VALUES = setOf(3, 5, 10, 20)
+        val DARK_FRAME_COUNT_VALUES = listOf(0, 3, 5, 10, 20)
     }
 }
 

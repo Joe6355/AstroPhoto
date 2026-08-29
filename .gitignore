@@ -30,6 +30,7 @@ astrophoto_*_logcat.txt
 # Local photo/session exports if they appear at the project root
 /Pictures/
 /AstroPhoto/
+/artifacts/
 
 # Temporary / OS files
 *.tmp

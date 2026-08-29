@@ -62,6 +62,30 @@ private val VeryDarkObservatoryColorScheme = NightObservatoryColorScheme.copy(
     surfaceVariant = AstroColors.Surface
 )
 
+private val RedNightObservatoryColorScheme = darkColorScheme(
+    primary = AstroColors.RedNightPrimary,
+    onPrimary = AstroColors.RedNightOnPrimary,
+    primaryContainer = AstroColors.RedNightPrimaryContainer,
+    onPrimaryContainer = AstroColors.RedNightOnPrimaryContainer,
+    secondary = AstroColors.RedNightSecondary,
+    onSecondary = AstroColors.RedNightOnSecondary,
+    secondaryContainer = AstroColors.RedNightSecondaryContainer,
+    onSecondaryContainer = AstroColors.RedNightOnSecondaryContainer,
+    tertiary = AstroColors.RedNightPrimary,
+    onTertiary = AstroColors.RedNightOnPrimary,
+    error = AstroColors.Error,
+    onError = AstroColors.OnError,
+    background = AstroColors.RedNightBackground,
+    onBackground = AstroColors.RedNightTextPrimary,
+    surface = AstroColors.RedNightSurface,
+    onSurface = AstroColors.RedNightTextPrimary,
+    surfaceVariant = AstroColors.RedNightSurfaceElevated,
+    onSurfaceVariant = AstroColors.RedNightTextSecondary,
+    outline = AstroColors.RedNightOutline,
+    outlineVariant = AstroColors.RedNightOutlineSubtle,
+    scrim = AstroColors.RedNightScrim
+)
+
 val AstroShapes = Shapes(
     extraSmall = RoundedCornerShape(10.dp),
     small = RoundedCornerShape(12.dp),
@@ -75,11 +99,13 @@ fun AstroPhotoTheme(
     darkTheme: Boolean = true,
     dynamicColor: Boolean = false,
     veryDark: Boolean = false,
+    redNight: Boolean = false,
     content: @Composable () -> Unit
 ) {
     MaterialTheme(
         colorScheme = when {
             !darkTheme -> DayObservatoryColorScheme
+            redNight -> RedNightObservatoryColorScheme
             veryDark -> VeryDarkObservatoryColorScheme
             else -> NightObservatoryColorScheme
         },

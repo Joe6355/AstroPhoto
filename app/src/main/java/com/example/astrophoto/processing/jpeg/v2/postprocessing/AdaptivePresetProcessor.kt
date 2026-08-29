@@ -44,7 +44,7 @@ class AdaptivePresetProcessor(
         val stageDurations = linkedMapOf<String, Long>()
         fun elapsed(stageStarted: Long): Long = (System.nanoTime() - stageStarted) / 1_000_000L
 
-        onProgress("Analyzing sky", 0, TOTAL_STAGES)
+        onProgress("Анализ неба", 0, TOTAL_STAGES)
         var stageStarted = System.nanoTime()
         val before = statistics.calculate(stackedSky, effectiveSkyAlpha, alignedStackStars)
         stageDurations["sky_statistics"] = elapsed(stageStarted)
@@ -76,7 +76,7 @@ class AdaptivePresetProcessor(
         }
         var working = stackedSky
 
-        onProgress("Removing light pollution", 1, TOTAL_STAGES)
+        onProgress("Удаление светового загрязнения", 1, TOTAL_STAGES)
         stageStarted = System.nanoTime()
         val gradientDiagnostics = gradientRemoval.apply(
             working,
@@ -92,7 +92,7 @@ class AdaptivePresetProcessor(
         stageDurations["gradient_removal"] = elapsed(stageStarted)
         var currentStatistics = statistics.calculate(working, effectiveSkyAlpha, alignedStackStars)
 
-        onProgress("Balancing sky color", 2, TOTAL_STAGES)
+        onProgress("Коррекция цвета неба", 2, TOTAL_STAGES)
         stageStarted = System.nanoTime()
         val neutralizationDiagnostics = neutralizer.apply(
             working,
@@ -108,7 +108,7 @@ class AdaptivePresetProcessor(
         stageDurations["background_neutralization"] = elapsed(stageStarted)
         currentStatistics = statistics.calculate(working, effectiveSkyAlpha, alignedStackStars)
 
-        onProgress("Stretching faint stars", 3, TOTAL_STAGES)
+        onProgress("Проявление слабых звёзд", 3, TOTAL_STAGES)
         stageStarted = System.nanoTime()
         val stretchDiagnostics = stretch.apply(
             working,
@@ -128,7 +128,7 @@ class AdaptivePresetProcessor(
         stageDurations["stretch"] = elapsed(stageStarted)
         currentStatistics = statistics.calculate(working, effectiveSkyAlpha, alignedStackStars)
 
-        onProgress("Reducing color noise", 4, TOTAL_STAGES)
+        onProgress("Подавление цветного шума", 4, TOTAL_STAGES)
         stageStarted = System.nanoTime()
         val chromaNoiseDiagnostics = chromaNoiseReducer.apply(
             working,
@@ -143,7 +143,7 @@ class AdaptivePresetProcessor(
         }
         stageDurations["chroma_reduction"] = elapsed(stageStarted)
 
-        onProgress("Enhancing stars", 5, TOTAL_STAGES)
+        onProgress("Усиление звёзд", 5, TOTAL_STAGES)
         currentStatistics = statistics.calculate(working, effectiveSkyAlpha, alignedStackStars)
         stageStarted = System.nanoTime()
         val starResult = if (profile == AstroProcessingProfile.EXPERIMENTAL_STARS) {

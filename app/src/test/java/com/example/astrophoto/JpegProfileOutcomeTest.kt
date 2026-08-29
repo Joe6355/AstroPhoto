@@ -16,12 +16,47 @@ class JpegProfileOutcomeTest {
         }.exceptionOrNull()
 
         assertTrue(error is JpegProfileProcessingException)
+        val profileError = error as JpegProfileProcessingException
         assertEquals(
             JpegProfileProcessingOutcome.FAILED_REGISTRATION,
-            (error as JpegProfileProcessingException).outcome
+            profileError.outcome
         )
         assertTrue(error.message.orEmpty().contains("1/30"))
         assertTrue(error.message.orEmpty().contains("Файл профиля не создан"))
+        assertTrue(profileError.canContinueWithUserApproval)
+        assertEquals(1, profileError.acceptedFrames)
+        assertEquals(30, profileError.totalFrames)
+    }
+
+    @Test fun userApprovalAllowsProcessingWithOneAcceptedFrame() {
+        requireMinimumRegisteredFrames(
+            acceptedFrames = 1,
+            totalFrames = 30,
+            profile = AstroProcessingProfile.DEEP_SKY,
+            userApprovedInsufficientFrames = true
+        )
+    }
+
+    @Test fun userApprovalCannotContinueWithoutAnyAcceptedFrame() {
+        val error = runCatching {
+            requireMinimumRegisteredFrames(
+                acceptedFrames = 0,
+                totalFrames = 30,
+                profile = AstroProcessingProfile.DEEP_SKY,
+                userApprovedInsufficientFrames = true
+            )
+        }.exceptionOrNull() as JpegProfileProcessingException
+
+        assertTrue(!error.canContinueWithUserApproval)
+    }
+
+    @Test fun wrappedContinuableFailureIsRecoveredForConfirmationDialog() {
+        val cause = runCatching {
+            requireMinimumRegisteredFrames(1, 30, AstroProcessingProfile.DEEP_SKY)
+        }.exceptionOrNull()!!
+        val wrapped = IllegalStateException("stage failed", cause)
+
+        assertEquals(cause, wrapped.userContinuableProfileFailure())
     }
 
     @Test fun referenceOnlySelectionIsFailure() {
