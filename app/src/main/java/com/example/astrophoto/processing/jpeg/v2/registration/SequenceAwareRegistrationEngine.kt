@@ -19,14 +19,16 @@ class SequenceAwareRegistrationEngine(
         referenceFrameId: String,
         imageWidth: Int,
         imageHeight: Int,
-        cancellationCheck: () -> Unit = {}
+        cancellationCheck: () -> Unit = {},
+        onProgress: () -> Unit = {}
     ): SequenceAwareRegistrationDiagnostics {
         val ordered = frames.sortedBy { it.captureIndex }
         val reference = checkNotNull(ordered.firstOrNull { it.frameId == referenceFrameId })
         val tracks = trackBuilder.build(ordered, cancellationCheck)
+        onProgress()
         val candidates = ordered.map { frame ->
             cancellationCheck()
-            SequenceRegistrationCandidate(
+            val candidate = SequenceRegistrationCandidate(
                 frameId = frame.frameId,
                 captureIndex = frame.captureIndex,
                 isReference = frame.frameId == referenceFrameId,
@@ -42,8 +44,11 @@ class SequenceAwareRegistrationEngine(
                     )
                 }
             )
+            onProgress()
+            candidate
         }
         val fitted = modelEstimator.fit(candidates, reference.captureIndex, tracks)
+        onProgress()
         val globalVerification = verifier.verify(
             reference = reference,
             frames = ordered,
@@ -51,6 +56,7 @@ class SequenceAwareRegistrationEngine(
             zero = fitted.zeroFrameHypotheses,
             tracks = tracks
         )
+        onProgress()
         val registrations = linkedMapOf<String, RegistrationResult>()
         val ranks = linkedMapOf<String, Int>()
         val rejectedReasons = linkedMapOf<String, String>()
@@ -223,6 +229,7 @@ class SequenceAwareRegistrationEngine(
             val hypotheses = candidates.first { it.frameId == frame.frameId }.hypotheses
             ranks[frame.frameId] = hypotheses.indexOf(sparseSeed).let { if (it < 0) -1 else it + 1 }
             result.rejectionReason?.let { rejectedReasons[frame.frameId] = it }
+            onProgress()
         }
         val acceptedFrameIds = registrations.filterValues { it.isReliable }.keys
         val rejectedFrameIds = registrations.filterValues { !it.isReliable }.keys

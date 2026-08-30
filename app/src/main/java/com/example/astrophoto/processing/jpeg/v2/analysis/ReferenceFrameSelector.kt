@@ -7,6 +7,11 @@ data class ScoredFrameAnalysis(
     val score: Float
 )
 
+data class IntegrationFrameSelection(
+    val analyses: List<FrameAnalysis>,
+    val droppedCount: Int
+)
+
 class ReferenceFrameSelector {
     fun select(analyses: List<FrameAnalysis>): ScoredFrameAnalysis {
         require(analyses.isNotEmpty())
@@ -52,5 +57,69 @@ class ReferenceFrameSelector {
                 ).coerceIn(0f, 1f)
             ScoredFrameAnalysis(analysis, score)
         }
+    }
+
+    /** Keeps the strongest frames while reserving part of the limit for temporal coverage. */
+    fun selectForIntegration(
+        analyses: List<FrameAnalysis>,
+        captureIndexByFrameId: Map<String, Int>,
+        maxFrames: Int
+    ): IntegrationFrameSelection {
+        require(maxFrames > 0)
+        val valid = scoreAll(analyses)
+            .filter { it.analysis.decodeValid && it.score.isFinite() }
+        if (valid.size <= maxFrames) {
+            return IntegrationFrameSelection(
+                analyses = valid.sortedBy { captureIndexByFrameId[it.analysis.id] ?: Int.MAX_VALUE }
+                    .map { it.analysis },
+                droppedCount = analyses.size - valid.size
+            )
+        }
+
+        val ranked = valid.sortedWith(
+            compareByDescending<ScoredFrameAnalysis> { it.score }
+                .thenBy { captureIndexByFrameId[it.analysis.id] ?: Int.MAX_VALUE }
+                .thenBy { it.analysis.fileName }
+                .thenBy { it.analysis.id }
+        )
+        val qualitySlots = maxOf(1, maxFrames * QUALITY_SLOT_PERCENT / 100)
+        val selected = ranked.take(qualitySlots.coerceAtMost(maxFrames)).toMutableList()
+        val remaining = ranked.drop(selected.size).toMutableList()
+        val minimumIndex = valid.minOf { captureIndexByFrameId[it.analysis.id] ?: 0 }
+        val maximumIndex = valid.maxOf { captureIndexByFrameId[it.analysis.id] ?: minimumIndex }
+        val indexSpan = (maximumIndex - minimumIndex).coerceAtLeast(1).toFloat()
+
+        while (selected.size < maxFrames && remaining.isNotEmpty()) {
+            val next = remaining.sortedWith(
+                compareByDescending<ScoredFrameAnalysis> { candidate ->
+                    val candidateIndex = captureIndexByFrameId[candidate.analysis.id] ?: minimumIndex
+                    val distance = selected.minOf { chosen ->
+                        kotlin.math.abs(
+                            candidateIndex -
+                                (captureIndexByFrameId[chosen.analysis.id] ?: minimumIndex)
+                        )
+                    } / indexSpan
+                    candidate.score * DIVERSITY_QUALITY_WEIGHT +
+                        distance * (1f - DIVERSITY_QUALITY_WEIGHT)
+                }.thenByDescending { it.score }
+                    .thenBy { captureIndexByFrameId[it.analysis.id] ?: Int.MAX_VALUE }
+                    .thenBy { it.analysis.fileName }
+                    .thenBy { it.analysis.id }
+            ).first()
+            selected += next
+            remaining.remove(next)
+        }
+
+        return IntegrationFrameSelection(
+            analyses = selected
+                .sortedBy { captureIndexByFrameId[it.analysis.id] ?: Int.MAX_VALUE }
+                .map { it.analysis },
+            droppedCount = analyses.size - selected.size
+        )
+    }
+
+    private companion object {
+        const val QUALITY_SLOT_PERCENT = 80
+        const val DIVERSITY_QUALITY_WEIGHT = 0.60f
     }
 }

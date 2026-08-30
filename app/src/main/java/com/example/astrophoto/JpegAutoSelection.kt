@@ -65,7 +65,7 @@ private data class AutoSelectionThresholds(
     val blurFactor: Double
 )
 
-private enum class AutoFrameStatus(
+internal enum class AutoFrameStatus(
     val title: String,
     val color: Color,
     val shouldMarkBad: Boolean,
@@ -92,7 +92,7 @@ private data class RawFrameMetrics(
     val readError: Boolean
 )
 
-private data class AutoFrameAnalysis(
+internal data class AutoFrameAnalysis(
     val frame: SessionFrame,
     val brightness: Double,
     val clippedPercent: Double,
@@ -100,12 +100,43 @@ private data class AutoFrameAnalysis(
     val status: AutoFrameStatus
 )
 
-private data class AutoSelectionReport(
+internal data class AutoSelectionReport(
     val frames: List<AutoFrameAnalysis>,
     val sharpnessComparisonAvailable: Boolean
 )
 
-private class JpegAutoSelector(private val context: Context) {
+internal data class StackFrameSelection(
+    val frames: List<SessionFrame>,
+    val droppedCount: Int
+)
+
+internal data class StackFrameQualityCandidate(
+    val captureIndex: Int,
+    val statusRank: Int,
+    val sharpness: Double,
+    val clippedPercent: Double,
+    val brightness: Double
+)
+
+internal fun selectBestStackFrameIndices(
+    candidates: List<StackFrameQualityCandidate>,
+    maxFrames: Int
+): List<Int> {
+    require(maxFrames > 0)
+    return candidates
+        .sortedWith(
+            compareByDescending<StackFrameQualityCandidate> { it.statusRank }
+                .thenByDescending { it.sharpness }
+                .thenBy { it.clippedPercent }
+                .thenByDescending { it.brightness }
+                .thenBy { it.captureIndex }
+        )
+        .take(maxFrames)
+        .map { it.captureIndex }
+        .sorted()
+}
+
+internal class JpegAutoSelector(private val context: Context) {
     suspend fun analyze(
         frames: List<SessionFrame>,
         sensitivity: AutoSelectionSensitivity,
@@ -165,6 +196,41 @@ private class JpegAutoSelector(private val context: Context) {
                 )
             },
             sharpnessComparisonAvailable = sharpnessComparisonAvailable
+        )
+    }
+
+    suspend fun selectForStacking(
+        frames: List<SessionFrame>,
+        maxFrames: Int,
+        onProgress: suspend (current: Int, total: Int) -> Unit
+    ): StackFrameSelection {
+        require(maxFrames > 0)
+        if (frames.size <= maxFrames) return StackFrameSelection(frames, 0)
+
+        val report = analyze(frames, AutoSelectionSensitivity.NORMAL, onProgress)
+        val candidates = report.frames.mapIndexedNotNull { index, analysis ->
+            if (analysis.status == AutoFrameStatus.READ_ERROR ||
+                analysis.status == AutoFrameStatus.BLACK
+            ) {
+                null
+            } else {
+                StackFrameQualityCandidate(
+                    captureIndex = index,
+                    statusRank = analysis.status.stackRank,
+                    sharpness = analysis.sharpness,
+                    clippedPercent = analysis.clippedPercent,
+                    brightness = analysis.brightness
+                )
+            }
+        }
+        require(candidates.size >= 2) {
+            "После анализа качества осталось меньше двух читаемых JPEG кадров"
+        }
+        val selectedIndices = selectBestStackFrameIndices(candidates, maxFrames).toSet()
+        val selected = frames.filterIndexed { index, _ -> index in selectedIndices }
+        return StackFrameSelection(
+            frames = selected,
+            droppedCount = frames.size - selected.size
         )
     }
 
@@ -309,6 +375,16 @@ private class JpegAutoSelector(private val context: Context) {
                 clippedPercent = 5.0,
                 blurFactor = 0.75
             )
+        }
+
+    private val AutoFrameStatus.stackRank: Int
+        get() = when (this) {
+            AutoFrameStatus.OK -> 4
+            AutoFrameStatus.BLURRY -> 3
+            AutoFrameStatus.TOO_DARK -> 2
+            AutoFrameStatus.OVEREXPOSED -> 1
+            AutoFrameStatus.BLACK,
+            AutoFrameStatus.READ_ERROR -> 0
         }
 }
 

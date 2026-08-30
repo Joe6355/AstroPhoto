@@ -7,6 +7,7 @@
         android:required="false" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROCESSING" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
@@ -42,6 +43,10 @@
             android:name=".ProcessingForegroundService"
             android:exported="false"
             android:foregroundServiceType="mediaProcessing" />
+        <service
+            android:name=".SeriesCaptureForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="camera" />
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

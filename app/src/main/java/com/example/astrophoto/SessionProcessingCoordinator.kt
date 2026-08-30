@@ -94,6 +94,8 @@ object SessionProcessingCoordinator {
             } catch (error: CancellationException) {
                 update(sessionFolder, "Обработка остановлена")
                 throw error
+            } catch (error: Throwable) {
+                update(sessionFolder, error.message ?: "Ошибка обработки")
             } finally {
                 synchronized(lock) {
                     jobs.remove(sessionFolder)

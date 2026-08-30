@@ -258,7 +258,8 @@ class EnhancedGlobalToneProcessor(
         confirmedStars: List<DetectedStar>,
         store: ResultCandidateStore,
         gain: Double,
-        preparedNoiseMap: PreparedLuminanceNoiseMap
+        preparedNoiseMap: PreparedLuminanceNoiseMap,
+        knownBaselineQuality: ResultQualityMetrics? = null
     ): EnhancedGlobalToneCandidate {
         val baselineHashBefore = fileBackedPixelHash(baseline)
         val sky = FileBackedImageReader(baseline).use { image ->
@@ -320,16 +321,30 @@ class EnhancedGlobalToneProcessor(
         )
         return try {
             val baselineHashAfter = fileBackedPixelHash(baseline)
-            val measured = validator.validate(
-                baseline = baseline,
-                candidate = generation.image,
-                effectiveSkyAlpha = effectiveSkyAlpha,
-                confirmedStars = confirmedStars,
-                anchors = anchors,
-                generatedScaleLimitedPixelCount = generation.scaleLimitedPixelCount,
-                maximumLinearChannel = generation.maximumLinearChannel,
-                gain = generation.gain
-            )
+            val measured = if (knownBaselineQuality == null) {
+                validator.validate(
+                    baseline = baseline,
+                    candidate = generation.image,
+                    effectiveSkyAlpha = effectiveSkyAlpha,
+                    confirmedStars = confirmedStars,
+                    anchors = anchors,
+                    generatedScaleLimitedPixelCount = generation.scaleLimitedPixelCount,
+                    maximumLinearChannel = generation.maximumLinearChannel,
+                    gain = generation.gain
+                )
+            } else {
+                validator.validateWithBaselineQuality(
+                    baseline = baseline,
+                    candidate = generation.image,
+                    effectiveSkyAlpha = effectiveSkyAlpha,
+                    confirmedStars = confirmedStars,
+                    anchors = anchors,
+                    generatedScaleLimitedPixelCount = generation.scaleLimitedPixelCount,
+                    maximumLinearChannel = generation.maximumLinearChannel,
+                    gain = generation.gain,
+                    baselineQuality = knownBaselineQuality
+                )
+            }
             val measuredWithDenoise = measured.copy(
                 metrics = measured.metrics.copy(
                     luminanceDenoiseStrength = generation.luminanceDenoise.appliedStrength.toDouble(),
@@ -379,7 +394,8 @@ class EnhancedGlobalToneProcessor(
         effectiveSkyAlpha: FileBackedFloatPlane,
         confirmedStars: List<DetectedStar>,
         store: ResultCandidateStore,
-        gains: List<Double> = PRODUCTION_GAINS
+        gains: List<Double> = PRODUCTION_GAINS,
+        knownBaselineQuality: ResultQualityMetrics? = null
     ): EnhancedGlobalToneCandidate {
         require(gains.isNotEmpty())
         require(baseline.width == effectiveSkyAlpha.width && baseline.height == effectiveSkyAlpha.height)
@@ -399,7 +415,8 @@ class EnhancedGlobalToneProcessor(
                     confirmedStars = confirmedStars,
                     store = store,
                     gain = gain,
-                    preparedNoiseMap = prepared
+                    preparedNoiseMap = prepared,
+                    knownBaselineQuality = knownBaselineQuality
                 )
                 if (candidate.validation.accepted) {
                     lastRejected?.generation?.image?.let(store::deleteTemporary)
@@ -457,10 +474,55 @@ open class EnhancedGlobalToneValidator(
         generatedScaleLimitedPixelCount: Int,
         maximumLinearChannel: Double,
         gain: Double = GlobalToneTransform.APPROVED_GAIN
+    ): EnhancedGlobalToneValidation = validateInternal(
+        baseline = baseline,
+        candidate = candidate,
+        effectiveSkyAlpha = effectiveSkyAlpha,
+        confirmedStars = confirmedStars,
+        anchors = anchors,
+        generatedScaleLimitedPixelCount = generatedScaleLimitedPixelCount,
+        maximumLinearChannel = maximumLinearChannel,
+        gain = gain,
+        knownBaselineQuality = null
+    )
+
+    fun validateWithBaselineQuality(
+        baseline: FileBackedImage,
+        candidate: FileBackedImage,
+        effectiveSkyAlpha: FileBackedFloatPlane,
+        confirmedStars: List<DetectedStar>,
+        anchors: GlobalToneAnchors,
+        generatedScaleLimitedPixelCount: Int,
+        maximumLinearChannel: Double,
+        gain: Double,
+        baselineQuality: ResultQualityMetrics
+    ): EnhancedGlobalToneValidation = validateInternal(
+        baseline = baseline,
+        candidate = candidate,
+        effectiveSkyAlpha = effectiveSkyAlpha,
+        confirmedStars = confirmedStars,
+        anchors = anchors,
+        generatedScaleLimitedPixelCount = generatedScaleLimitedPixelCount,
+        maximumLinearChannel = maximumLinearChannel,
+        gain = gain,
+        knownBaselineQuality = baselineQuality
+    )
+
+    private fun validateInternal(
+        baseline: FileBackedImage,
+        candidate: FileBackedImage,
+        effectiveSkyAlpha: FileBackedFloatPlane,
+        confirmedStars: List<DetectedStar>,
+        anchors: GlobalToneAnchors,
+        generatedScaleLimitedPixelCount: Int,
+        maximumLinearChannel: Double,
+        gain: Double,
+        knownBaselineQuality: ResultQualityMetrics?
     ): EnhancedGlobalToneValidation {
         require(baseline.width == candidate.width && baseline.height == candidate.height)
         require(baseline.width == effectiveSkyAlpha.width && baseline.height == effectiveSkyAlpha.height)
-        val baselineQuality = qualityAnalyzer.analyze(baseline, baseline, effectiveSkyAlpha)
+        val baselineQuality = knownBaselineQuality
+            ?: qualityAnalyzer.analyze(baseline, baseline, effectiveSkyAlpha)
         val candidateQuality = qualityAnalyzer.analyze(candidate, baseline, effectiveSkyAlpha)
         val lineArtifacts = lineArtifactDetector.compare(baseline, candidate, effectiveSkyAlpha)
         return FileBackedImageReader(baseline, cachedRows = 20).use { baselineReader ->

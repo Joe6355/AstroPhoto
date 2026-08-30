@@ -28,6 +28,7 @@ import android.os.Build
 import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.Looper
 import android.provider.MediaStore
 import android.util.AttributeSet
 import android.util.Log
@@ -64,7 +65,15 @@ data class ManualCameraCapabilities(
     val vendorExposureKeyName: String? = null,
     val extendedExposureProvider: String? = null,
     val usesExtendedExposure: Boolean = false,
+    val maximumFrameDurationNs: Long? = null,
     val physicalCameraIds: Set<String> = emptySet()
+)
+
+data class ManualCaptureResult(
+    val requestedExposureTimeNs: Long?,
+    val actualExposureTimeNs: Long?,
+    val requestedIso: Int?,
+    val actualIso: Int?
 )
 
 internal data class CameraIsoRequest(
@@ -155,10 +164,12 @@ class CameraPreviewView @JvmOverloads constructor(
     private val onCameraStatus: (String) -> Unit = {},
     private val onExposureAnalysis: (ExposureAnalysis) -> Unit = {},
     private val onExposureAnalyzerUnavailable: (String) -> Unit = {},
-    private val onTapFocusEvent: (TapFocusEvent) -> Unit = {}
+    private val onTapFocusEvent: (TapFocusEvent) -> Unit = {},
+    private val onManualCaptureResult: (ManualCaptureResult) -> Unit = {}
 ) : TextureView(context, attrs), DefaultLifecycleObserver {
 
     private val cameraManager = context.getSystemService(CameraManager::class.java)
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val manualCapabilityStore = ManualCameraCapabilityStore(context)
     private val lifecycleOwner = context.findActivity()
     private var backgroundThread: HandlerThread? = null
@@ -169,6 +180,7 @@ class CameraPreviewView @JvmOverloads constructor(
     private var imageReader: ImageReader? = null
     private var rawImageReader: ImageReader? = null
     private var previewSurface: Surface? = null
+    private var headlessSurfaceTexture: SurfaceTexture? = null
     private var previewSize: Size? = null
     private var sensorOrientation = 0
     private var activeTapFocusRegion: MeteringRectangle? = null
@@ -190,6 +202,7 @@ class CameraPreviewView @JvmOverloads constructor(
         applyLongExposureToPreview = false
     )
     private var active = false
+    private var externalCaptureActive = false
     private var openingCamera = false
     private var previewStarted = false
     private var previewPausedForExtendedCapture = false
@@ -280,7 +293,9 @@ class CameraPreviewView @JvmOverloads constructor(
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         lifecycleOwner?.lifecycle?.addObserver(this)
-        if (lifecycleOwner?.lifecycle?.currentState?.isAtLeast(Lifecycle.State.RESUMED) == true) {
+        if (!externalCaptureActive &&
+            lifecycleOwner?.lifecycle?.currentState?.isAtLeast(Lifecycle.State.RESUMED) == true
+        ) {
             active = true
             startCamera()
             startExposureAnalyzerIfNeeded()
@@ -297,16 +312,60 @@ class CameraPreviewView @JvmOverloads constructor(
     }
 
     override fun onResume(owner: LifecycleOwner) {
+        if (externalCaptureActive) return
         active = true
         startCamera()
         startExposureAnalyzerIfNeeded()
     }
 
     override fun onPause(owner: LifecycleOwner) {
-        active = false
         exposureAnalyzer.stop()
+        active = false
         closeCamera()
         stopBackgroundThread()
+    }
+
+    fun setExternalCaptureActive(enabled: Boolean) {
+        if (externalCaptureActive == enabled) return
+        externalCaptureActive = enabled
+        if (enabled) {
+            active = false
+            closeCamera()
+            stopBackgroundThread()
+        } else if (
+            lifecycleOwner?.lifecycle?.currentState?.isAtLeast(Lifecycle.State.RESUMED) == true
+        ) {
+            active = true
+            startCamera()
+        }
+    }
+
+    /** Starts a service-owned Camera2 controller without an Activity preview surface. */
+    fun startHeadlessCapture() {
+        check(lifecycleOwner == null) { "Headless capture requires an application context" }
+        if (headlessSurfaceTexture == null) {
+            headlessSurfaceTexture = SurfaceTexture(false)
+        }
+        exposureAnalysisEnabled = false
+        active = true
+        startCamera()
+    }
+
+    fun stopHeadlessCapture() {
+        if (headlessSurfaceTexture == null) return
+        active = false
+        closeCamera()
+        stopBackgroundThread()
+        headlessSurfaceTexture?.release()
+        headlessSurfaceTexture = null
+    }
+
+    fun cancelActiveCapture(message: String = "Съёмка остановлена") {
+        if (activeCaptureType == CaptureType.TEST_JPEG) {
+            finishTestCapture(Result.failure(IllegalStateException(message)))
+        } else {
+            finishCapture(Result.failure(IllegalStateException(message)))
+        }
     }
 
     fun updateManualParameters(
@@ -539,7 +598,7 @@ class CameraPreviewView @JvmOverloads constructor(
         normalizedY: Float,
         status: TapFocusStatus
     ) {
-        post {
+        mainHandler.post {
             onTapFocusEvent(
                 TapFocusEvent(
                     normalizedX = normalizedX.coerceIn(0f, 1f),
@@ -867,10 +926,15 @@ class CameraPreviewView @JvmOverloads constructor(
     }
 
     private fun startCamera() {
-        if (!active || !isAvailable || cameraDevice != null || openingCamera) return
+        if (!active || !hasCameraSurface() || cameraDevice != null || openingCamera) return
         startBackgroundThread()
         openRearCamera()
     }
+
+    private fun cameraSurfaceTexture(): SurfaceTexture? =
+        headlessSurfaceTexture ?: surfaceTexture
+
+    private fun hasCameraSurface(): Boolean = cameraSurfaceTexture() != null
 
     @SuppressLint("MissingPermission")
     private fun openRearCamera() {
@@ -925,6 +989,9 @@ class CameraPreviewView @JvmOverloads constructor(
             )
             val postRawBoostRange = characteristics.get(
                 CameraCharacteristics.CONTROL_POST_RAW_SENSITIVITY_BOOST_RANGE
+            )
+            val maximumFrameDuration = characteristics.get(
+                CameraCharacteristics.SENSOR_INFO_MAX_FRAME_DURATION
             )
             val minimumFocusDistance = characteristics.get(
                 CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE
@@ -985,6 +1052,7 @@ class CameraPreviewView @JvmOverloads constructor(
                     ?.takeIf { exposureRangeSelection.usesExtendedRange }
                     ?.displayName,
                 usesExtendedExposure = exposureRangeSelection.usesExtendedRange,
+                maximumFrameDurationNs = maximumFrameDuration,
                 physicalCameraIds = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     characteristics.physicalCameraIds
                 } else {
@@ -992,7 +1060,7 @@ class CameraPreviewView @JvmOverloads constructor(
                 }
             )
             manualCapabilities = cameraCapabilities
-            post { onCapabilitiesAvailable(cameraCapabilities) }
+            mainHandler.post { onCapabilitiesAvailable(cameraCapabilities) }
 
             val sizes = streamConfigurationMap?.getOutputSizes(SurfaceTexture::class.java)
             val selectedSize = choosePreviewSize(sizes) ?: run {
@@ -1001,8 +1069,8 @@ class CameraPreviewView @JvmOverloads constructor(
             }
 
             previewSize = selectedSize
-            surfaceTexture?.setDefaultBufferSize(selectedSize.width, selectedSize.height)
-            configureTransform(width, height, selectedSize)
+            cameraSurfaceTexture()?.setDefaultBufferSize(selectedSize.width, selectedSize.height)
+            if (headlessSurfaceTexture == null) configureTransform(width, height, selectedSize)
 
             openingCamera = true
             manager.openCamera(cameraId, cameraStateCallback, backgroundHandler)
@@ -1017,7 +1085,7 @@ class CameraPreviewView @JvmOverloads constructor(
     private val cameraStateCallback = object : CameraDevice.StateCallback() {
         override fun onOpened(camera: CameraDevice) {
             openingCamera = false
-            if (!active || !isAvailable) {
+            if (!active || !hasCameraSurface()) {
                 camera.close()
                 return
             }
@@ -1093,7 +1161,7 @@ class CameraPreviewView @JvmOverloads constructor(
 
     @Suppress("DEPRECATION")
     private fun createPreviewSession(camera: CameraDevice) {
-        val texture = surfaceTexture ?: return
+        val texture = cameraSurfaceTexture() ?: return
         val surface = Surface(texture)
         previewSurface = surface
 
@@ -1174,10 +1242,21 @@ class CameraPreviewView @JvmOverloads constructor(
                 sensorRange = sensorIsoRange,
                 postRawBoostRange = capabilities.postRawSensitivityBoostRange
             )
+            val requestedExposure = parameters.exposureTimeNs.coerceIn(
+                exposureRange.first,
+                exposureRange.last
+            )
+            if (!forPreview) {
+                requestBuilder.set(
+                    CaptureRequest.CONTROL_CAPTURE_INTENT,
+                    CaptureRequest.CONTROL_CAPTURE_INTENT_MANUAL
+                )
+            }
             requestBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+            requestBuilder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_OFF)
             requestBuilder.set(
                 CaptureRequest.SENSOR_EXPOSURE_TIME,
-                parameters.exposureTimeNs.coerceIn(exposureRange.first, exposureRange.last)
+                requestedExposure
             )
             requestBuilder.set(
                 CaptureRequest.SENSOR_SENSITIVITY,
@@ -1187,6 +1266,19 @@ class CameraPreviewView @JvmOverloads constructor(
                 requestBuilder.set(
                     CaptureRequest.CONTROL_POST_RAW_SENSITIVITY_BOOST,
                     isoRequest.postRawBoostPercent
+                )
+            }
+            val supportsFrameDuration = cameraCharacteristics
+                ?.availableCaptureRequestKeys
+                ?.contains(CaptureRequest.SENSOR_FRAME_DURATION) == true
+            manualFrameDurationNs(
+                requestedExposureNs = requestedExposure,
+                maximumFrameDurationNs = capabilities.maximumFrameDurationNs,
+                supported = supportsFrameDuration
+            )?.let { frameDuration ->
+                requestBuilder.set(
+                    CaptureRequest.SENSOR_FRAME_DURATION,
+                    frameDuration
                 )
             }
         } else {
@@ -1312,6 +1404,16 @@ class CameraPreviewView @JvmOverloads constructor(
                 boostPercent = actualBoostValue ?: 100
             )
         }
+        mainHandler.post {
+            onManualCaptureResult(
+                ManualCaptureResult(
+                    requestedExposureTimeNs = requestedExposure,
+                    actualExposureTimeNs = actualExposure,
+                    requestedIso = requestedEffectiveIso,
+                    actualIso = actualEffectiveIso ?: actualSensorIso
+                )
+            )
+        }
         val isoMinimum = if (
             requestedEffectiveIso != null &&
             actualEffectiveIso != null &&
@@ -1401,7 +1503,7 @@ class CameraPreviewView @JvmOverloads constructor(
             } ?: manualParameters.iso
         )
         reportStatus("manual camera limits adjusted from capture result")
-        post { onCapabilitiesAvailable(updated) }
+        mainHandler.post { onCapabilitiesAvailable(updated) }
     }
 
     private fun effectiveCaptureIso(sensorIso: Int?, boostPercent: Int): Int? {
@@ -1733,7 +1835,7 @@ class CameraPreviewView @JvmOverloads constructor(
         captureStageCallback = null
         requestedCaptureFileName = null
         requestedCaptureRelativeDirectory = null
-        post { callback?.invoke(result) }
+        mainHandler.post { callback?.invoke(result) }
     }
 
     @Synchronized
@@ -1747,7 +1849,7 @@ class CameraPreviewView @JvmOverloads constructor(
         captureStageCallback = null
         requestedCaptureFileName = null
         requestedCaptureRelativeDirectory = null
-        post { callback?.invoke(result) }
+        mainHandler.post { callback?.invoke(result) }
     }
 
     private fun finishActiveJpegCaptureWithError(error: Throwable) {
@@ -1760,7 +1862,7 @@ class CameraPreviewView @JvmOverloads constructor(
 
     private fun notifyCaptureStage(stage: CameraCaptureStage) {
         val callback = captureStageCallback ?: return
-        post { callback(stage) }
+        mainHandler.post { callback(stage) }
     }
 
     private fun calculateJpegOrientation(): Int {
@@ -1865,12 +1967,12 @@ class CameraPreviewView @JvmOverloads constructor(
 
     private fun reportError(message: String) {
         Log.e("AstroPhotoCamera", message)
-        post { onCameraError(message) }
+        mainHandler.post { onCameraError(message) }
     }
 
     private fun reportStatus(message: String) {
         Log.d("AstroPhotoCamera", message)
-        post { onCameraStatus(message) }
+        mainHandler.post { onCameraStatus(message) }
     }
 
     private fun cameraErrorName(error: Int): String = when (error) {

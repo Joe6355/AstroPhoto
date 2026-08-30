@@ -77,6 +77,7 @@ import com.example.astrophoto.ui.AstroSegmentedControl
 import com.example.astrophoto.ui.AstroTestTags
 import com.example.astrophoto.ui.theme.AstroColors
 import com.example.astrophoto.processing.jpeg.v2.analysis.JpegFrameAnalyzer
+import com.example.astrophoto.processing.jpeg.v2.analysis.ProfileAnalysisCheckpointStore
 import com.example.astrophoto.processing.jpeg.v2.analysis.ReferenceFrameSelector
 import com.example.astrophoto.processing.jpeg.v2.artifacts.ArtifactFrameObservation
 import com.example.astrophoto.processing.jpeg.v2.artifacts.AutomaticSensorDefectMaskDiagnostics
@@ -157,8 +158,6 @@ import com.example.astrophoto.processing.jpeg.v2.registration.FullResolutionStar
 import com.example.astrophoto.processing.jpeg.v2.registration.StellarCentroidFrameRefiner
 import com.example.astrophoto.processing.jpeg.v2.registration.StellarCentroidRefinementPolicy
 import com.example.astrophoto.processing.jpeg.v2.registration.StellarCentroidRefinementResult
-import com.example.astrophoto.processing.jpeg.v2.registration.CaptureSequenceFrame
-import com.example.astrophoto.processing.jpeg.v2.registration.CaptureSequenceIndexResolver
 import com.example.astrophoto.processing.jpeg.v2.registration.SequenceAwareRegistrationDiagnostics
 import com.example.astrophoto.processing.jpeg.v2.registration.SequenceAwareRegistrationEngine
 import com.example.astrophoto.processing.jpeg.v2.registration.TemporalFeatureFrame
@@ -889,7 +888,15 @@ class JpegStacker internal constructor(
             }) {
                 "Median поддерживает только Lights/JPEG"
             }
-            val selectedFrames = frames.take(MAX_MEDIAN_FRAMES)
+            val qualitySelection = JpegAutoSelector(context).selectForStacking(
+                frames = frames,
+                maxFrames = MAX_MEDIAN_FRAMES
+            ) { current, total ->
+                withContext(Dispatchers.Main.immediate) {
+                    onProgress("Оценка качества кадров $current из $total", current, total)
+                }
+            }
+            val selectedFrames = qualitySelection.frames
             val dimensions = selectedFrames.map { frame ->
                 readDimensions(frame)
                     ?: error("Не удалось прочитать кадр: ${frame.fileName}")
@@ -1144,7 +1151,15 @@ class JpegStacker internal constructor(
                 "Неподдерживаемое значение sigma"
             }
 
-            val selectedFrames = frames.take(MAX_SIGMA_FRAMES)
+            val qualitySelection = JpegAutoSelector(context).selectForStacking(
+                frames = frames,
+                maxFrames = MAX_SIGMA_FRAMES
+            ) { current, total ->
+                withContext(Dispatchers.Main.immediate) {
+                    onProgress("Оценка качества кадров $current из $total", current, total)
+                }
+            }
+            val selectedFrames = qualitySelection.frames
             val dimensions = selectedFrames.map { frame ->
                 readDimensions(frame)
                     ?: error("Не удалось прочитать кадр: ${frame.fileName}")
@@ -1387,6 +1402,7 @@ class JpegStacker internal constructor(
         val runJournal = ProcessingRunJournal(context)
         var journalRunId: String? = null
         var pipelineFiles: TemporaryPipelineFiles? = null
+        var analysisCheckpointStore: ProfileAnalysisCheckpointStore? = null
         var currentStage = "Подготовка"
         val stackResult = runCatching {
             require(profile != AstroProcessingProfile.NORMAL) {
@@ -1422,100 +1438,36 @@ class JpegStacker internal constructor(
                     "staleRunsRecovered=$staleRunsRecovered"
             )
             currentStage = "Выбор рецепта"
-            val recipe = profileRecipe(profile, frames.size)
+            val recipe = profileRecipe(profile, minOf(frames.size, MAX_PROFILE_FRAMES))
             val pipelineTiming = PipelineTimingCollector()
             Log.i(
                 PROFILE_REGISTRATION_TAG,
                 "selectedPreset=${profile.name} inputFrameCount=${frames.size}"
             )
-            val cappedFrames = frames.take(MAX_PROFILE_FRAMES)
-            val captureIndexByFrameKey = profileCaptureIndices(cappedFrames)
-            currentStage = "Чтение размеров кадров"
-            val dimensionsByFrameKey = cappedFrames.associate { frame ->
-                frame.key to (readDimensions(frame)
-                    ?: error("Не удалось прочитать кадр: ${frame.fileName}"))
-            }
-            val dimensions = dimensionsByFrameKey.values.toList()
-            if (source == ManualStackingSource.CROPPED) {
-                require(dimensions.distinct().size == 1) {
-                    "Selected cropped frames have different dimensions"
-                }
-            }
-            val commonWidth = dimensions.minOf { it.first }
-            val commonHeight = dimensions.minOf { it.second }
-            currentStage = "Анализ JPEG-кадров"
-            val analysisScale = minOf(
-                1f,
-                PROFILE_ANALYSIS_MAX_DIMENSION.toFloat() / maxOf(commonWidth, commonHeight)
+            val preparedAnalysis = ProfileFrameAnalysisCoordinator(
+                context = context,
+                readDimensions = ::readDimensions,
+                decodeFrame = ::decodeMedianFrame
+            ).prepare(
+                sessionFolder = session.folderName,
+                frames = frames,
+                profile = profile,
+                source = source,
+                pipelineTiming = pipelineTiming,
+                runJournal = runJournal,
+                journalRunId = journalRunId,
+                onStage = { currentStage = it },
+                onProgress = onProgress
             )
-            val analysisWidth = maxOf(1, (commonWidth * analysisScale).roundToInt())
-            val analysisHeight = maxOf(1, (commonHeight * analysisScale).roundToInt())
-            val skyMaskEstimator = SkyMaskEstimator()
-            val frameAnalyzer = JpegFrameAnalyzer()
-            val persistentSensorDetector = PersistentSensorCandidateDetector()
-            val frameAnalysisStarted = System.nanoTime()
-            val rawAnalyzedFrames = cappedFrames.map { frame ->
-                val analyzed = runCatching {
-                    val sample = decodeMedianFrame(frame, analysisWidth, analysisHeight)
-                        ?: error("Unable to decode JPEG for analysis")
-                    try {
-                        val image = bitmapToArgbImage(sample)
-                        val skyMask = skyMaskEstimator.estimate(image)
-                        ProfileAnalyzedFrame(
-                            frame = frame,
-                            analysis = frameAnalyzer.analyze(
-                                frame.key,
-                                frame.fileName,
-                                image,
-                                skyMask
-                            ),
-                            skyMask = skyMask,
-                            persistentSensorObservation = persistentSensorDetector.observe(
-                                frameId = frame.key,
-                                originalCaptureIndex =
-                                    captureIndexByFrameKey.getValue(frame.key),
-                                image = image,
-                                skyMask = skyMask.mask
-                            )
-                        )
-                    } finally {
-                        sample.recycle()
-                    }
-                }.getOrElse { error ->
-                    Log.w(
-                        PROFILE_REGISTRATION_TAG,
-                        "frame=${frame.fileName} analysisRejected reason=${error.message.orEmpty()}"
-                    )
-                    ProfileAnalyzedFrame(
-                        frame = frame,
-                        analysis = FrameAnalysis.invalid(frame.key, frame.fileName),
-                        skyMask = SkyMaskResult(
-                            SkyMask.empty(analysisWidth, analysisHeight),
-                            confidence = 0f,
-                            usedFallback = true
-                        ),
-                        persistentSensorObservation = PersistentSensorFrameObservation(
-                            frameId = frame.key,
-                            originalCaptureIndex = captureIndexByFrameKey.getValue(frame.key),
-                            width = analysisWidth,
-                            height = analysisHeight,
-                            candidates = emptyList()
-                        )
-                    )
-                }
-                Log.i(
-                    PROFILE_REGISTRATION_TAG,
-                    "frame=${frame.fileName} skyMaskConfidence=${formatMetric(analyzed.analysis.skyMaskConfidence)} " +
-                        "skyMaskFallback=${analyzed.analysis.skyMaskUsedFallback} " +
-                        "detectedStars=${analyzed.analysis.reliableStarCount}"
-                )
-                analyzed
-            }
-            pipelineTiming.record(
-                "frame_analysis",
-                (System.nanoTime() - frameAnalysisStarted) / 1_000_000L
-            )
-            journalRunId?.let { runJournal.update(it, "frame_analysis_completed") }
+            val analysisFrames = preparedAnalysis.frames
+            val captureIndexByFrameKey = preparedAnalysis.captureIndexByFrameKey
+            val dimensionsByFrameKey = preparedAnalysis.dimensionsByFrameKey
+            val commonWidth = preparedAnalysis.commonWidth
+            val commonHeight = preparedAnalysis.commonHeight
+            val analysisWidth = preparedAnalysis.analysisWidth
+            val analysisHeight = preparedAnalysis.analysisHeight
+            val rawAnalyzedFrames = preparedAnalysis.analyzedFrames
+            analysisCheckpointStore = preparedAnalysis.checkpointStore
             currentStage = "Анализ неподвижных артефактов"
             val staticArtifactStarted = System.nanoTime()
             val staticArtifactAnalyzer = StaticArtifactAnalyzer()
@@ -1547,7 +1499,15 @@ class JpegStacker internal constructor(
                     "staticArtifactConfidence=${formatMetric(staticArtifactMask.confidence)}"
             )
             val referenceSelectionStarted = System.nanoTime()
-            val referenceSelection = ReferenceFrameSelector().select(analyzedFrames.map { it.analysis })
+            val frameSelector = ReferenceFrameSelector()
+            val integrationSelection = frameSelector.selectForIntegration(
+                analyses = analyzedFrames.map { it.analysis },
+                captureIndexByFrameId = captureIndexByFrameKey,
+                maxFrames = MAX_PROFILE_FRAMES
+            )
+            val selectedAnalysisIds = integrationSelection.analyses.mapTo(mutableSetOf()) { it.id }
+            val qualitySelectedFrames = analysisFrames.filter { it.key in selectedAnalysisIds }
+            val referenceSelection = frameSelector.select(integrationSelection.analyses)
             pipelineTiming.record(
                 "reference_selection",
                 (System.nanoTime() - referenceSelectionStarted) / 1_000_000L
@@ -1561,7 +1521,7 @@ class JpegStacker internal constructor(
             val targetWidth = referenceDimensions.first
             val targetHeight = referenceDimensions.second
             val selectedFrames = (
-                listOf(selectedReference.frame) + cappedFrames.filterNot {
+                listOf(selectedReference.frame) + qualitySelectedFrames.filterNot {
                     it.key == selectedReference.frame.key
                 }
                 ).take(MAX_PROFILE_FRAMES)
@@ -1587,6 +1547,10 @@ class JpegStacker internal constructor(
                     "confidence=1.0000 accepted=true rejectionReason=reference"
             )
             val warnings = mutableListOf<String>()
+            if (integrationSelection.droppedCount > 0) {
+                warnings += "Для полноразмерной обработки выбраны лучшие " +
+                    "${selectedFrames.size} из ${frames.size} кадров"
+            }
             var alignmentApplied = 0
             var alignmentRejected = 0
             var referenceStars = 0
@@ -2647,6 +2611,12 @@ class JpegStacker internal constructor(
             }
         }
         val outputFileName = stackResult.getOrNull()?.fileName.orEmpty()
+        if (stackResult.isSuccess) {
+            runCatching { analysisCheckpointStore?.clear() }
+                .onFailure { error ->
+                    Log.w(PROFILE_REGISTRATION_TAG, "Unable to clear analysis checkpoints", error)
+                }
+        }
         Log.i(
             POST_COMPLETION_TAG,
             "post_completion.temp_cleanup.start run=${journalRunId?.take(8).orEmpty()} output=$outputFileName"
@@ -2774,7 +2744,7 @@ class JpegStacker internal constructor(
         imageHeight: Int
     ): SequenceAwareRegistrationDiagnostics {
         profileRegistrationCancellation.set(false)
-        val deadlineNanos = System.nanoTime() + PROFILE_REGISTRATION_TIMEOUT_MILLIS * 1_000_000L
+        val watchdog = ProgressWatchdog(PROFILE_REGISTRATION_STALL_TIMEOUT_MILLIS)
         return try {
             SequenceAwareRegistrationEngine().register(
                 frames = frames,
@@ -2785,14 +2755,13 @@ class JpegStacker internal constructor(
                     if (profileRegistrationCancellation.get()) {
                         throw CancellationException("Profile registration cancelled")
                     }
-                    if (System.nanoTime() >= deadlineNanos) {
-                        throw ProfileRegistrationTimeoutException()
-                    }
-                }
+                    watchdog.check()
+                },
+                onProgress = watchdog::reportProgress
             )
-        } catch (_: ProfileRegistrationTimeoutException) {
+        } catch (_: ProcessingStalledException) {
             error(
-                "Выравнивание звёзд превысило безопасный лимит времени. " +
+                "Выравнивание звёзд не сообщало о прогрессе более 5 минут. " +
                     "Попробуйте исключить кадры без звёзд или с сильным смазом."
             )
         }
@@ -3203,7 +3172,8 @@ class JpegStacker internal constructor(
                     baseline = selected.image,
                     effectiveSkyAlpha = effectiveSkyAlpha,
                     confirmedStars = confirmedStars,
-                    store = candidateStore
+                    store = candidateStore,
+                    knownBaselineQuality = selected.metrics
                 )
             },
             saveCandidate = { enhancedImage ->
@@ -3448,13 +3418,6 @@ class JpegStacker internal constructor(
         val bitmap: Bitmap,
         val integratedFrameCount: Int,
         val integrationReport: ManualSequenceIntegrationReport?
-    )
-
-    private data class ProfileAnalyzedFrame(
-        val frame: SessionFrame,
-        val analysis: FrameAnalysis,
-        val skyMask: SkyMaskResult,
-        val persistentSensorObservation: PersistentSensorFrameObservation
     )
 
     private data class AcceptedProfileFrame(
@@ -3925,12 +3888,6 @@ class JpegStacker internal constructor(
                 totalDurationMillis = totalDurationMillis
             )
         }
-    }
-
-    private fun profileCaptureIndices(frames: List<SessionFrame>): Map<String, Int> {
-        return CaptureSequenceIndexResolver.resolve(frames.map { frame ->
-            CaptureSequenceFrame(frame.key, frame.fileName, frame.createdAtMillis)
-        })
     }
 
     private fun decodeMedianFrame(
@@ -6474,7 +6431,7 @@ class JpegStacker internal constructor(
         private const val MAX_SIGMA_FRAMES = 30
         private const val MAX_SIGMA_PIXELS = 8_000_000L
         private const val MAX_PROFILE_FRAMES = 30
-        private const val PROFILE_REGISTRATION_TIMEOUT_MILLIS = 120_000L
+        private const val PROFILE_REGISTRATION_STALL_TIMEOUT_MILLIS = 300_000L
         private const val PROFILE_ANALYSIS_MAX_DIMENSION = 960
         private const val PROFILE_REGISTRATION_TAG = "AstroPhotoJpegV2"
         private const val ADAPTIVE_PROCESSING_TAG = "AstroPhotoJpegStage4"
@@ -6677,7 +6634,6 @@ private const val MAX_MEDIAN_FRAMES_UI = 30
 private const val MAX_SIGMA_FRAMES_UI = 30
 private const val MAX_PROFILE_FRAMES_UI = 30
 
-private class ProfileRegistrationTimeoutException : RuntimeException()
 
 private data class PendingProfileContinuation(
     val profile: AstroProcessingProfile,

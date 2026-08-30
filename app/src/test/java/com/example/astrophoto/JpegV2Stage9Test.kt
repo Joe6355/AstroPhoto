@@ -225,7 +225,11 @@ class JpegV2Stage9Test {
 
     @Test fun productionProfileAndReportUseStage9Components() {
         val profile = Files.readString(Path.of("src/main/java/com/example/astrophoto/JpegStacker.kt"))
-        assertTrue(profile.contains("profileCaptureIndices(cappedFrames)"))
+        val frameAnalysis = Files.readString(
+            Path.of("src/main/java/com/example/astrophoto/ProfileFrameAnalysisCoordinator.kt")
+        )
+        assertTrue(profile.contains("ProfileFrameAnalysisCoordinator("))
+        assertTrue(frameAnalysis.contains("profileCaptureIndices(frames)"))
         assertFalse(profile.contains("cappedFrames.indexOfFirst"))
         assertTrue(profile.contains("scaledToFullResolution(scaleX, scaleY)"))
         assertTrue(profile.contains("LinearWeightedIntegrator().integrate("))

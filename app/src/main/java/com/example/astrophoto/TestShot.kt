@@ -30,6 +30,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.example.astrophoto.processing.jpeg.v2.analysis.JpegStarDetector
+import com.example.astrophoto.processing.jpeg.v2.model.SkyMask
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -51,10 +53,19 @@ data class TestShotResult(
     val sharpness: Float,
     val status: TestShotStatus,
     val analyzedAtMillis: Long,
-    val savedFileName: String? = null
+    val savedFileName: String? = null,
+    val starFocus: StarFocusMetrics? = null,
+    val focusFwhmChangePercent: Float? = null
 ) {
     val isGood: Boolean get() = status == TestShotStatus.NORMAL
 }
+
+data class StarFocusMetrics(
+    val detectedStars: Int,
+    val measuredStars: Int,
+    val medianFwhm: Float,
+    val medianEllipticity: Float
+)
 
 class TestShotProcessor(private val context: Context) {
     suspend fun analyze(jpegBytes: ByteArray): Result<TestShotResult> =
@@ -64,7 +75,9 @@ class TestShotProcessor(private val context: Context) {
                     ?: error("Не удалось оценить пробный кадр")
                 try {
                     val exposure = ExposureMetricsCalculator.calculate(bitmap)
-                    val sharpness = calculateSharpness(bitmap)
+                    val image = bitmap.toArgbPixelImage()
+                    val sharpness = calculateSharpness(image)
+                    val starFocus = measureStarFocus(image)
                     val status = when (exposure.status) {
                         ExposureStatus.OVEREXPOSED -> TestShotStatus.OVEREXPOSED
                         ExposureStatus.TOO_DARK -> TestShotStatus.TOO_DARK
@@ -80,7 +93,8 @@ class TestShotProcessor(private val context: Context) {
                         exposure = exposure,
                         sharpness = sharpness,
                         status = status,
-                        analyzedAtMillis = System.currentTimeMillis()
+                        analyzedAtMillis = System.currentTimeMillis(),
+                        starFocus = starFocus
                     )
                 } finally {
                     bitmap.recycle()
@@ -130,14 +144,18 @@ class TestShotProcessor(private val context: Context) {
         )
     }
 
-    private fun calculateSharpness(bitmap: Bitmap): Float {
-        val width = bitmap.width
-        val height = bitmap.height
-        if (width < 3 || height < 3) return 0f
+    private fun Bitmap.toArgbPixelImage(): ArgbPixelImage {
         val pixels = IntArray(width * height)
-        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
-        val grayscale = IntArray(pixels.size)
-        pixels.forEachIndexed { index, color ->
+        getPixels(pixels, 0, width, 0, 0, width, height)
+        return ArgbPixelImage(width, height, pixels)
+    }
+
+    private fun calculateSharpness(image: ArgbPixelImage): Float {
+        val width = image.width
+        val height = image.height
+        if (width < 3 || height < 3) return 0f
+        val grayscale = IntArray(image.pixels.size)
+        image.pixels.forEachIndexed { index, color ->
             val red = color ushr 16 and 0xFF
             val green = color ushr 8 and 0xFF
             val blue = color and 0xFF
@@ -240,6 +258,47 @@ class TestShotProcessor(private val context: Context) {
     }
 }
 
+internal fun measureStarFocus(image: ArgbPixelImage): StarFocusMetrics? {
+    if (image.width < 24 || image.height < 24) return null
+    val detection = JpegStarDetector().detect(
+        image = image,
+        mask = SkyMask.full(image.width, image.height),
+        maxStars = MAX_FOCUS_CANDIDATES,
+        allowBroadStars = true
+    )
+    if (detection.stars.isEmpty()) return null
+
+    val measurements = detection.stars
+        .asSequence()
+        .sortedWith(
+            compareByDescending<com.example.astrophoto.processing.jpeg.v2.model.DetectedStar> {
+                it.confidence
+            }.thenByDescending { it.localContrast }
+        )
+        .filter { it.confidence >= MIN_FOCUS_MEASUREMENT_CONFIDENCE }
+        .take(MAX_FOCUS_MEASUREMENTS)
+        .toList()
+    if (measurements.size < MIN_FOCUS_MEASUREMENTS) return null
+
+    val fwhm = measurements.map { it.width }.sorted()
+    val ellipticity = measurements.map { it.ellipticity }.sorted()
+    return StarFocusMetrics(
+        detectedStars = detection.stars.size,
+        measuredStars = measurements.size,
+        medianFwhm = medianFocusValue(fwhm),
+        medianEllipticity = medianFocusValue(ellipticity)
+    )
+}
+
+private fun medianFocusValue(values: List<Float>): Float =
+    if (values.size % 2 == 1) values[values.size / 2]
+    else (values[values.size / 2 - 1] + values[values.size / 2]) * 0.5f
+
+private const val MAX_FOCUS_CANDIDATES = 40
+private const val MAX_FOCUS_MEASUREMENTS = 20
+private const val MIN_FOCUS_MEASUREMENTS = 2
+private const val MIN_FOCUS_MEASUREMENT_CONFIDENCE = 0.18f
+
 @Composable
 fun TestShotResultCard(
     result: TestShotResult?,
@@ -302,6 +361,35 @@ fun TestShotResultCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = AstroColors.TextSecondary
                 )
+                result.starFocus?.let { focus ->
+                    Text(
+                        text = String.format(
+                            locale,
+                            "Фокус по звёздам: FWHM %.2f px • звёзд %d",
+                            focus.medianFwhm,
+                            focus.measuredStars
+                        ),
+                        modifier = Modifier.padding(top = 4.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = AstroColors.Secondary
+                    )
+                    val change = result.focusFwhmChangePercent
+                    Text(
+                        text = when {
+                            change == null -> "Сделайте ещё один кадр после корректировки: меньше FWHM — лучше."
+                            change <= -1f -> String.format(locale, "Фокус улучшился на %.1f%%.", -change)
+                            change >= 1f -> String.format(locale, "Фокус ухудшился на %.1f%%.", change)
+                            else -> "Изменение фокуса в пределах 1%."
+                        },
+                        modifier = Modifier.padding(top = 2.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = when {
+                            change != null && change <= -1f -> AstroColors.Success
+                            change != null && change >= 1f -> MaterialTheme.colorScheme.error
+                            else -> AstroColors.TextSecondary
+                        }
+                    )
+                }
                 TestShotHistogram(
                     bins = result.exposure.histogram,
                     modifier = Modifier

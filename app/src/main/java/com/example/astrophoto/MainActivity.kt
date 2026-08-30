@@ -95,10 +95,13 @@ import com.example.astrophoto.processing.jpeg.v2.diagnostics.ProcessingFailureSu
 import com.example.astrophoto.processing.jpeg.v2.diagnostics.PreviousProcessingFailureDetector
 import com.example.astrophoto.processing.jpeg.v2.diagnostics.PreviousRunClassification
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -752,6 +755,7 @@ private fun CameraScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var tapFocusEvent by remember { mutableStateOf<TapFocusEvent?>(null) }
     var captureStatus by remember { mutableStateOf<String?>(null) }
+    var lastManualCaptureResult by remember { mutableStateOf<ManualCaptureResult?>(null) }
     var pendingCaptureType by remember { mutableStateOf<UiCaptureType?>(null) }
     var pendingSeriesStart by remember { mutableStateOf(false) }
     var pendingDarkFramesStart by remember { mutableStateOf(false) }
@@ -813,15 +817,23 @@ private fun CameraScreen(
     var exposureAssistantExpanded by remember { mutableStateOf(false) }
     var selectedPreset by remember { mutableStateOf<CameraPreset?>(null) }
     var astroDefaultsApplied by remember { mutableStateOf(false) }
-    var seriesRunning by remember { mutableStateOf(false) }
+    val initialSeriesState = remember { SeriesCaptureCoordinator.state.value }
+    var seriesRunning by remember { mutableStateOf(initialSeriesState?.running == true) }
     var seriesStopRequested by remember { mutableStateOf(false) }
-    var seriesCurrentFrame by remember { mutableIntStateOf(0) }
-    var seriesCompletedFrames by remember { mutableIntStateOf(0) }
-    var seriesEstimatedEndElapsedMillis by remember { mutableLongStateOf(0L) }
-    var seriesRemainingMillis by remember { mutableLongStateOf(0L) }
-    var seriesAction by remember { mutableStateOf("") }
-    var seriesMessage by remember { mutableStateOf<String?>(null) }
-    var seriesJob by remember { mutableStateOf<Job?>(null) }
+    var seriesCurrentFrame by remember { mutableIntStateOf(initialSeriesState?.current ?: 0) }
+    var seriesCompletedFrames by remember { mutableIntStateOf(initialSeriesState?.current ?: 0) }
+    var seriesEstimatedEndElapsedMillis by remember {
+        mutableLongStateOf(
+            initialSeriesState?.takeIf { it.running }
+                ?.let { SystemClock.elapsedRealtime() + it.remainingMillis }
+                ?: 0L
+        )
+    }
+    var seriesRemainingMillis by remember {
+        mutableLongStateOf(initialSeriesState?.remainingMillis ?: 0L)
+    }
+    var seriesAction by remember { mutableStateOf(initialSeriesState?.status.orEmpty()) }
+    var seriesMessage by remember { mutableStateOf(initialSeriesState?.message) }
     var darkFramesFormat by remember { mutableStateOf(UiCaptureType.JPEG) }
     var darkFramesCount by remember { mutableIntStateOf(savedSettings.darkFramesCount) }
     var darkFramesRunning by remember { mutableStateOf(false) }
@@ -842,13 +854,21 @@ private fun CameraScreen(
         iso = cameraCapabilities.isoRange
             ?.let { 800.coerceIn(it.first, it.last) }
             ?: 800
-        exposureTimeNs = cameraCapabilities.exposureRangeNs?.let { range ->
-            val thirtySeconds = 30_000_000_000L
-            if (range.contains(thirtySeconds)) thirtySeconds else range.last
-        } ?: 30_000_000_000L
+        val integrationPlan = cameraCapabilities.exposureRangeNs
+            ?.takeIf { cameraCapabilities.supportsManualSensor }
+            ?.let { range ->
+            astroIntegrationPlan(
+                exposureRangeNs = range,
+                targetIntegrationNs = MINIMUM_ASTRO_INTEGRATION_NS,
+                preferredFrameCount = 10
+            )
+        }
+        exposureTimeNs = integrationPlan?.exposurePerFrameNs
+            ?: cameraCapabilities.exposureRangeNs?.last
+            ?: 33_333_333L
         seriesFormat = UiCaptureType.JPEG
         captureMode = UiCaptureMode.SERIES
-        seriesFrameCount = 10
+        seriesFrameCount = integrationPlan?.frameCount ?: 10
         seriesDelaySeconds = 1
         startTimerSeconds = 5
         astroDefaultsApplied = true
@@ -981,16 +1001,24 @@ private fun CameraScreen(
         )
     }
 
-    LaunchedEffect(seriesRunning, seriesEstimatedEndElapsedMillis) {
-        if (!seriesRunning || seriesEstimatedEndElapsedMillis <= 0L) {
-            if (!seriesRunning) seriesRemainingMillis = 0L
-            return@LaunchedEffect
-        }
-        while (true) {
-            seriesRemainingMillis = (
-                seriesEstimatedEndElapsedMillis - SystemClock.elapsedRealtime()
-            ).coerceAtLeast(0L)
-            delay(1_000L)
+    LaunchedEffect(Unit) {
+        SeriesCaptureCoordinator.state.collectLatest { state ->
+            state ?: return@collectLatest
+            seriesRunning = state.running
+            seriesCurrentFrame = state.current
+            seriesCompletedFrames = state.current
+            seriesRemainingMillis = state.remainingMillis
+            seriesEstimatedEndElapsedMillis = if (state.running) {
+                SystemClock.elapsedRealtime() + state.remainingMillis
+            } else {
+                0L
+            }
+            seriesAction = state.status
+            state.message?.let { seriesMessage = it }
+            if (!state.running) {
+                seriesStopRequested = false
+                currentSession = sessionStore.load()
+            }
         }
     }
 
@@ -1160,120 +1188,59 @@ private fun CameraScreen(
             dark = false,
             raw = selectedFormat == UiCaptureType.RAW
         )
-        val extension = if (selectedFormat == UiCaptureType.RAW) "dng" else "jpg"
         val seriesPrefix = "AstroSeries_${
             SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         }"
 
-        seriesRunning = true
-        seriesStopRequested = false
-        seriesCurrentFrame = 0
-        seriesCompletedFrames = 0
         val initialDurationMillis = estimatedSeriesDurationMillis(
             exposureTimeNs = exposureTimeNs,
             frameCount = selectedFrameCount,
             delaySeconds = selectedDelaySeconds,
             startTimerSeconds = selectedStartTimerSeconds
         )
-        seriesEstimatedEndElapsedMillis =
-            SystemClock.elapsedRealtime() + initialDurationMillis
+        val foregroundStarted = runCatching {
+            preview.setExternalCaptureActive(true)
+            SeriesCaptureCoordinator.start(
+                context = context,
+                request = SeriesCaptureRequest(
+                    format = selectedFormat.name,
+                    frameCount = selectedFrameCount,
+                    delaySeconds = selectedDelaySeconds,
+                    startTimerSeconds = selectedStartTimerSeconds,
+                    exposureTimeNs = exposureTimeNs,
+                    iso = iso,
+                    focusDistance = focusDistance,
+                    focusMode = focusMode.name,
+                    jpegQuality = jpegQuality,
+                    sessionFolder = session.folderName,
+                    relativeDirectory = relativeDirectory,
+                    filePrefix = seriesPrefix,
+                    vibrationAfterSeries = vibrationAfterSeries,
+                    soundAfterSeries = soundAfterSeries
+                )
+            )
+        }
+        if (foregroundStarted.isFailure) {
+            preview.setExternalCaptureActive(false)
+            seriesRunning = false
+            seriesMessage = "Не удалось запустить надёжную фоновую серию: ${
+                foregroundStarted.exceptionOrNull()?.message ?: "системная ошибка"
+            }"
+            return
+        }
+        seriesRunning = true
+        seriesStopRequested = false
+        seriesCurrentFrame = 0
+        seriesCompletedFrames = 0
+        seriesEstimatedEndElapsedMillis = SystemClock.elapsedRealtime() + initialDurationMillis
         seriesRemainingMillis = initialDurationMillis
         seriesAction = if (selectedStartTimerSeconds > 0) {
             "Старт через $selectedStartTimerSeconds..."
         } else {
-            "Съёмка..."
+            "Подготовка камеры..."
         }
         seriesMessage = null
 
-        seriesJob = coroutineScope.launch {
-            var seriesFailed = false
-            try {
-                for (secondsLeft in selectedStartTimerSeconds downTo 1) {
-                    if (seriesStopRequested) {
-                        seriesMessage = "Таймер старта отменён"
-                        return@launch
-                    }
-                    seriesAction = "Старт через $secondsLeft..."
-                    delay(1_000L)
-                }
-
-                if (seriesStopRequested) {
-                    seriesMessage = "Таймер старта отменён"
-                    return@launch
-                }
-
-                val captureStartedElapsedMillis = SystemClock.elapsedRealtime()
-                for (frameIndex in 1..selectedFrameCount) {
-                    if (seriesStopRequested) break
-
-                    seriesCurrentFrame = frameIndex
-                    seriesAction = "Съёмка..."
-                    val fileName = "${seriesPrefix}_${
-                        frameIndex.toString().padStart(3, '0')
-                    }.$extension"
-                    val result = captureSeriesFrame(
-                        preview = preview,
-                        format = selectedFormat,
-                        fileName = fileName,
-                        relativeDirectory = relativeDirectory,
-                        onStageChanged = { stage ->
-                            seriesAction = when (stage) {
-                                CameraCaptureStage.CAPTURING -> "Съёмка..."
-                                CameraCaptureStage.SAVING -> "Сохранение..."
-                            }
-                        }
-                    )
-
-                    if (result.isFailure) {
-                        seriesFailed = true
-                        seriesMessage =
-                            "Ошибка серии: ${
-                                result.exceptionOrNull()?.message ?: "кадр не сохранён"
-                            }"
-                        break
-                    }
-
-                    recordSessionFrame(dark = false, format = selectedFormat)
-                    seriesCompletedFrames = frameIndex
-                    val nowElapsedMillis = SystemClock.elapsedRealtime()
-                    val remainingEstimate = estimatedRemainingSeriesDurationMillis(
-                        elapsedCaptureMillis =
-                            nowElapsedMillis - captureStartedElapsedMillis,
-                        completedFrames = frameIndex,
-                        totalFrames = selectedFrameCount,
-                        delaySeconds = selectedDelaySeconds
-                    )
-                    seriesEstimatedEndElapsedMillis = nowElapsedMillis + remainingEstimate
-                    seriesRemainingMillis = remainingEstimate
-                    if (seriesStopRequested || frameIndex == selectedFrameCount) break
-
-                    if (selectedDelaySeconds > 0) {
-                        seriesAction = "Пауза..."
-                        delay(selectedDelaySeconds * 1_000L)
-                    }
-                }
-
-                if (!seriesFailed) {
-                    seriesMessage = if (seriesStopRequested) {
-                        "Серия остановлена после текущего кадра"
-                    } else {
-                        notifyCompletionFeedback(
-                            context = context,
-                            vibrationEnabled = vibrationAfterSeries,
-                            soundEnabled = soundAfterSeries,
-                            completed = true
-                        )
-                        "Серия завершена: $seriesCompletedFrames кадров сохранено"
-                    }
-                }
-            } finally {
-                seriesRunning = false
-                seriesEstimatedEndElapsedMillis = 0L
-                seriesRemainingMillis = 0L
-                seriesAction = ""
-                seriesJob = null
-            }
-        }
     }
 
     fun startDarkFrames() {
@@ -1336,6 +1303,7 @@ private fun CameraScreen(
                         format = selectedFormat,
                         fileName = fileName,
                         relativeDirectory = relativeDirectory,
+                        exposureTimeNs = exposureTimeNs,
                         onStageChanged = { stage ->
                             darkFramesAction = when (stage) {
                                 CameraCaptureStage.CAPTURING -> "Съёмка..."
@@ -1420,6 +1388,14 @@ private fun CameraScreen(
                             }
 
                             var analyzed = analysisResult.getOrThrow()
+                            val previousFwhm = lastTestShot?.starFocus?.medianFwhm
+                            val currentFwhm = analyzed.starFocus?.medianFwhm
+                            if (previousFwhm != null && currentFwhm != null && previousFwhm > 0f) {
+                                analyzed = analyzed.copy(
+                                    focusFwhmChangePercent =
+                                        (currentFwhm - previousFwhm) / previousFwhm * 100f
+                                )
+                            }
                             if (saveTestShots && testSession != null) {
                                 val saveResult = testShotProcessor.save(
                                     jpegBytes = jpegBytes,
@@ -1679,14 +1655,7 @@ private fun CameraScreen(
             completed = false
         )
         seriesMessage = "Остановка после текущего кадра…"
-        if (seriesCurrentFrame == 0 || seriesAction == "Пауза...") {
-            seriesJob?.cancel()
-            seriesMessage = if (seriesCurrentFrame == 0) {
-                "Таймер старта отменён"
-            } else {
-                "Серия остановлена"
-            }
-        }
+        SeriesCaptureCoordinator.requestStop(context)
     }
 
     fun requestDarkFramesStop() {
@@ -1721,13 +1690,8 @@ private fun CameraScreen(
         val activity = context.findComponentActivity()
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP) {
-                seriesStopRequested = true
-                seriesJob?.cancel()
                 darkFramesStopRequested = true
                 darkFramesJob?.cancel()
-                if (seriesRunning) {
-                    seriesMessage = "Серия остановлена при сворачивании приложения"
-                }
                 if (darkFramesRunning) {
                     darkFramesMessage = "Dark Frames остановлены при сворачивании приложения"
                 }
@@ -1736,8 +1700,6 @@ private fun CameraScreen(
         activity?.lifecycle?.addObserver(observer)
         onDispose {
             activity?.lifecycle?.removeObserver(observer)
-            seriesStopRequested = true
-            seriesJob?.cancel()
             darkFramesStopRequested = true
             darkFramesJob?.cancel()
         }
@@ -1798,6 +1760,9 @@ private fun CameraScreen(
                             focusMode = CameraFocusMode.AF
                         }
                         tapFocusEvent = event
+                    },
+                    onManualCaptureResult = { result ->
+                        lastManualCaptureResult = result
                     }
                 ).also { previewViewHolder[0] = it }
             },
@@ -1811,6 +1776,7 @@ private fun CameraScreen(
                 )
                 preview.setExposureAnalysisEnabled(histogramEnabled)
                 preview.setJpegQuality(jpegQuality)
+                preview.setExternalCaptureActive(seriesRunning)
             },
             modifier = Modifier.fillMaxSize()
         )
@@ -1974,6 +1940,7 @@ private fun CameraScreen(
                     applyLongExposureToPreview = applyLongExposureToPreview,
                     isCapturing = isCapturing,
                     exposureWarning = exposureWarning,
+                    lastManualCaptureResult = lastManualCaptureResult,
                     seriesFrameCount = seriesFrameCount,
                     seriesDelaySeconds = seriesDelaySeconds,
                     startTimerSeconds = startTimerSeconds,
@@ -2070,10 +2037,37 @@ private fun CameraScreen(
                         exposureWarning = null
                         exposureTimeNs = it
                     },
-                    onUnsupportedExposure = { maximumExposure ->
-                        exposureWarning =
-                            "Эта выдержка не поддерживается вашим телефоном. " +
-                            "Максимум: ${formatExposure(maximumExposure)}."
+                    onUnsupportedExposure = { requestedExposure, maximumExposure ->
+                        val range = capabilities?.exposureRangeNs
+                        val plan = range
+                            ?.takeIf { capabilities?.supportsManualSensor == true }
+                            ?.let {
+                            astroIntegrationPlan(
+                                exposureRangeNs = it,
+                                targetIntegrationNs = requestedExposure
+                            )
+                        }
+                        if (plan == null) {
+                            exposureWarning =
+                                "Эта выдержка не поддерживается камерой. " +
+                                "Максимум: ${formatExposure(maximumExposure)}."
+                        } else {
+                            exposureTimeNs = plan.exposurePerFrameNs
+                            seriesFrameCount = plan.frameCount
+                            seriesFormat = UiCaptureType.JPEG
+                            captureMode = UiCaptureMode.SERIES
+                            exposureWarning = if (plan.reachesTarget) {
+                                "Один кадр ограничен ${formatExposure(maximumExposure)}. " +
+                                    "Выбран план накопления: ${plan.frameCount} × " +
+                                    "${formatExposure(plan.exposurePerFrameNs)} = " +
+                                    "${formatExposure(plan.totalIntegrationNs)}; " +
+                                    "после серии выполните stacking."
+                            } else {
+                                "Лимит 500 кадров не позволяет накопить " +
+                                    "${formatExposure(requestedExposure)} при выдержке " +
+                                    "${formatExposure(plan.exposurePerFrameNs)}."
+                            }
+                        }
                     },
                     onIsoChanged = { iso = it },
                     onFocusChanged = { focusDistance = it },
@@ -2299,6 +2293,7 @@ private fun ManualControlsPanel(
     applyLongExposureToPreview: Boolean,
     isCapturing: Boolean,
     exposureWarning: String?,
+    lastManualCaptureResult: ManualCaptureResult?,
     seriesFrameCount: Int,
     seriesDelaySeconds: Int,
     startTimerSeconds: Int,
@@ -2356,7 +2351,7 @@ private fun ManualControlsPanel(
     onDarkFramesStart: () -> Unit,
     onDarkFramesStop: () -> Unit,
     onExposureChanged: (Long) -> Unit,
-    onUnsupportedExposure: (Long) -> Unit,
+    onUnsupportedExposure: (Long, Long) -> Unit,
     onIsoChanged: (Int) -> Unit,
     onFocusChanged: (Float) -> Unit,
     onOpenHelp: (HelpTopic) -> Unit,
@@ -2381,6 +2376,11 @@ private fun ManualControlsPanel(
         }
         (EXPOSURE_PRESETS + listOfNotNull(maximumPreset))
             .distinctBy { it.nanoseconds }
+    }
+    val minimumIntegrationPlan = exposureRange?.takeIf {
+        manualSensorAvailable && it.last < MINIMUM_ASTRO_INTEGRATION_NS
+    }?.let {
+        astroIntegrationPlan(it, MINIMUM_ASTRO_INTEGRATION_NS)
     }
     var presetsExpanded by remember { mutableStateOf(false) }
     var helpTopic by remember { mutableStateOf<HelpTopic?>(null) }
@@ -2660,7 +2660,7 @@ private fun ManualControlsPanel(
                     .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                SERIES_FRAME_COUNTS.forEach { count ->
+                (SERIES_FRAME_COUNTS + seriesFrameCount).distinct().sorted().forEach { count ->
                     FilterChip(
                         selected = seriesFrameCount == count,
                         onClick = { onSeriesFrameCountChanged(count) },
@@ -2919,20 +2919,41 @@ private fun ManualControlsPanel(
             ) {
                 availableExposurePresets.forEach { preset ->
                     val supported = exposureRange?.contains(preset.nanoseconds) == true
+                    val canAccumulate = manualSensorAvailable &&
+                        preset.nanoseconds > exposureRange.last
                     FilterChip(
                         selected = supported && exposureTimeNs == preset.nanoseconds,
                         onClick = {
                             if (supported) {
                                 onExposureChanged(preset.nanoseconds)
                             } else {
-                                exposureRange?.last?.let(onUnsupportedExposure)
+                                exposureRange?.last?.let { maximum ->
+                                    onUnsupportedExposure(preset.nanoseconds, maximum)
+                                }
                             }
                         },
-                        label = { Text(preset.label) },
+                        label = {
+                            Text(if (canAccumulate) "Σ ${preset.label}" else preset.label)
+                        },
                         enabled = capabilities != null && !controlsLocked,
-                        modifier = Modifier.alpha(if (supported) 1f else 0.45f)
+                        modifier = Modifier.alpha(if (supported || canAccumulate) 1f else 0.45f)
                     )
                 }
+            }
+            minimumIntegrationPlan?.let { plan ->
+                Text(
+                    text = if (plan.reachesTarget) {
+                        "Нативный предел одного кадра: ${formatExposure(plan.exposurePerFrameNs)}. " +
+                            "Σ 30 сек автоматически создаст серию ${plan.frameCount} × " +
+                            "${formatExposure(plan.exposurePerFrameNs)} для последующего stacking."
+                    } else {
+                        "Нативный предел одного кадра слишком мал для накопления 30 сек " +
+                            "в пределах 500 кадров."
+                    },
+                    modifier = Modifier.padding(top = 6.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AstroColors.TextSecondary
+                )
             }
             if (exposureRange != null && exposureRange.first < exposureRange.last) {
                 Text(
@@ -3001,7 +3022,9 @@ private fun ManualControlsPanel(
                 )
             } else if (!applyLongExposureToPreview && exposureTimeNs > 1_000_000_000L) {
                 Text(
-                    text = "Для плавности preview используется безопасная выдержка 1/30 сек.",
+                    text = "Для плавности preview использует автоэкспозицию и авто-ISO. " +
+                        "Ручные значения применяются к сохраняемому кадру и показываются " +
+                        "в строке «Фактически».",
                     modifier = Modifier.padding(top = 4.dp),
                     style = MaterialTheme.typography.bodySmall,
                     color = AstroColors.TextSecondary
@@ -3046,6 +3069,18 @@ private fun ManualControlsPanel(
                         enabled = manualSensorAvailable && !controlsLocked
                     )
                 }
+            }
+            lastManualCaptureResult?.let { result ->
+                Text(
+                    text = manualCaptureResultLabel(result),
+                    modifier = Modifier.padding(top = 6.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (manualCaptureResultMatchesRequest(result)) {
+                        AstroColors.Success
+                    } else {
+                        AstroColors.Warning
+                    }
+                )
             }
             if (isoRange != null && isoRange.first < isoRange.last) {
                 Text(
@@ -3527,7 +3562,7 @@ private enum class AppScreen {
     SelfCheck
 }
 
-private enum class UiCaptureType {
+internal enum class UiCaptureType {
     JPEG,
     RAW
 }
@@ -3655,37 +3690,113 @@ private fun adaptCameraPreset(
 internal val SERIES_FRAME_COUNTS = listOf(
     1, 3, 5, 10, 20, 30, 40, 50, 100, 150, 200, 300, 500
 )
+
+internal data class AstroIntegrationPlan(
+    val exposurePerFrameNs: Long,
+    val frameCount: Int,
+    val totalIntegrationNs: Long,
+    val reachesTarget: Boolean
+)
+
+internal fun astroIntegrationPlan(
+    exposureRangeNs: LongRange,
+    targetIntegrationNs: Long = MINIMUM_ASTRO_INTEGRATION_NS,
+    preferredFrameCount: Int = 1
+): AstroIntegrationPlan? {
+    if (
+        exposureRangeNs.first <= 0L ||
+        exposureRangeNs.last < exposureRangeNs.first ||
+        targetIntegrationNs <= 0L
+    ) return null
+    val exposurePerFrame = minOf(exposureRangeNs.last, targetIntegrationNs)
+    val requiredFrames = ((targetIntegrationNs - 1L) / exposurePerFrame + 1L)
+        .coerceAtMost(Int.MAX_VALUE.toLong())
+        .toInt()
+    val frameCount = maxOf(requiredFrames, preferredFrameCount.coerceAtLeast(1))
+        .coerceAtMost(MAX_AUTOMATIC_INTEGRATION_FRAMES)
+    val totalIntegration = exposurePerFrame * frameCount.toLong()
+    return AstroIntegrationPlan(
+        exposurePerFrameNs = exposurePerFrame,
+        frameCount = frameCount,
+        totalIntegrationNs = totalIntegration,
+        reachesTarget = totalIntegration >= targetIntegrationNs
+    )
+}
+
+internal fun manualCaptureResultMatchesRequest(result: ManualCaptureResult): Boolean {
+    val exposureMatches = result.requestedExposureTimeNs != null &&
+        result.actualExposureTimeNs != null &&
+        !materiallyLowerThanRequested(
+            result.requestedExposureTimeNs,
+            result.actualExposureTimeNs
+        )
+    val isoMatches = result.requestedIso != null &&
+        result.actualIso != null &&
+        !materiallyLowerThanRequested(result.requestedIso, result.actualIso) &&
+        !materiallyHigherThanRequested(result.requestedIso, result.actualIso)
+    return exposureMatches && isoMatches
+}
+
+internal fun manualCaptureResultLabel(result: ManualCaptureResult): String {
+    val requestedExposure = result.requestedExposureTimeNs?.let(::formatExposure) ?: "—"
+    val actualExposure = result.actualExposureTimeNs?.let(::formatExposure) ?: "—"
+    val requestedIso = result.requestedIso?.toString() ?: "—"
+    val actualIso = result.actualIso?.toString() ?: "—"
+    return "Фактически: $actualExposure, ISO $actualIso · " +
+        "запрошено: $requestedExposure, ISO $requestedIso"
+}
+
+internal const val MINIMUM_ASTRO_INTEGRATION_NS = 30_000_000_000L
+private const val MAX_AUTOMATIC_INTEGRATION_FRAMES = 500
 private val SERIES_DELAYS_SECONDS = listOf(0, 1, 2, 5)
 private val START_TIMER_SECONDS = listOf(0, 3, 5, 10)
 
-private suspend fun captureSeriesFrame(
+internal suspend fun captureSeriesFrame(
     preview: CameraPreviewView,
     format: UiCaptureType,
     fileName: String,
     relativeDirectory: String,
+    exposureTimeNs: Long,
     onStageChanged: (CameraCaptureStage) -> Unit
-): Result<String> = suspendCancellableCoroutine { continuation ->
-    val onResult: (Result<String>) -> Unit = { result ->
-        if (continuation.isActive) {
-            continuation.resume(result)
+): Result<String> = try {
+    withTimeout(seriesFrameTimeoutMillis(exposureTimeNs)) {
+        suspendCancellableCoroutine { continuation ->
+            continuation.invokeOnCancellation {
+                preview.cancelActiveCapture("Кадр отменён")
+            }
+            val onResult: (Result<String>) -> Unit = { result ->
+                if (continuation.isActive) {
+                    continuation.resume(result)
+                }
+            }
+
+            if (format == UiCaptureType.RAW) {
+                preview.captureRawDng(
+                    fileName = fileName,
+                    relativeDirectory = relativeDirectory,
+                    onStageChanged = onStageChanged,
+                    onResult = onResult
+                )
+            } else {
+                preview.captureJpeg(
+                    fileName = fileName,
+                    relativeDirectory = relativeDirectory,
+                    onStageChanged = onStageChanged,
+                    onResult = onResult
+                )
+            }
         }
     }
+} catch (_: TimeoutCancellationException) {
+    preview.cancelActiveCapture("Камера не завершила кадр вовремя")
+    Result.failure(IllegalStateException("Камера не завершила кадр вовремя"))
+}
 
-    if (format == UiCaptureType.RAW) {
-        preview.captureRawDng(
-            fileName = fileName,
-            relativeDirectory = relativeDirectory,
-            onStageChanged = onStageChanged,
-            onResult = onResult
-        )
-    } else {
-        preview.captureJpeg(
-            fileName = fileName,
-            relativeDirectory = relativeDirectory,
-            onStageChanged = onStageChanged,
-            onResult = onResult
-        )
-    }
+internal fun seriesFrameTimeoutMillis(exposureTimeNs: Long): Long {
+    val exposureMillis = (exposureTimeNs.coerceAtLeast(0L) / 1_000_000L)
+        .coerceAtMost(10 * 60_000L)
+    val overhead = maxOf(30_000L, exposureMillis / 2L)
+    return (exposureMillis + overhead).coerceAtMost(15 * 60_000L)
 }
 
 private data class ExposurePreset(

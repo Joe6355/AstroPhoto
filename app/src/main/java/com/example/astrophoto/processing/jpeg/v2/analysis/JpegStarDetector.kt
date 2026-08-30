@@ -20,7 +20,8 @@ class JpegStarDetector {
         image: ArgbPixelImage,
         mask: SkyMask,
         maxStars: Int = 260,
-        staticArtifactMask: StaticArtifactMask? = null
+        staticArtifactMask: StaticArtifactMask? = null,
+        allowBroadStars: Boolean = false
     ): JpegStarDetectionResult {
         require(mask.width == image.width && mask.height == image.height)
         require(
@@ -61,7 +62,15 @@ class JpegStarDetector {
                 if (peak < threshold || !isDeterministicLocalMaximum(image, mask, centerX, centerY, peak)) {
                     continue
                 }
-                analyzeCandidate(image, mask, centerX, centerY, background, noise)?.let(candidates::add)
+                analyzeCandidate(
+                    image,
+                    mask,
+                    centerX,
+                    centerY,
+                    background,
+                    noise,
+                    allowBroadStars
+                )?.let(candidates::add)
             }
         }
 
@@ -95,7 +104,8 @@ class JpegStarDetector {
         centerX: Int,
         centerY: Int,
         globalBackground: Float,
-        noise: Float
+        noise: Float,
+        allowBroadStars: Boolean
     ): DetectedStar? {
         val annulus = mutableListOf<Int>()
         for (dy in -ANALYSIS_RADIUS..ANALYSIS_RADIUS) for (dx in -ANALYSIS_RADIUS..ANALYSIS_RADIUS) {
@@ -136,7 +146,8 @@ class JpegStarDetector {
             weightedX += x * signal
             weightedY += y * signal
         }
-        if (support !in MIN_SUPPORT_PIXELS..MAX_SUPPORT_PIXELS || flux <= 0f || saturated > 2) return null
+        val maximumSupport = if (allowBroadStars) BROAD_MAX_SUPPORT_PIXELS else MAX_SUPPORT_PIXELS
+        if (support !in MIN_SUPPORT_PIXELS..maximumSupport || flux <= 0f || saturated > 2) return null
         val centroidX = weightedX / flux
         val centroidY = weightedY / flux
 
@@ -165,7 +176,8 @@ class JpegStarDetector {
         if (major <= 0f) return null
         val width = 2.355f * sqrt((major + minor) / 2f)
         val ellipticity = (1f - sqrt(minor / major.coerceAtLeast(0.0001f))).coerceIn(0f, 1f)
-        if (width !in MIN_WIDTH..MAX_WIDTH || ellipticity > MAX_ELLIPTICITY) return null
+        val maximumWidth = if (allowBroadStars) BROAD_MAX_WIDTH else MAX_WIDTH
+        if (width !in MIN_WIDTH..maximumWidth || ellipticity > MAX_ELLIPTICITY) return null
 
         val snrScore = (contrast / (noise * 7f + 1f)).coerceIn(0f, 1f)
         val shapeScore = (1f - ellipticity / MAX_ELLIPTICITY).coerceIn(0f, 1f)
@@ -235,8 +247,10 @@ class JpegStarDetector {
         private const val MIN_ANNULUS_PIXELS = 12
         private const val MIN_SUPPORT_PIXELS = 2
         private const val MAX_SUPPORT_PIXELS = 36
+        private const val BROAD_MAX_SUPPORT_PIXELS = 49
         private const val MIN_WIDTH = 0.55f
         private const val MAX_WIDTH = 4.8f
+        private const val BROAD_MAX_WIDTH = 6.5f
         private const val MAX_ELLIPTICITY = 0.78f
         private const val IDEAL_WIDTH = 2.1f
         private const val IDEAL_WIDTH_RANGE = 2.2f

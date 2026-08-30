@@ -61,8 +61,38 @@ class ManualControlsAndEditorPresetsTest {
         assertTrue(help.contains("Значение 0 отключает"))
         assertTrue(onboarding.contains("до 500 кадров"))
         assertTrue(onboarding.contains("до 30 кадр/с"))
-        assertFalse(help.contains("пробн", ignoreCase = true))
+        assertTrue(help.contains("FWHM"))
         assertFalse(onboarding.contains("пробн", ignoreCase = true))
+    }
+
+    @Test
+    fun thirtySecondIntegrationAdaptsToNativeCameraLimit() {
+        val galaxyLike = checkNotNull(
+            astroIntegrationPlan(100_000L..10_000_000_000L)
+        )
+        val pixelLike = checkNotNull(
+            astroIntegrationPlan(100_000L..8_310_000_000L)
+        )
+
+        assertEquals(3, galaxyLike.frameCount)
+        assertEquals(30_000_000_000L, galaxyLike.totalIntegrationNs)
+        assertEquals(4, pixelLike.frameCount)
+        assertTrue(pixelLike.totalIntegrationNs >= MINIMUM_ASTRO_INTEGRATION_NS)
+        assertTrue(pixelLike.reachesTarget)
+    }
+
+    @Test
+    fun captureResultComparisonDetectsIgnoredIso() {
+        assertTrue(
+            manualCaptureResultMatchesRequest(
+                ManualCaptureResult(10_000_000_000L, 9_900_000_000L, 800, 800)
+            )
+        )
+        assertFalse(
+            manualCaptureResultMatchesRequest(
+                ManualCaptureResult(10_000_000_000L, 9_900_000_000L, 800, 100)
+            )
+        )
     }
 
     @Test

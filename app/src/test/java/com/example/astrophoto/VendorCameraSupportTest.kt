@@ -149,4 +149,31 @@ class VendorCameraSupportTest {
         assertTrue(materiallyLowerThanRequested(1000, 800))
         assertTrue(materiallyHigherThanRequested(100, 120))
     }
+
+    @Test
+    fun genericVendorExposureRangeIsDiscoveredWithoutManufacturerProfile() {
+        assertEquals(
+            100_000L..30_000_000_000L,
+            vendorExposureRangeValue(
+                keyName = "vendor.camera.sensor.exposureTimeRange",
+                value = longArrayOf(100_000L, 30_000_000_000L)
+            )
+        )
+        assertNull(
+            vendorExposureRangeValue(
+                keyName = "vendor.camera.exposureCompensationRange",
+                value = longArrayOf(1L, 30_000_000_000L)
+            )
+        )
+    }
+
+    @Test
+    fun manualFrameDurationTracksExposureOnlyWhenHalSupportsIt() {
+        assertEquals(
+            10_000_000_000L,
+            manualFrameDurationNs(10_000_000_000L, 30_000_000_000L, supported = true)
+        )
+        assertNull(manualFrameDurationNs(30_000_000_000L, 10_000_000_000L, supported = true))
+        assertNull(manualFrameDurationNs(10_000_000_000L, 30_000_000_000L, supported = false))
+    }
 }

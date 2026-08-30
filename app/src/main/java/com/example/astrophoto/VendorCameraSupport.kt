@@ -5,6 +5,7 @@ import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.CaptureResult
 import android.os.Build
+import android.util.Range
 
 internal const val SAMSUNG_EXPOSURE_RANGE_KEY =
     "samsung.android.sensor.info.exposureTimeRange"
@@ -14,7 +15,8 @@ internal const val SONY_EXPOSURE_RANGE_KEY =
 internal enum class ExposureRangeSource(val displayName: String) {
     PUBLIC("Camera2"),
     SAMSUNG_VENDOR("Samsung"),
-    SONY_VENDOR("Sony")
+    SONY_VENDOR("Sony"),
+    VENDOR_GENERIC("Vendor metadata")
 }
 
 internal enum class CameraCompatibilityProfile(val displayName: String) {
@@ -161,9 +163,10 @@ internal fun readRearCameraCandidates(
         sensorPixelCount = pixelArraySize?.let {
             it.width.toLong() * it.height.toLong()
         } ?: 0L,
-        isLogicalCamera = capabilities.contains(
-            CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA
-        )
+        isLogicalCamera = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
+            capabilities.contains(
+                CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA
+            )
     )
 }
 
@@ -184,38 +187,64 @@ internal fun readVendorExposureRange(
     characteristics: CameraCharacteristics,
     profile: CameraCompatibilityProfile
 ): VendorExposureRange? {
-    val descriptor = when (profile) {
-        CameraCompatibilityProfile.SAMSUNG -> Triple(
-            SAMSUNG_EXPOSURE_RANGE_KEY,
-            ExposureRangeSource.SAMSUNG_VENDOR,
-            "Samsung"
-        )
-
-        CameraCompatibilityProfile.SONY -> Triple(
-            SONY_EXPOSURE_RANGE_KEY,
-            ExposureRangeSource.SONY_VENDOR,
-            "Sony"
-        )
-
+    val preferredKey = when (profile) {
+        CameraCompatibilityProfile.SAMSUNG -> SAMSUNG_EXPOSURE_RANGE_KEY
+        CameraCompatibilityProfile.SONY -> SONY_EXPOSURE_RANGE_KEY
         CameraCompatibilityProfile.GOOGLE_PIXEL,
-        CameraCompatibilityProfile.STANDARD -> return null
+        CameraCompatibilityProfile.STANDARD -> null
     }
-    val keyName = descriptor.first
-    val key = characteristics.keys.firstOrNull { it.name == keyName }
-        ?: if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            CameraCharacteristics.Key(keyName, LongArray::class.java)
-        } else {
-            return null
+    val advertisedKeys = characteristics.keys
+        .filter { key -> isExposureTimeRangeKey(key.name) }
+        .sortedWith(
+            compareByDescending<CameraCharacteristics.Key<*>> { it.name == preferredKey }
+                .thenBy { it.name }
+        )
+    val discovered = advertisedKeys.mapNotNull { key ->
+        val range = vendorExposureRangeValue(
+            keyName = key.name,
+            value = readCameraCharacteristicValue(characteristics, key)
+        ) ?: return@mapNotNull null
+        VendorExposureRange(
+            rangeNs = range,
+            source = exposureRangeSource(key.name),
+            keyName = key.name
+        )
+    }
+    if (discovered.isNotEmpty()) return discovered.maxByOrNull { it.rangeNs.last }
+
+    if (preferredKey == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+    val fallbackKey = CameraCharacteristics.Key(preferredKey, LongArray::class.java)
+    val range = vendorExposureRangeValue(
+        keyName = preferredKey,
+        value = readCameraCharacteristicValue(characteristics, fallbackKey)
+    ) ?: return null
+    return VendorExposureRange(range, exposureRangeSource(preferredKey), preferredKey)
+}
+
+internal fun vendorExposureRangeValue(keyName: String, value: Any?): LongRange? {
+    if (!isExposureTimeRangeKey(keyName)) return null
+    val range = when (value) {
+        is LongArray -> if (value.size >= 2) value[0]..value[1] else null
+        is Range<*> -> {
+            val lower = (value.lower as? Number)?.toLong()
+            val upper = (value.upper as? Number)?.toLong()
+            if (lower != null && upper != null) lower..upper else null
         }
-    val value = readCameraCharacteristicValue(characteristics, key) as? LongArray
-        ?: return null
-    if (value.size < 2) return null
-    val range = (value[0]..value[1]).takeIf(::isValidExposureRange) ?: return null
-    return VendorExposureRange(
-        rangeNs = range,
-        source = descriptor.second,
-        keyName = keyName
-    )
+        else -> null
+    }
+    return range?.takeIf(::isValidExposureRange)
+}
+
+private fun isExposureTimeRangeKey(keyName: String): Boolean {
+    if (keyName == PUBLIC_EXPOSURE_RANGE_KEY) return false
+    val canonicalName = keyName.filter(Char::isLetterOrDigit).lowercase()
+    return canonicalName.contains("exposuretimerange")
+}
+
+private fun exposureRangeSource(keyName: String): ExposureRangeSource = when (keyName) {
+    SAMSUNG_EXPOSURE_RANGE_KEY -> ExposureRangeSource.SAMSUNG_VENDOR
+    SONY_EXPOSURE_RANGE_KEY -> ExposureRangeSource.SONY_VENDOR
+    else -> ExposureRangeSource.VENDOR_GENERIC
 }
 
 internal fun supportsVerifiedManualSensor(
@@ -232,6 +261,10 @@ internal fun supportsVerifiedManualSensor(
     }
 
     return runCatching {
+        characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_MODES)
+            ?.contains(CaptureRequest.CONTROL_AE_MODE_OFF) == true &&
+            characteristics.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE) != null &&
+            characteristics.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE) != null &&
         characteristics.availableCaptureRequestKeys.contains(
             CaptureRequest.SENSOR_EXPOSURE_TIME
         ) && characteristics.availableCaptureRequestKeys.contains(
@@ -282,6 +315,14 @@ internal fun materiallyLowerThanRequested(requested: Int, actual: Int): Boolean 
 internal fun materiallyHigherThanRequested(requested: Int, actual: Int): Boolean =
     requested > 0 && actual > 0 && actual.toLong() * 10L > requested.toLong() * 11L
 
+internal fun manualFrameDurationNs(
+    requestedExposureNs: Long,
+    maximumFrameDurationNs: Long?,
+    supported: Boolean
+): Long? = requestedExposureNs.takeIf {
+    supported && it > 0L && maximumFrameDurationNs != null && maximumFrameDurationNs >= it
+}
+
 @Suppress("UNCHECKED_CAST")
 private fun readCameraCharacteristicValue(
     characteristics: CameraCharacteristics,
@@ -292,3 +333,5 @@ private fun readCameraCharacteristicValue(
 
 private fun isValidExposureRange(range: LongRange): Boolean =
     range.first > 0L && range.last >= range.first
+
+private const val PUBLIC_EXPOSURE_RANGE_KEY = "android.sensor.info.exposureTimeRange"
