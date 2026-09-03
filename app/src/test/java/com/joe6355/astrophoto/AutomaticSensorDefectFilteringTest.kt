@@ -350,7 +350,7 @@ class AutomaticSensorDefectFilteringTest {
     fun urbanWindowAutomaticMaskSuppressesTrailsWithoutAnnotatedStarRegression() = runBlocking {
         val fixture = Stage6RegressionFixtureLoader.load(fixtureDirectory())
         assertEquals(
-            "1b302e1f062420b683296cc00a4e6e05a556ee6ca9737733eff39afdfe5aabd4",
+            "c2fcdc59c101d69da1defd1bbe1181c84a7d530bc0d9bec913cb3e3124339c2c",
             sha256Directory(fixtureDirectory().toPath())
         )
         val plan = requireNotNull(
@@ -1421,12 +1421,19 @@ class AutomaticSensorDefectFilteringTest {
                 .sorted(Comparator.comparing { it.fileName.toString() })
                 .forEach { file ->
                     digest.update(file.fileName.toString().toByteArray(Charsets.UTF_8))
-                    Files.newInputStream(file).use { input ->
-                        val buffer = ByteArray(64 * 1024)
-                        while (true) {
-                            val count = input.read(buffer)
-                            if (count < 0) break
-                            digest.update(buffer, 0, count)
+                    if (file.fileName.toString().substringAfterLast('.', "") in TEXT_FIXTURE_EXTENSIONS) {
+                        val canonicalText = Files.readString(file, Charsets.UTF_8)
+                            .replace("\r\n", "\n")
+                            .replace('\r', '\n')
+                        digest.update(canonicalText.toByteArray(Charsets.UTF_8))
+                    } else {
+                        Files.newInputStream(file).use { input ->
+                            val buffer = ByteArray(64 * 1024)
+                            while (true) {
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                digest.update(buffer, 0, count)
+                            }
                         }
                     }
                 }
@@ -1443,6 +1450,7 @@ class AutomaticSensorDefectFilteringTest {
     }
 
     companion object {
+        private val TEXT_FIXTURE_EXTENSIONS = setOf("properties", "csv", "json", "md", "txt")
         private const val FIXTURE_SCALE = 0.6
     }
 }
