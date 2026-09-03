@@ -33,7 +33,7 @@ try {
         ':app:testDebugUnitTest' `
         '--no-daemon' `
         '--tests' `
-        'com.example.astrophoto.LocalResidualStretchAblationTest.generatedReportIsCompleteAndSecondRunByteIdentical' `
+        'com.joe6355.astrophoto.LocalResidualStretchAblationTest.generatedReportIsCompleteAndSecondRunByteIdentical' `
         '--rerun-tasks' `
         '--console=plain'
     if ($LASTEXITCODE -ne 0) {

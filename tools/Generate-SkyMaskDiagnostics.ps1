@@ -31,7 +31,7 @@ try {
     & $gradle `
         ':app:testDebugUnitTest' `
         '--tests' `
-        'com.example.astrophoto.SkyMaskReplayDiagnosticsTest.generatedReportIsCompleteAndSecondRunByteIdentical' `
+        'com.joe6355.astrophoto.SkyMaskReplayDiagnosticsTest.generatedReportIsCompleteAndSecondRunByteIdentical' `
         '--rerun-tasks' `
         '--console=plain'
     if ($LASTEXITCODE -ne 0) {

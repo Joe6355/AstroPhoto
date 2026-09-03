@@ -103,11 +103,11 @@ flowchart TD
     PNG --> REPORT["Processing report + journal"]
 ```
 
-Слабая архитектурная точка — [JpegStacker.kt](../app/src/main/java/com/example/astrophoto/JpegStacker.kt#L275): 6687 строк, в одном классе соединены orchestration, UI callbacks, manual modes, automatic pipeline, storage и reporting. Пока переписывать его не нужно, но дальнейшие функции лучше добавлять в существующие специализированные JPEG v2 компоненты.
+Слабая архитектурная точка — [JpegStacker.kt](../app/src/main/java/com/joe6355/astrophoto/JpegStacker.kt#L275): 6687 строк, в одном классе соединены orchestration, UI callbacks, manual modes, automatic pipeline, storage и reporting. Пока переписывать его не нужно, но дальнейшие функции лучше добавлять в существующие специализированные JPEG v2 компоненты.
 
 ## 4. Полный automatic JPEG v2 path
 
-Готовые профили реально подключены к UI и вызывают `profileStack`, а не старый legacy recipe: [JpegStacker.kt](../app/src/main/java/com/example/astrophoto/JpegStacker.kt#L5861), [JpegStacker.kt](../app/src/main/java/com/example/astrophoto/JpegStacker.kt#L6091).
+Готовые профили реально подключены к UI и вызывают `profileStack`, а не старый legacy recipe: [JpegStacker.kt](../app/src/main/java/com/joe6355/astrophoto/JpegStacker.kt#L5861), [JpegStacker.kt](../app/src/main/java/com/joe6355/astrophoto/JpegStacker.kt#L6091).
 
 Доступны:
 
@@ -117,7 +117,7 @@ flowchart TD
 - `URBAN_SKY_STRONG`, минимум 6;
 - `MAX_STARS`, минимум 6.
 
-Источник: [AstroProcessingProfile.kt](../app/src/main/java/com/example/astrophoto/AstroProcessingProfile.kt#L15).
+Источник: [AstroProcessingProfile.kt](../app/src/main/java/com/joe6355/astrophoto/AstroProcessingProfile.kt#L15).
 
 Путь обработки:
 
@@ -147,9 +147,9 @@ flowchart TD
 24. Опционально создаётся `Enhanced`.
 25. Записываются processing report, journal и session metadata.
 
-Основные участки: [JpegStacker.kt](../app/src/main/java/com/example/astrophoto/JpegStacker.kt#L1224), [регистрация](../app/src/main/java/com/example/astrophoto/JpegStacker.kt#L1441), [full-resolution refinement](../app/src/main/java/com/example/astrophoto/JpegStacker.kt#L1570), [веса](../app/src/main/java/com/example/astrophoto/JpegStacker.kt#L1632), [интеграция](../app/src/main/java/com/example/astrophoto/JpegStacker.kt#L1694), [mask](../app/src/main/java/com/example/astrophoto/JpegStacker.kt#L1789), [Stage 4](../app/src/main/java/com/example/astrophoto/JpegStacker.kt#L1935), [selection](../app/src/main/java/com/example/astrophoto/JpegStacker.kt#L2006).
+Основные участки: [JpegStacker.kt](../app/src/main/java/com/joe6355/astrophoto/JpegStacker.kt#L1224), [регистрация](../app/src/main/java/com/joe6355/astrophoto/JpegStacker.kt#L1441), [full-resolution refinement](../app/src/main/java/com/joe6355/astrophoto/JpegStacker.kt#L1570), [веса](../app/src/main/java/com/joe6355/astrophoto/JpegStacker.kt#L1632), [интеграция](../app/src/main/java/com/joe6355/astrophoto/JpegStacker.kt#L1694), [mask](../app/src/main/java/com/joe6355/astrophoto/JpegStacker.kt#L1789), [Stage 4](../app/src/main/java/com/joe6355/astrophoto/JpegStacker.kt#L1935), [selection](../app/src/main/java/com/joe6355/astrophoto/JpegStacker.kt#L2006).
 
-Профили используют разные ограниченные параметры gradient removal, neutralization, asinh, chroma reduction и star contrast: [ExistingPresetParameterMapper.kt](../app/src/main/java/com/example/astrophoto/processing/jpeg/v2/profile/ExistingPresetParameterMapper.kt#L44).
+Профили используют разные ограниченные параметры gradient removal, neutralization, asinh, chroma reduction и star contrast: [ExistingPresetParameterMapper.kt](../app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/profile/ExistingPresetParameterMapper.kt#L44).
 
 Сильная сторона — обработка не обязана публиковать агрессивный результат. Последний real-device `URBAN_SKY_STRONG` был отклонён по `sky_mad_increased_excessively`, после чего сохранился `CLEAN_STACK` как `RecoveredStars`. Это правильное безопасное поведение.
 
@@ -162,13 +162,13 @@ flowchart TD
 | Sigma aligned | `sigmaStack()` | sigma считается только по valid samples |
 | Dark-subtracted aligned Average | `stackWithDarkFrames()` | light frame сначала калибруется master dark, затем masked sample исключается |
 
-Average: [JpegStacker.kt](../app/src/main/java/com/example/astrophoto/JpegStacker.kt#L330).
+Average: [JpegStacker.kt](../app/src/main/java/com/joe6355/astrophoto/JpegStacker.kt#L330).
 
-Median: [JpegStacker.kt](../app/src/main/java/com/example/astrophoto/JpegStacker.kt#L792).
+Median: [JpegStacker.kt](../app/src/main/java/com/joe6355/astrophoto/JpegStacker.kt#L792).
 
-Sigma: [JpegStacker.kt](../app/src/main/java/com/example/astrophoto/JpegStacker.kt#L1036).
+Sigma: [JpegStacker.kt](../app/src/main/java/com/joe6355/astrophoto/JpegStacker.kt#L1036).
 
-Dark-aligned: [JpegStacker.kt](../app/src/main/java/com/example/astrophoto/JpegStacker.kt#L4159).
+Dark-aligned: [JpegStacker.kt](../app/src/main/java/com/joe6355/astrophoto/JpegStacker.kt#L4159).
 
 Общие свойства:
 
@@ -196,9 +196,9 @@ Engine:
 - сравнивает local, legacy и predicted transform;
 - сохраняет per-frame confidence, residual, path и rejection reason.
 
-Источник: [SequenceAwareRegistrationEngine.kt](../app/src/main/java/com/example/astrophoto/processing/jpeg/v2/registration/SequenceAwareRegistrationEngine.kt#L17).
+Источник: [SequenceAwareRegistrationEngine.kt](../app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/registration/SequenceAwareRegistrationEngine.kt#L17).
 
-Reference frame принудительно получает identity transform и считается accepted: [SequenceAwareRegistrationEngine.kt](../app/src/main/java/com/example/astrophoto/processing/jpeg/v2/registration/SequenceAwareRegistrationEngine.kt#L297).
+Reference frame принудительно получает identity transform и считается accepted: [SequenceAwareRegistrationEngine.kt](../app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/registration/SequenceAwareRegistrationEngine.kt#L297).
 
 ### Динамический shift limit
 
@@ -209,7 +209,7 @@ Reference frame принудительно получает identity transform �
 - конечный предел — 5% максимальной стороны;
 - ограничивается максимумом 96 px.
 
-Источник: [ManualStarAlignment.kt](../app/src/main/java/com/example/astrophoto/ManualStarAlignment.kt#L14).
+Источник: [ManualStarAlignment.kt](../app/src/main/java/com/joe6355/astrophoto/ManualStarAlignment.kt#L14).
 
 Для 1440×1920 frame 30 имеет разрешённый component-wise предел 96 px.
 
@@ -254,11 +254,11 @@ Fixture работает в 720×960 и показывает predicted displacem
 - residual;
 - confidence.
 
-Источник: [ManualSequenceAlignment.kt](../app/src/main/java/com/example/astrophoto/ManualSequenceAlignment.kt#L18).
+Источник: [ManualSequenceAlignment.kt](../app/src/main/java/com/joe6355/astrophoto/ManualSequenceAlignment.kt#L18).
 
-`manualSequenceFrameWork` фильтрует rejected, индексирует входной список через original index, отдельно выдаёт compact frame number, проверяет minimum frame count и не возвращает rejected кадры при нехватке accepted: [ManualSequenceAlignment.kt](../app/src/main/java/com/example/astrophoto/ManualSequenceAlignment.kt#L125).
+`manualSequenceFrameWork` фильтрует rejected, индексирует входной список через original index, отдельно выдаёт compact frame number, проверяет minimum frame count и не возвращает rejected кадры при нехватке accepted: [ManualSequenceAlignment.kt](../app/src/main/java/com/joe6355/astrophoto/ManualSequenceAlignment.kt#L125).
 
-Дополнительная защита запрещает transform lookup для rejected frame: [JpegStacker.kt](../app/src/main/java/com/example/astrophoto/JpegStacker.kt#L3462).
+Дополнительная защита запрещает transform lookup для rejected frame: [JpegStacker.kt](../app/src/main/java/com/joe6355/astrophoto/JpegStacker.kt#L3462).
 
 ### Fixture
 
@@ -268,7 +268,7 @@ Fixture работает в 720×960 и показывает predicted displacem
 - Reference: frame 9, включён
 - Вес каждого rejected: `0.0`
 
-Тест: [ManualSequenceRejectedFrameFilterTest.kt](../app/src/test/java/com/example/astrophoto/ManualSequenceRejectedFrameFilterTest.kt#L13).
+Тест: [ManualSequenceRejectedFrameFilterTest.kt](../app/src/test/java/com/joe6355/astrophoto/ManualSequenceRejectedFrameFilterTest.kt#L13).
 
 ### Real-device manual
 
@@ -282,17 +282,17 @@ Fixture работает в 720×960 и показывает predicted displacem
 
 Предыдущий rejected-frame-only прогон снизил целевой trail contrast приблизительно на 39%.
 
-Report включает input/accepted/rejected counts, original rejected indices, reasons и фактические integrated indices: [JpegStacker.kt](../app/src/main/java/com/example/astrophoto/JpegStacker.kt#L4878).
+Report включает input/accepted/rejected counts, original rejected indices, reasons и фактические integrated indices: [JpegStacker.kt](../app/src/main/java/com/joe6355/astrophoto/JpegStacker.kt#L4878).
 
 ### Ограничение
 
-Любая `ManualSequenceInsufficientFramesException` остаётся hard failure. Однако другие исключения при построении sequence plan перехватываются и переводят режим в legacy fallback: [JpegStacker.kt](../app/src/main/java/com/example/astrophoto/JpegStacker.kt#L3422). В таком fallback нет sequence rejected decisions и sensor mask.
+Любая `ManualSequenceInsufficientFramesException` остаётся hard failure. Однако другие исключения при построении sequence plan перехватываются и переводят режим в legacy fallback: [JpegStacker.kt](../app/src/main/java/com/joe6355/astrophoto/JpegStacker.kt#L3422). В таком fallback нет sequence rejected decisions и sensor mask.
 
 ## 8. Sensor-defect filtering
 
 ### Формирование mask
 
-`PersistentSensorCandidateDetector` только предлагает кандидатов; он не является окончательным астрономическим классификатором: [PersistentSensorCandidateDetector.kt](../app/src/main/java/com/example/astrophoto/processing/jpeg/v2/artifacts/PersistentSensorCandidateDetector.kt#L8).
+`PersistentSensorCandidateDetector` только предлагает кандидатов; он не является окончательным астрономическим классификатором: [PersistentSensorCandidateDetector.kt](../app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/artifacts/PersistentSensorCandidateDetector.kt#L8).
 
 Production mask допускает только:
 
@@ -305,13 +305,13 @@ Production mask допускает только:
 - footprint ≤ 64 pixels;
 - суммарную masked fraction ≤ 0.001, то есть 0.1%.
 
-Источник: [SensorDefectMask.kt](../app/src/main/java/com/example/astrophoto/processing/jpeg/v2/artifacts/SensorDefectMask.kt#L32), [buildConfirmedSensorDefectMask](../app/src/main/java/com/example/astrophoto/processing/jpeg/v2/artifacts/SensorDefectMask.kt#L141).
+Источник: [SensorDefectMask.kt](../app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/artifacts/SensorDefectMask.kt#L32), [buildConfirmedSensorDefectMask](../app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/artifacts/SensorDefectMask.kt#L141).
 
 `uncertain`, coherent sky tracks, reflections и слишком большие footprints не включаются.
 
 ### Координаты и sample exclusion
 
-Mask остаётся в координатах камеры. Для output pixel применяется original alignment shift, после чего проверяется соответствующая source coordinate: [ManualSensorDefectFiltering.kt](../app/src/main/java/com/example/astrophoto/ManualSensorDefectFiltering.kt#L32).
+Mask остаётся в координатах камеры. Для output pixel применяется original alignment shift, после чего проверяется соответствующая source coordinate: [ManualSensorDefectFiltering.kt](../app/src/main/java/com/joe6355/astrophoto/ManualSensorDefectFiltering.kt#L32).
 
 Masked sample:
 
@@ -322,7 +322,7 @@ Masked sample:
 - не влияет на dark-subtracted average;
 - заменяется reference sample только если valid coverage действительно недостаточен.
 
-Coverage gate отключает mask, если доля output pixels с недостаточным покрытием превышает 0.1%: [ManualSensorDefectFiltering.kt](../app/src/main/java/com/example/astrophoto/ManualSensorDefectFiltering.kt#L110).
+Coverage gate отключает mask, если доля output pixels с недостаточным покрытием превышает 0.1%: [ManualSensorDefectFiltering.kt](../app/src/main/java/com/joe6355/astrophoto/ManualSensorDefectFiltering.kt#L110).
 
 ### Fixture-результат
 
@@ -366,7 +366,7 @@ Annotated source contrast:
 
 ### Главный незакрытый пробел
 
-Новый `SensorDefectMask` подключён только к manual aligned modes. Automatic JPEG v2 использует static artifacts при регистрации и quality analysis, но `LinearWeightedIntegrator` не получает camera-space sensor mask: [JpegStacker.kt](../app/src/main/java/com/example/astrophoto/JpegStacker.kt#L1694).
+Новый `SensorDefectMask` подключён только к manual aligned modes. Automatic JPEG v2 использует static artifacts при регистрации и quality analysis, но `LinearWeightedIntegrator` не получает camera-space sensor mask: [JpegStacker.kt](../app/src/main/java/com/joe6355/astrophoto/JpegStacker.kt#L1694).
 
 Следовательно, для automatic profiles полное отсутствие camera-defect trails пока не гарантируется.
 
@@ -386,11 +386,11 @@ Annotated source contrast:
 6. После публикации `SIZE` запрашивается только как необязательная диагностика.
 7. `SIZE=null/0` не отменяет уже валидированный результат.
 
-Источник: [LosslessProcessedImageWriter.kt](../app/src/main/java/com/example/astrophoto/processing/jpeg/v2/output/LosslessProcessedImageWriter.kt#L150), [PngStructureValidator](../app/src/main/java/com/example/astrophoto/processing/jpeg/v2/output/LosslessProcessedImageWriter.kt#L191), [MediaStore publication](../app/src/main/java/com/example/astrophoto/processing/jpeg/v2/output/LosslessProcessedImageWriter.kt#L430).
+Источник: [LosslessProcessedImageWriter.kt](../app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/output/LosslessProcessedImageWriter.kt#L150), [PngStructureValidator](../app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/output/LosslessProcessedImageWriter.kt#L191), [MediaStore publication](../app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/output/LosslessProcessedImageWriter.kt#L430).
 
-MIUI regression: [EnhancedPngStorageHardeningTest.kt](../app/src/test/java/com/example/astrophoto/processing/jpeg/v2/output/EnhancedPngStorageHardeningTest.kt#L163).
+MIUI regression: [EnhancedPngStorageHardeningTest.kt](../app/src/test/java/com/joe6355/astrophoto/processing/jpeg/v2/output/EnhancedPngStorageHardeningTest.kt#L163).
 
-На Android ниже Q используется temporary file, `fsync`, validation и move без overwrite: [LosslessProcessedImageWriter.kt](../app/src/main/java/com/example/astrophoto/processing/jpeg/v2/output/LosslessProcessedImageWriter.kt#L337).
+На Android ниже Q используется temporary file, `fsync`, validation и move без overwrite: [LosslessProcessedImageWriter.kt](../app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/output/LosslessProcessedImageWriter.kt#L337).
 
 ### Последний проверенный PNG
 
@@ -416,7 +416,7 @@ MIUI regression: [EnhancedPngStorageHardeningTest.kt](../app/src/test/java/com/e
 
 ### Enhanced
 
-Основной PNG записывается раньше, чем начинается optional Enhanced. Ошибки Enhanced возвращаются как `FAILED/REJECTED` и добавляются в report, не отменяя основной результат: [JpegStacker.kt](../app/src/main/java/com/example/astrophoto/JpegStacker.kt#L2696), [publishAncillaryEnhanced](../app/src/main/java/com/example/astrophoto/JpegStacker.kt#L2783).
+Основной PNG записывается раньше, чем начинается optional Enhanced. Ошибки Enhanced возвращаются как `FAILED/REJECTED` и добавляются в report, не отменяя основной результат: [JpegStacker.kt](../app/src/main/java/com/joe6355/astrophoto/JpegStacker.kt#L2696), [publishAncillaryEnhanced](../app/src/main/java/com/joe6355/astrophoto/JpegStacker.kt#L2783).
 
 В commit `fa5aa24` writer менялся именно для MIUI publication coordinator. Encoder и структура validator относительно `9d45315` не переписывались.
 
@@ -444,9 +444,9 @@ Fixture: [urban-window-30](../app/src/test/resources/jpeg-stage6/urban-window-30
 - среди автоматически предложенных кандидатов один получил provisional class `star`, остальные — `uncertain`;
 - эти auto-классы нельзя представлять как ручную разметку.
 
-`uncertain` исключается из scored ground truth: [Stage6RegressionFixture.kt](../app/src/test/java/com/example/astrophoto/Stage6RegressionFixture.kt#L40).
+`uncertain` исключается из scored ground truth: [Stage6RegressionFixture.kt](../app/src/test/java/com/joe6355/astrophoto/Stage6RegressionFixture.kt#L40).
 
-Candidate generator сохраняет существующие классификации, стабильно сортирует ID и генерирует JSON/Markdown/contact sheets. Тест: [Stage6CandidateDiagnosticsTest.kt](../app/src/test/java/com/example/astrophoto/Stage6CandidateDiagnosticsTest.kt#L14).
+Candidate generator сохраняет существующие классификации, стабильно сортирует ID и генерирует JSON/Markdown/contact sheets. Тест: [Stage6CandidateDiagnosticsTest.kt](../app/src/test/java/com/joe6355/astrophoto/Stage6CandidateDiagnosticsTest.kt#L14).
 
 Хэши:
 
@@ -560,7 +560,7 @@ SHA-256:
 | Commit `fa5aa24` смешивает processing, fixture, PNG и focus | Средний traceability | git stat |
 | Последний Strong профиль ушёл в fallback | Низкий функциональный, положительный safety signal | `sky_mad_increased_excessively` |
 | Post-publish URI повторно структурно не открывается | Низкий | после publish только optional `SIZE` query |
-| RAW alignment ограничен 32 px и проще JPEG v2 | Средний для RAW-серий | [RawStacker.kt](../app/src/main/java/com/example/astrophoto/RawStacker.kt#L204) |
+| RAW alignment ограничен 32 px и проще JPEG v2 | Средний для RAW-серий | [RawStacker.kt](../app/src/main/java/com/joe6355/astrophoto/RawStacker.kt#L204) |
 
 ## 15. Карта рисков
 
@@ -618,28 +618,28 @@ Sensor-mask coverage не близка к safety limit:
 
 | Файл/группа | Назначение |
 |---|---|
-| [MainActivity.kt](../app/src/main/java/com/example/astrophoto/MainActivity.kt#L1028) | UI и запуск capture |
-| [CameraPreviewView.kt](../app/src/main/java/com/example/astrophoto/CameraPreviewView.kt#L516) | JPEG/DNG Camera2 capture |
-| [CameraTapFocus.kt](../app/src/main/java/com/example/astrophoto/CameraTapFocus.kt) | tap-to-focus |
-| [ShootingSessionStore.kt](../app/src/main/java/com/example/astrophoto/ShootingSessionStore.kt#L94) | session paths и metadata |
-| [SessionFrames.kt](../app/src/main/java/com/example/astrophoto/SessionFrames.kt#L134) | загрузка кадров |
-| [JpegStacker.kt](../app/src/main/java/com/example/astrophoto/JpegStacker.kt#L275) | manual и automatic orchestration |
-| [ManualSequenceAlignment.kt](../app/src/main/java/com/example/astrophoto/ManualSequenceAlignment.kt#L18) | per-frame plan |
-| [ManualSensorDefectFiltering.kt](../app/src/main/java/com/example/astrophoto/ManualSensorDefectFiltering.kt#L32) | sample exclusion |
-| [ManualStarAlignment.kt](../app/src/main/java/com/example/astrophoto/ManualStarAlignment.kt#L14) | legacy alignment и shift limit |
-| [SensorDefectMask.kt](../app/src/main/java/com/example/astrophoto/processing/jpeg/v2/artifacts/SensorDefectMask.kt#L32) | production mask policy |
-| [SequenceAwareRegistrationEngine.kt](../app/src/main/java/com/example/astrophoto/processing/jpeg/v2/registration/SequenceAwareRegistrationEngine.kt#L7) | sequence registration |
-| [FullResolutionRegistrationRefiner.kt](../app/src/main/java/com/example/astrophoto/processing/jpeg/v2/registration/FullResolutionRegistrationRefiner.kt#L42) | full-res refinement |
-| [FrameWeightCalculator.kt](../app/src/main/java/com/example/astrophoto/processing/jpeg/v2/integration/FrameWeightCalculator.kt#L13) | integration weights |
-| [LinearWeightedIntegrator.kt](../app/src/main/java/com/example/astrophoto/processing/jpeg/v2/integration/LinearWeightedIntegrator.kt) | automatic tile integration |
-| [SkyMaskEstimator.kt](../app/src/main/java/com/example/astrophoto/processing/jpeg/v2/masking/SkyMaskEstimator.kt#L12) | initial sky mask |
-| [SkyMaskRefiner.kt](../app/src/main/java/com/example/astrophoto/processing/jpeg/v2/masking/SkyMaskRefiner.kt#L15) | full-resolution refinement |
-| [AstroResultQualityGate.kt](../app/src/main/java/com/example/astrophoto/processing/jpeg/v2/quality/AstroResultQualityGate.kt#L10) | result gate |
-| [ResultSelectionPolicy.kt](../app/src/main/java/com/example/astrophoto/processing/jpeg/v2/quality/ResultSelectionPolicy.kt#L9) | processed/clean fallback |
-| [LosslessProcessedImageWriter.kt](../app/src/main/java/com/example/astrophoto/processing/jpeg/v2/output/LosslessProcessedImageWriter.kt#L389) | PNG/MediaStore |
-| [ProcessingReport.kt](../app/src/main/java/com/example/astrophoto/processing/jpeg/v2/diagnostics/ProcessingReport.kt) | report schema |
-| [AppSpecificProcessingReportStore.kt](../app/src/main/java/com/example/astrophoto/processing/jpeg/v2/diagnostics/AppSpecificProcessingReportStore.kt#L17) | fallback reports |
-| [RawStacker.kt](../app/src/main/java/com/example/astrophoto/RawStacker.kt#L11) | RAW path |
+| [MainActivity.kt](../app/src/main/java/com/joe6355/astrophoto/MainActivity.kt#L1028) | UI и запуск capture |
+| [CameraPreviewView.kt](../app/src/main/java/com/joe6355/astrophoto/CameraPreviewView.kt#L516) | JPEG/DNG Camera2 capture |
+| [CameraTapFocus.kt](../app/src/main/java/com/joe6355/astrophoto/CameraTapFocus.kt) | tap-to-focus |
+| [ShootingSessionStore.kt](../app/src/main/java/com/joe6355/astrophoto/ShootingSessionStore.kt#L94) | session paths и metadata |
+| [SessionFrames.kt](../app/src/main/java/com/joe6355/astrophoto/SessionFrames.kt#L134) | загрузка кадров |
+| [JpegStacker.kt](../app/src/main/java/com/joe6355/astrophoto/JpegStacker.kt#L275) | manual и automatic orchestration |
+| [ManualSequenceAlignment.kt](../app/src/main/java/com/joe6355/astrophoto/ManualSequenceAlignment.kt#L18) | per-frame plan |
+| [ManualSensorDefectFiltering.kt](../app/src/main/java/com/joe6355/astrophoto/ManualSensorDefectFiltering.kt#L32) | sample exclusion |
+| [ManualStarAlignment.kt](../app/src/main/java/com/joe6355/astrophoto/ManualStarAlignment.kt#L14) | legacy alignment и shift limit |
+| [SensorDefectMask.kt](../app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/artifacts/SensorDefectMask.kt#L32) | production mask policy |
+| [SequenceAwareRegistrationEngine.kt](../app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/registration/SequenceAwareRegistrationEngine.kt#L7) | sequence registration |
+| [FullResolutionRegistrationRefiner.kt](../app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/registration/FullResolutionRegistrationRefiner.kt#L42) | full-res refinement |
+| [FrameWeightCalculator.kt](../app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/integration/FrameWeightCalculator.kt#L13) | integration weights |
+| [LinearWeightedIntegrator.kt](../app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/integration/LinearWeightedIntegrator.kt) | automatic tile integration |
+| [SkyMaskEstimator.kt](../app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/masking/SkyMaskEstimator.kt#L12) | initial sky mask |
+| [SkyMaskRefiner.kt](../app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/masking/SkyMaskRefiner.kt#L15) | full-resolution refinement |
+| [AstroResultQualityGate.kt](../app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/quality/AstroResultQualityGate.kt#L10) | result gate |
+| [ResultSelectionPolicy.kt](../app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/quality/ResultSelectionPolicy.kt#L9) | processed/clean fallback |
+| [LosslessProcessedImageWriter.kt](../app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/output/LosslessProcessedImageWriter.kt#L389) | PNG/MediaStore |
+| [ProcessingReport.kt](../app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/diagnostics/ProcessingReport.kt) | report schema |
+| [AppSpecificProcessingReportStore.kt](../app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/diagnostics/AppSpecificProcessingReportStore.kt#L17) | fallback reports |
+| [RawStacker.kt](../app/src/main/java/com/joe6355/astrophoto/RawStacker.kt#L11) | RAW path |
 
 ### Основные тесты
 

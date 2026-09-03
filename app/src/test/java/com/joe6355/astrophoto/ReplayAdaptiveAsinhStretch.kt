@@ -1,0 +1,248 @@
+package com.joe6355.astrophoto
+
+import com.joe6355.astrophoto.processing.jpeg.v2.color.SrgbTransfer
+import com.joe6355.astrophoto.processing.jpeg.v2.model.AlphaMask
+import com.joe6355.astrophoto.processing.jpeg.v2.model.DetectedStar
+import com.joe6355.astrophoto.processing.jpeg.v2.model.SkyStatisticsResult
+import com.joe6355.astrophoto.processing.jpeg.v2.model.StretchDiagnostics
+import com.joe6355.astrophoto.processing.jpeg.v2.postprocessing.AdaptiveStretchResult
+import com.joe6355.astrophoto.processing.jpeg.v2.postprocessing.OPERATION_ALPHA_THRESHOLD
+import com.joe6355.astrophoto.processing.jpeg.v2.postprocessing.SkyStatistics
+import com.joe6355.astrophoto.processing.jpeg.v2.postprocessing.linearChannel
+import com.joe6355.astrophoto.processing.jpeg.v2.postprocessing.packLinear
+import com.joe6355.astrophoto.processing.jpeg.v2.postprocessing.smoothStep
+import kotlin.math.asinh
+import kotlin.math.sqrt
+
+internal enum class ReplayStretchBlendMode(
+    val cap: Float? = null
+) {
+    CURRENT,
+    HONEST_BLEND,
+    CAPPED_025(0.25f),
+    CAPPED_035(0.35f),
+    CAPPED_050(0.50f),
+    CAPPED_075(0.75f),
+    TARGET_MEDIAN_DISABLED
+}
+
+internal data class ReplayAdaptiveAsinhBlendCalculation(
+    val configuredBlend: Float,
+    val confidenceScale: Float,
+    val targetLinearMedian: Float,
+    val statisticsMedian: Float,
+    val medianNormalized: Float,
+    val fullyMappedMedian: Float,
+    val rawTargetBlend: Float,
+    val targetBlend: Float,
+    val configuredContribution: Float,
+    val targetMedianContribution: Float,
+    val currentAppliedBlend: Float,
+    val denominator: Float,
+    val range: Float
+) {
+    fun appliedBlend(mode: ReplayStretchBlendMode): Float = when (mode) {
+        ReplayStretchBlendMode.CURRENT -> currentAppliedBlend
+        ReplayStretchBlendMode.HONEST_BLEND -> configuredBlend
+        ReplayStretchBlendMode.TARGET_MEDIAN_DISABLED -> configuredContribution
+        ReplayStretchBlendMode.CAPPED_025,
+        ReplayStretchBlendMode.CAPPED_035,
+        ReplayStretchBlendMode.CAPPED_050,
+        ReplayStretchBlendMode.CAPPED_075 -> minOf(currentAppliedBlend, requireNotNull(mode.cap))
+    }.coerceIn(0f, 1f)
+}
+
+/**
+ * Test-only copy of AdaptiveAsinhStretch with injectable operation and applied-blend modes.
+ * All other calculations intentionally mirror production.
+ */
+internal class ReplayAdaptiveAsinhStretch(
+    private val skyStatistics: SkyStatistics = SkyStatistics()
+) {
+    fun apply(
+        image: ArgbPixelImage,
+        effectiveSkyAlpha: AlphaMask,
+        stars: List<DetectedStar>,
+        statistics: SkyStatisticsResult,
+        stretchBlend: Float,
+        asinhStrength: Float,
+        highlightProtection: Float,
+        maximumSkyMedianFactor: Float,
+        minimumBlackWhiteSeparation: Float,
+        targetDisplaySkyMedian: Float,
+        operationMode: ReplayStretchOperationMode,
+        blendMode: ReplayStretchBlendMode = ReplayStretchBlendMode.CURRENT
+    ): AdaptiveStretchResult {
+        require(image.width == effectiveSkyAlpha.width && image.height == effectiveSkyAlpha.height)
+        require(operationMode != ReplayStretchOperationMode.PRODUCTION_CURRENT)
+        val blackPoint = minOf(statistics.lowPercentile, statistics.estimatedBlackPoint)
+            .coerceIn(0f, 1f - minimumBlackWhiteSeparation)
+        val whitePoint = maxOf(
+            statistics.estimatedSafeWhitePoint,
+            blackPoint + minimumBlackWhiteSeparation
+        ).coerceAtMost(1f)
+        if (
+            operationMode == ReplayStretchOperationMode.BYPASS ||
+            stretchBlend <= 0f || asinhStrength <= 0f || statistics.skyPixelCount == 0
+        ) {
+            return AdaptiveStretchResult(
+                image.copy(pixels = image.pixels.copyOf()),
+                StretchDiagnostics(
+                    blackPoint,
+                    whitePoint,
+                    asinhStrength,
+                    highlightProtection,
+                    0f,
+                    1f
+                )
+            )
+        }
+        val blend = calculateBlend(
+            statistics = statistics,
+            stretchBlend = stretchBlend,
+            asinhStrength = asinhStrength,
+            blackPoint = blackPoint,
+            whitePoint = whitePoint,
+            minimumBlackWhiteSeparation = minimumBlackWhiteSeparation,
+            targetDisplaySkyMedian = targetDisplaySkyMedian
+        )
+        val denominator = blend.denominator
+        val range = blend.range
+        val targetLinearMedian = blend.targetLinearMedian
+        val appliedBlend = blend.appliedBlend(blendMode)
+        val stretchedPixels = image.pixels.copyOf()
+        for (index in stretchedPixels.indices) {
+            val x = index % image.width
+            val y = index / image.width
+            val alpha = effectiveSkyAlpha.alphaAt(x, y)
+            if (alpha <= OPERATION_ALPHA_THRESHOLD) continue
+            val color = image.pixels[index]
+            val red = linearChannel(color, 16)
+            val green = linearChannel(color, 8)
+            val blue = linearChannel(color, 0)
+            val luminance = LUMA_RED * red + LUMA_GREEN * green + LUMA_BLUE * blue
+            if (luminance <= MIN_LUMINANCE) continue
+            val normalized = ((luminance - blackPoint) / range).coerceIn(0f, 1f)
+            val mapped = (asinh(asinhStrength * normalized.toDouble()) / denominator).toFloat()
+            val highlightWeight = 1f - highlightProtection.coerceIn(0f, 1f) *
+                smoothStep(HIGHLIGHT_START, 1f, normalized)
+            val spatialStrength = when (operationMode) {
+                ReplayStretchOperationMode.SQRT_ALPHA -> sqrt(alpha.coerceIn(0f, 1f))
+                ReplayStretchOperationMode.LINEAR_ALPHA -> alpha.coerceIn(0f, 1f)
+                ReplayStretchOperationMode.FULL -> 1f
+                ReplayStretchOperationMode.BYPASS,
+                ReplayStretchOperationMode.PRODUCTION_CURRENT -> error("Unsupported operation mode")
+            }
+            val localBlend = appliedBlend * spatialStrength * highlightWeight
+            val targetLuminance = (luminance + (mapped - luminance) * localBlend)
+                .coerceIn(0f, MAX_UNCLIPPED_VALUE)
+            var scale = targetLuminance / luminance
+            val maximumChannel = maxOf(red, green, blue)
+            if (maximumChannel < MAX_UNCLIPPED_VALUE && maximumChannel * scale > MAX_UNCLIPPED_VALUE) {
+                scale = MAX_UNCLIPPED_VALUE / maximumChannel.coerceAtLeast(MIN_LUMINANCE)
+            }
+            stretchedPixels[index] = packLinear(red * scale, green * scale, blue * scale)
+        }
+        var stretched = ArgbPixelImage(image.width, image.height, stretchedPixels)
+        val stretchedStatistics = skyStatistics.calculate(stretched, effectiveSkyAlpha, stars)
+        val allowedMedian = maxOf(
+            targetLinearMedian,
+            statistics.luminanceMedian * maximumSkyMedianFactor,
+            statistics.luminanceMedian + maxOf(statistics.luminanceMad * 2f, MIN_MEDIAN_HEADROOM)
+        )
+        val safetyScale = when {
+            stretchedStatistics.luminanceMedian <= allowedMedian -> 1f
+            stretchedStatistics.luminanceMedian <= statistics.luminanceMedian -> 1f
+            else -> ((allowedMedian - statistics.luminanceMedian) /
+                (stretchedStatistics.luminanceMedian - statistics.luminanceMedian)).coerceIn(0f, 1f)
+        }
+        if (safetyScale < 0.999f) {
+            val safePixels = image.pixels.copyOf()
+            for (index in safePixels.indices) {
+                val x = index % image.width
+                val y = index / image.width
+                if (effectiveSkyAlpha.alphaAt(x, y) <= OPERATION_ALPHA_THRESHOLD) continue
+                val original = image.pixels[index]
+                val processed = stretched.pixels[index]
+                safePixels[index] = packLinear(
+                    linearChannel(original, 16) +
+                        (linearChannel(processed, 16) - linearChannel(original, 16)) * safetyScale,
+                    linearChannel(original, 8) +
+                        (linearChannel(processed, 8) - linearChannel(original, 8)) * safetyScale,
+                    linearChannel(original, 0) +
+                        (linearChannel(processed, 0) - linearChannel(original, 0)) * safetyScale
+                )
+            }
+            stretched = ArgbPixelImage(image.width, image.height, safePixels)
+        }
+        return AdaptiveStretchResult(
+            stretched,
+            StretchDiagnostics(
+                blackPoint = blackPoint,
+                whitePoint = whitePoint,
+                asinhStrength = asinhStrength,
+                highlightProtectionStrength = highlightProtection,
+                appliedBlend = appliedBlend,
+                medianSafetyScale = safetyScale
+            )
+        )
+    }
+
+    companion object {
+        internal fun calculateBlend(
+            statistics: SkyStatisticsResult,
+            stretchBlend: Float,
+            asinhStrength: Float,
+            blackPoint: Float,
+            whitePoint: Float,
+            minimumBlackWhiteSeparation: Float,
+            targetDisplaySkyMedian: Float
+        ): ReplayAdaptiveAsinhBlendCalculation {
+            val denominator = asinh(asinhStrength.toDouble()).toFloat().coerceAtLeast(0.0001f)
+            val range = (whitePoint - blackPoint).coerceAtLeast(minimumBlackWhiteSeparation)
+            val confidenceScale = (MIN_CONFIDENCE_SCALE +
+                (1f - MIN_CONFIDENCE_SCALE) * statistics.confidence).coerceIn(0f, 1f)
+            val targetLinearMedian = SrgbTransfer.srgbToLinear(targetDisplaySkyMedian)
+            val medianNormalized = ((statistics.luminanceMedian - blackPoint) / range)
+                .coerceIn(0f, 1f)
+            val fullyMappedMedian = (
+                asinh(asinhStrength * medianNormalized.toDouble()) / denominator
+                ).toFloat()
+            val rawTargetBlend = if (fullyMappedMedian > statistics.luminanceMedian) {
+                (targetLinearMedian - statistics.luminanceMedian) /
+                    (fullyMappedMedian - statistics.luminanceMedian)
+            } else {
+                0f
+            }
+            val targetBlend = rawTargetBlend.coerceIn(0f, 1f)
+            val configured = stretchBlend.coerceIn(0f, 1f)
+            val configuredContribution = configured * confidenceScale
+            val targetMedianContribution = targetBlend * confidenceScale
+            return ReplayAdaptiveAsinhBlendCalculation(
+                configuredBlend = configured,
+                confidenceScale = confidenceScale,
+                targetLinearMedian = targetLinearMedian,
+                statisticsMedian = statistics.luminanceMedian,
+                medianNormalized = medianNormalized,
+                fullyMappedMedian = fullyMappedMedian,
+                rawTargetBlend = rawTargetBlend,
+                targetBlend = targetBlend,
+                configuredContribution = configuredContribution,
+                targetMedianContribution = targetMedianContribution,
+                currentAppliedBlend = maxOf(configuredContribution, targetMedianContribution)
+                    .coerceIn(0f, 1f),
+                denominator = denominator,
+                range = range
+            )
+        }
+
+        const val HIGHLIGHT_START = 0.52f
+        const val MIN_CONFIDENCE_SCALE = 0.18f
+        const val MIN_LUMINANCE = 0.000001f
+        const val MIN_MEDIAN_HEADROOM = 1f / 4095f
+        const val MAX_UNCLIPPED_VALUE = 0.995f
+        const val LUMA_RED = 0.2126f
+        const val LUMA_GREEN = 0.7152f
+        const val LUMA_BLUE = 0.0722f
+    }
+}

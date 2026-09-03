@@ -3,7 +3,8 @@
 ## Сборка
 
 - [x] Debug build собран (`gradlew.bat assembleDebug`)
-- [x] Release build собран unsigned (`gradlew.bat assembleRelease`)
+- [x] Release build собран и подписан (`gradlew.bat assembleRelease`)
+- [x] CI запускает unit tests, lint и debug build для `main`/`beta`
 - [x] APK установлен на тестовый телефон
 
 ## Запуск и разрешения

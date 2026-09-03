@@ -48,9 +48,9 @@ For this fixture: `stretchBlend=0.25`, `asinhStrength=5.2`, `highlightProtection
 
 Exact production locations:
 
-- [`AdaptiveAsinhStretch.kt`](../app/src/main/java/com/example/astrophoto/processing/jpeg/v2/postprocessing/AdaptiveAsinhStretch.kt#L82): `sqrt(alpha)` local blend followed by luminance gain, gamut clamp, and per-channel reconstruction.
-- [`FileBackedAdaptivePresetProcessor.kt`](../app/src/main/java/com/example/astrophoto/processing/jpeg/v2/postprocessing/FileBackedAdaptivePresetProcessor.kt#L582): active file-backed equivalent.
-- [`SkyForegroundComposer.kt`](../app/src/main/java/com/example/astrophoto/processing/jpeg/v2/composition/SkyForegroundComposer.kt#L83): subsequent effective-alpha linear-light composition.
+- [`AdaptiveAsinhStretch.kt`](../app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/postprocessing/AdaptiveAsinhStretch.kt#L82): `sqrt(alpha)` local blend followed by luminance gain, gamut clamp, and per-channel reconstruction.
+- [`FileBackedAdaptivePresetProcessor.kt`](../app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/postprocessing/FileBackedAdaptivePresetProcessor.kt#L582): active file-backed equivalent.
+- [`SkyForegroundComposer.kt`](../app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/composition/SkyForegroundComposer.kt#L83): subsequent effective-alpha linear-light composition.
 
 ## Ablation result
 

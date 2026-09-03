@@ -16,7 +16,7 @@ $env:ASTROPHOTO_STAGE6_DIAGNOSTICS_OUTPUT_DIR = $outputRoot
     ':app:cleanTestDebugUnitTest' `
     ':app:testDebugUnitTest' `
     '--tests' `
-    'com.example.astrophoto.Stage6CandidateDiagnosticsTest.requestedDiagnosticArtifactsAreGenerated'
+    'com.joe6355.astrophoto.Stage6CandidateDiagnosticsTest.requestedDiagnosticArtifactsAreGenerated'
 
 if ($LASTEXITCODE -ne 0) {
     throw "Stage 6 diagnostics failed with exit code $LASTEXITCODE"

@@ -1,10 +1,24 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
 }
 
+val releaseSigningProperties = Properties()
+val releaseSigningFile = rootProject.file("keystore.properties")
+if (releaseSigningFile.isFile) {
+    releaseSigningFile.inputStream().use(releaseSigningProperties::load)
+}
+val hasReleaseSigning = listOf(
+    "storeFile",
+    "storePassword",
+    "keyAlias",
+    "keyPassword"
+).all { !releaseSigningProperties.getProperty(it).isNullOrBlank() }
+
 android {
-    namespace = "com.example.astrophoto"
+    namespace = "com.joe6355.astrophoto"
     compileSdk {
         version = release(36) {
             minorApiLevel = 1
@@ -12,17 +26,30 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.astrophoto"
+        applicationId = "com.joe6355.astrophoto"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.9.0-beta.1"
+        versionCode = 3
+        versionName = "0.9.0-beta.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        create("release") {
+            if (hasReleaseSigning) {
+                storeFile = rootProject.file(releaseSigningProperties.getProperty("storeFile"))
+                storePassword = releaseSigningProperties.getProperty("storePassword")
+                keyAlias = releaseSigningProperties.getProperty("keyAlias")
+                keyPassword = releaseSigningProperties.getProperty("keyPassword")
+            }
+        }
+    }
     buildTypes {
         release {
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             isMinifyEnabled = false
             optimization {
                 enable = false

@@ -43,7 +43,7 @@ try {
         ':app:cleanTestDebugUnitTest' `
         ':app:testDebugUnitTest' `
         '--tests' `
-        'com.example.astrophoto.GroundTruthReviewCommandTest.importConfiguredReviewQueue'
+        'com.joe6355.astrophoto.GroundTruthReviewCommandTest.importConfiguredReviewQueue'
     if ($LASTEXITCODE -ne 0) {
         throw "Ground-truth review import failed with exit code $LASTEXITCODE"
     }

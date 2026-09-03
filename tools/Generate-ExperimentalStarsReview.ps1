@@ -27,7 +27,7 @@ try {
     & $gradle `
         ':app:testDebugUnitTest' `
         '--tests' `
-        'com.example.astrophoto.ExperimentalStarsProductionPresetTest' `
+        'com.joe6355.astrophoto.ExperimentalStarsProductionPresetTest' `
         '--no-daemon' `
         '--console=plain'
     if ($LASTEXITCODE -ne 0) {

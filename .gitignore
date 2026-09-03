@@ -20,6 +20,8 @@ local.properties
 *.jks
 *.keystore
 key.properties
+keystore.properties
+/signing/
 
 # Local backups and diagnostics
 _git_setup_backup/

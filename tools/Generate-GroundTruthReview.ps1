@@ -35,7 +35,7 @@ try {
         ':app:cleanTestDebugUnitTest' `
         ':app:testDebugUnitTest' `
         '--tests' `
-        'com.example.astrophoto.GroundTruthReviewCommandTest.generateConfiguredReviewPackage'
+        'com.joe6355.astrophoto.GroundTruthReviewCommandTest.generateConfiguredReviewPackage'
     if ($LASTEXITCODE -ne 0) {
         throw "Ground-truth review generation failed with exit code $LASTEXITCODE"
     }
