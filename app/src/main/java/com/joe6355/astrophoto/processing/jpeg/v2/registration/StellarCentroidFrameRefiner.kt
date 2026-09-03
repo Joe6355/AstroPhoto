@@ -34,7 +34,7 @@ data class StellarCentroidRefinementResult(
     val rejectionReason: String?,
     val matches: List<StellarCentroidMatch>,
     val diagnostics: List<StellarCentroidMatchDiagnostic>
-)
+) : java.io.Serializable
 
 class StellarCentroidFrameRefiner(
     private val detector: FullResolutionStarCentroidDetector = FullResolutionStarCentroidDetector(),

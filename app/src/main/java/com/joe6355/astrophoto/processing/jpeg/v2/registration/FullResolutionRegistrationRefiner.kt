@@ -16,7 +16,7 @@ data class FullResolutionPatchDiagnostic(
     val peakSharpness: Float,
     val accepted: Boolean,
     val rejectionReason: String?
-)
+) : java.io.Serializable
 
 data class FullResolutionRefinementResult(
     val frameId: String,
@@ -37,7 +37,7 @@ data class FullResolutionRefinementResult(
     val accepted: Boolean,
     val rejectionReason: String?,
     val patchDiagnostics: List<FullResolutionPatchDiagnostic>
-)
+) : java.io.Serializable
 
 class FullResolutionRegistrationRefiner(
     private val matcher: FullResolutionStarPatchMatcher = FullResolutionStarPatchMatcher(),

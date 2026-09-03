@@ -29,8 +29,8 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
-      - name: Unit tests, lint and debug build
-        run: ./gradlew testDebugUnitTest lintDebug assembleDebug --stacktrace
+      - name: Unit tests, lint and debug/release builds
+        run: ./gradlew testDebugUnitTest lintDebug lintRelease assembleDebug assembleRelease --stacktrace
 
       - name: Upload reports
         if: always()
@@ -40,6 +40,8 @@ jobs:
           path: |
             app/build/reports/tests/
             app/build/reports/lint-results-debug.html
+            app/build/reports/lint-results-release.html
+            app/build/outputs/mapping/release/
           if-no-files-found: warn
 
       - name: Upload debug APK
@@ -48,4 +50,12 @@ jobs:
         with:
           name: astrophoto-debug
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Upload optimized release APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: astrophoto-release
+          path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error

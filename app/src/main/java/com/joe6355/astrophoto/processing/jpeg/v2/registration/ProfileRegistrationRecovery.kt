@@ -26,6 +26,12 @@ internal suspend fun restoreOrComputeRegistration(
         return restored
     }
     return compute().also { diagnostics ->
-        runCatching { store.write(diagnostics) }
+        try {
+            store.write(diagnostics)
+        } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            // Optional cache failure must not discard successfully computed registration.
+            store.clear()
+        }
     }
 }

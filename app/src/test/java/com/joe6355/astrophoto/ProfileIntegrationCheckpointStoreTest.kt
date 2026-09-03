@@ -16,6 +16,9 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import com.joe6355.astrophoto.processing.jpeg.v2.model.*
+import com.joe6355.astrophoto.processing.jpeg.v2.postprocessing.FileBackedAdaptiveProcessingResult
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -60,6 +63,87 @@ class ProfileIntegrationCheckpointStoreTest {
         sourceRun.close()
         restoredRunFiles.close()
     }
+
+    @Test fun sameSizePixelCorruptionInvalidatesAllArtifacts() {
+        TemporaryPipelineFiles.create(temporaryFolder.newFolder("source")).use { source ->
+            val store = openStore()
+            store.write(integrationRun(source, ByteArray(16), ByteArray(16)))
+            val pixels = temporaryFolder.root.walkTopDown().first { it.name == "stacked.argb" }
+            pixels.writeBytes(ByteArray(16) { 1 })
+            TemporaryPipelineFiles.create(temporaryFolder.newFolder("restored")).use { restored ->
+                assertNull(store.readInto(restored))
+                assertFalse(checkNotNull(pixels.parentFile).exists())
+                assertFalse(restored.file("checkpoint-integrated-sky.argb").exists())
+            }
+        }
+    }
+
+    @Test fun affectedPlaneIsRestoredAndItsCorruptionRemovesPartialCopies() {
+        TemporaryPipelineFiles.create(temporaryFolder.newFolder("source")).use { source ->
+            val store = openStore()
+            val affected = source.file("sensor.f32").also { it.writeBytes(ByteArray(16) { 42 }) }
+            store.write(integrationRun(source, ByteArray(16), ByteArray(16)).copy(
+                sensorDefectAffectedOutput = FileBackedFloatPlane(affected, 2, 2)))
+            TemporaryPipelineFiles.create(temporaryFolder.newFolder("restored")).use { restored ->
+                assertArrayEquals(affected.readBytes(), store.readInto(restored)?.sensorDefectAffectedOutput?.file?.readBytes())
+                val saved = temporaryFolder.root.walkTopDown().first { it.name == "affected.f32" }
+                saved.writeBytes(ByteArray(16) { 43 })
+                assertNull(store.readInto(restored))
+                assertFalse(restored.file("checkpoint-integrated-sky.argb").exists())
+                assertFalse(restored.file("checkpoint-valid-coverage.f32").exists())
+                assertFalse(checkNotNull(saved.parentFile).exists())
+            }
+        }
+    }
+
+    @Test fun postProcessingRoundTripPreservesPixelsAndNestedDiagnostics() {
+        TemporaryPipelineFiles.create(temporaryFolder.newFolder("source")).use { source ->
+            val store = openStore()
+            val run = integrationRun(source, ByteArray(16) { it.toByte() }, ByteArray(16))
+            store.write(run)
+            val expected = postProcessed(run.stackedSky)
+            store.writePostProcessing("inputs", expected)
+            repeat(2) { attempt ->
+                TemporaryPipelineFiles.create(temporaryFolder.newFolder("restore-$attempt")).use { restoredFiles ->
+                    val restored = openStore().readPostProcessing("inputs", restoredFiles)
+                    assertEquals(expected.diagnostics, restored?.diagnostics)
+                    assertArrayEquals(expected.image.file.readBytes(), restored?.image?.file?.readBytes())
+                }
+            }
+            assertTrue(temporaryFolder.root.walkTopDown().any { it.name == "postprocessed.argb" })
+        }
+    }
+
+    @Test fun postProcessingCorruptionOrChangedInputsInvalidatesWholeBundle() {
+        TemporaryPipelineFiles.create(temporaryFolder.newFolder("source")).use { source ->
+            val run = integrationRun(source, ByteArray(16), ByteArray(16))
+            listOf("pixels", "manifest", "signature").forEach { scenario ->
+                val store = openStore()
+                store.write(run)
+                store.writePostProcessing("inputs", postProcessed(run.stackedSky))
+                val pixels = temporaryFolder.root.walkTopDown().first { it.name == "postprocessed.argb" }
+                when (scenario) {
+                    "pixels" -> pixels.writeBytes(ByteArray(16) { 1 })
+                    "manifest" -> temporaryFolder.root.walkTopDown().first { it.name == "postprocessing.bin" }
+                        .let { file -> file.writeBytes(file.readBytes().also { it[it.lastIndex] = (it.last() + 1).toByte() }) }
+                }
+                TemporaryPipelineFiles.create(temporaryFolder.newFolder(scenario)).use { restored ->
+                    assertNull(store.readPostProcessing(if (scenario == "signature") "changed" else "inputs", restored))
+                    assertFalse(checkNotNull(pixels.parentFile).exists())
+                    assertFalse(restored.file("checkpoint-postprocessed.argb").exists())
+                }
+            }
+        }
+    }
+
+    private fun postProcessed(image: FileBackedImage) = FileBackedAdaptiveProcessingResult(image,
+        AdaptiveProcessingDiagnostics("DEEP_SKY", SkyStatisticsResult.EMPTY,
+            SkyStatisticsResult.EMPTY.copy(reliableStarCount = 8),
+            GradientRemovalDiagnostics(0.8f, 2, 2, 4, 0.1f),
+            NeutralizationDiagnostics(LinearRgb(0.01f, 0.02f, 0.03f)),
+            StretchDiagnostics(0.01f, 0.9f, 3f, 0.2f, 0.4f, 1f),
+            ChromaNoiseDiagnostics(0.2f, 1), StarEnhancementDiagnostics(0.1f, 8, 6, 2, 0f),
+            0, 1_000, mapOf("background" to 500L, "stretch" to 500L)))
 
     private fun integrationRun(
         files: TemporaryPipelineFiles,

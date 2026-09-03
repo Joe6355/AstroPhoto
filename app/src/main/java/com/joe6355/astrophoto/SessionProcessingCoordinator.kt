@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.SystemClock
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
@@ -25,8 +26,13 @@ data class SessionProcessingState(
     val status: String,
     val current: Int,
     val total: Int,
-    val running: Boolean
-)
+    val running: Boolean,
+    val stageEtaMillis: Long? = null
+) {
+    val statusWithEta: String get() = stageEtaMillis?.takeIf { running }?.let {
+        "$status\nДо конца этапа ≈ ${formatSeriesDuration(it)}"
+    } ?: status
+}
 
 data class InterruptedSessionProcessing(
     val sessionFolder: String,
@@ -38,6 +44,7 @@ object SessionProcessingCoordinator {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val lock = Any()
     private val jobs = mutableMapOf<String, Job>()
+    private val etaEstimators = mutableMapOf<String, ProcessingEtaEstimator>()
     private val mutableStates = MutableStateFlow<Map<String, SessionProcessingState>>(emptyMap())
 
     val states: StateFlow<Map<String, SessionProcessingState>> = mutableStates.asStateFlow()
@@ -55,6 +62,7 @@ object SessionProcessingCoordinator {
         block: suspend () -> Unit
     ): Job? = synchronized(lock) {
         if (jobs[sessionFolder]?.isActive == true) return null
+        etaEstimators[sessionFolder] = ProcessingEtaEstimator()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(
@@ -99,8 +107,9 @@ object SessionProcessingCoordinator {
             } finally {
                 synchronized(lock) {
                     jobs.remove(sessionFolder)
+                    etaEstimators.remove(sessionFolder)
                     val previous = mutableStates.value[sessionFolder]
-                    if (previous != null) updateState(previous.copy(running = false))
+                    if (previous != null) updateState(previous.copy(running = false, stageEtaMillis = null))
                     ProcessingRecoveryStore(context.applicationContext).markFinished(sessionFolder)
                     if (jobs.values.none { it.isActive }) {
                         context.applicationContext.stopService(
@@ -124,7 +133,10 @@ object SessionProcessingCoordinator {
                 previous.copy(
                     status = status,
                     current = current ?: previous.current,
-                    total = total ?: previous.total
+                    total = total ?: previous.total,
+                    stageEtaMillis = if (current != null && total != null) {
+                        etaEstimators[sessionFolder]?.update(status, current, total, SystemClock.elapsedRealtime())
+                    } else null
                 )
             )
         }

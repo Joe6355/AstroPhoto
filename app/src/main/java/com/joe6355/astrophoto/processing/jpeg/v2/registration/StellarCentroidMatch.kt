@@ -11,7 +11,7 @@ data class StellarCentroidMatch(
     val rejectionReason: String?,
     val confidence: Float,
     val weight: Float
-)
+) : java.io.Serializable
 
 data class StellarCentroidMatchDiagnostic(
     val x: Float,
@@ -24,4 +24,4 @@ data class StellarCentroidMatchDiagnostic(
     val fitResidual: Float,
     val accepted: Boolean,
     val rejectionReason: String?
-)
+) : java.io.Serializable

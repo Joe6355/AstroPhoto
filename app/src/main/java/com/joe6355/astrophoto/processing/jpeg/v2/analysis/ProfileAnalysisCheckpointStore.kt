@@ -3,6 +3,7 @@ package com.joe6355.astrophoto.processing.jpeg.v2.analysis
 import android.content.Context
 import com.joe6355.astrophoto.AstroProcessingProfile
 import com.joe6355.astrophoto.SessionFrame
+import com.joe6355.astrophoto.processing.jpeg.v2.storage.CheckpointFiles
 import com.joe6355.astrophoto.processing.jpeg.v2.artifacts.PersistentSensorCandidateObservation
 import com.joe6355.astrophoto.processing.jpeg.v2.artifacts.PersistentSensorFrameObservation
 import com.joe6355.astrophoto.processing.jpeg.v2.model.DetectedStar
@@ -14,8 +15,6 @@ import java.io.BufferedOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 
 data class CheckpointedProfileAnalysis(
@@ -33,8 +32,9 @@ class ProfileAnalysisCheckpointStore private constructor(
     fun read(frame: SessionFrame, captureIndex: Int): CheckpointedProfileAnalysis? {
         val file = frameFile(captureIndex)
         if (!file.exists()) return null
-        return runCatching {
+        return try {
             require(file.isFile && file.length() in 1..MAX_CHECKPOINT_BYTES)
+            CheckpointFiles.verifySealed(file)
             DataInputStream(BufferedInputStream(file.inputStream())).use { input ->
                 require(input.readInt() == MAGIC && input.readInt() == VERSION)
                 require(input.readUTF() == fingerprint && input.readUTF() == frame.key)
@@ -48,7 +48,7 @@ class ProfileAnalysisCheckpointStore private constructor(
                 )
                 CheckpointedProfileAnalysis(frame.key, analysis, skyMask, observation)
             }
-        }.getOrElse {
+        } catch (_: Exception) {
             clear()
             null
         }
@@ -80,16 +80,8 @@ class ProfileAnalysisCheckpointStore private constructor(
         require(temporary.length() in 1..MAX_CHECKPOINT_BYTES) {
             "Profile analysis checkpoint is unexpectedly large"
         }
-        try {
-            Files.move(
-                temporary.toPath(),
-                target.toPath(),
-                StandardCopyOption.REPLACE_EXISTING,
-                StandardCopyOption.ATOMIC_MOVE
-            )
-        } catch (_: Exception) {
-            Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
-        }
+        CheckpointFiles.atomicReplace(temporary, target)
+        CheckpointFiles.seal(target)
     }
 
     fun clear() {
@@ -103,7 +95,7 @@ class ProfileAnalysisCheckpointStore private constructor(
     companion object {
         private const val ROOT_NAME = "jpeg-profile-analysis-checkpoints"
         private const val MAGIC = 0x41504350
-        private const val VERSION = 2
+        private const val VERSION = 3
         private const val MAX_CHECKPOINT_BYTES = 32L * 1024L * 1024L
         private const val MAX_STARS = 10_000
         private const val MAX_CANDIDATES = 100_000
@@ -182,6 +174,7 @@ class ProfileAnalysisCheckpointStore private constructor(
                 digest.update(value.toByteArray(Charsets.UTF_8))
                 digest.update(0)
             }
+            add("analysis-v$VERSION")
             add(sessionFolder)
             add(profile.name)
             add("$width:$height")

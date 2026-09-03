@@ -50,9 +50,8 @@ android {
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")
             }
-            isMinifyEnabled = false
             optimization {
-                enable = false
+                enable = true
             }
         }
     }

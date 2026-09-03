@@ -12,7 +12,7 @@ data class FullResolutionTransformEvidence(
     val widthGrowth: Float,
     val smear: Float,
     val ellipticityGrowth: Float = 0f
-) {
+) : java.io.Serializable {
     companion object {
         val Empty = FullResolutionTransformEvidence(0, 0f, 0f, 0f, Float.POSITIVE_INFINITY, 1f, 1f)
         val ReferenceIdentity = FullResolutionTransformEvidence(1, 1f, 1f, 1f, 0f, 0f, 0f)
@@ -27,7 +27,7 @@ data class FullResolutionFrameVerificationResult(
     val doubleApplied: FullResolutionTransformEvidence,
     val spatialSectorCount: Int,
     val zncc: FullResolutionTransformEvidence = FullResolutionTransformEvidence.Empty
-)
+) : java.io.Serializable
 
 class FullResolutionFrameVerification(
     private val matcher: FullResolutionStarPatchMatcher = FullResolutionStarPatchMatcher()

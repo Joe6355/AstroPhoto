@@ -198,9 +198,10 @@ class JpegPostCompletionHotfixTest {
             "post_completion.journal_complete.start",
             "post_completion.profile_returned"
         )
-        val reportPublication = source.substring(
-            source.indexOf("private suspend fun publishProcessingReport("),
-            source.indexOf("private data class PrimaryPublication(")
+        val output = source("app/src/main/java/com/joe6355/astrophoto/ProfileOutputStage.kt")
+        val reportPublication = output.substring(
+            output.indexOf("internal suspend fun JpegStacker.publishProcessingReport("),
+            output.indexOf("internal data class PrimaryPublication(")
         )
         assertOrdered(
             reportPublication,
@@ -208,9 +209,10 @@ class JpegPostCompletionHotfixTest {
             "runJournal.updatePublishedArtifacts(",
             "post_completion.report_published"
         )
-        val automatic = source.substring(
-            source.indexOf("fun startProfile(profile:"),
-            source.indexOf("    Column(", source.indexOf("fun startProfile(profile:"))
+        val screen = source("app/src/main/java/com/joe6355/astrophoto/JpegProcessingScreen.kt")
+        val automatic = screen.substring(
+            screen.indexOf("fun startProfile(profile:"),
+            screen.indexOf("    Column(", screen.indexOf("fun startProfile(profile:"))
         )
         assertTrue(automatic.contains("AutomaticProfileCompletionCoordinator"))
         assertTrue(automatic.contains("catch (error: CancellationException)"))
@@ -228,7 +230,7 @@ class JpegPostCompletionHotfixTest {
     }
 
     @Test fun manualAndRawWorkflowRemainOutsideAutomaticCoordinator() {
-        val source = source("app/src/main/java/com/joe6355/astrophoto/JpegStacker.kt")
+        val source = source("app/src/main/java/com/joe6355/astrophoto/JpegProcessingScreen.kt")
         val manual = source.substring(source.indexOf("fun startStacking()"), source.indexOf("fun startRawStacking()"))
         val raw = source.substring(source.indexOf("fun startRawStacking()"), source.indexOf("fun startProfile(profile:"))
         assertFalse(manual.contains("AutomaticProfileCompletionCoordinator"))

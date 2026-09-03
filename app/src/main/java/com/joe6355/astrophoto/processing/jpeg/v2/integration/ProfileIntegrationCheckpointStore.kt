@@ -1,6 +1,7 @@
 package com.joe6355.astrophoto.processing.jpeg.v2.integration
 
 import android.content.Context
+import android.annotation.SuppressLint
 import com.joe6355.astrophoto.AstroProcessingProfile
 import com.joe6355.astrophoto.processing.jpeg.v2.artifacts.SensorDefectMask
 import com.joe6355.astrophoto.processing.jpeg.v2.model.IntegrationDiagnostics
@@ -10,11 +11,10 @@ import com.joe6355.astrophoto.processing.jpeg.v2.model.SkyMask
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedFloatPlane
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedImage
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.TemporaryPipelineFiles
-import java.io.BufferedInputStream
-import java.io.BufferedOutputStream
+import com.joe6355.astrophoto.processing.jpeg.v2.storage.CheckpointFiles
+import com.joe6355.astrophoto.processing.jpeg.v2.model.AdaptiveProcessingDiagnostics
+import com.joe6355.astrophoto.processing.jpeg.v2.postprocessing.FileBackedAdaptiveProcessingResult
 import java.io.File
-import java.io.ObjectInputStream
-import java.io.ObjectOutputStream
 import java.io.Serializable
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -46,22 +46,20 @@ internal class ProfileIntegrationCheckpointStore private constructor(
 ) {
     fun readInto(temporaryFiles: TemporaryPipelineFiles): ProfileIntegrationRun? {
         val restoredFiles = mutableListOf<File>()
-        return runCatching {
+        return try {
             val manifestFile = File(directory, MANIFEST_NAME)
             require(manifestFile.isFile && manifestFile.length() in 1..MAX_MANIFEST_BYTES)
-            val manifest = BufferedInputStream(manifestFile.inputStream()).use { input ->
-                ObjectInputStream(input).use { it.readObject() as Manifest }
-            }
+            val manifest = CheckpointFiles.readObject(manifestFile) as Manifest
             require(manifest.magic == MAGIC && manifest.version == VERSION)
             require(manifest.fingerprint == fingerprint)
 
             fun restore(name: String, targetName: String, expectedBytes: Long): File {
                 val source = File(directory, name)
-                require(source.isFile && source.length() == expectedBytes)
+                CheckpointFiles.verify(source, expectedBytes, manifest.hashes.getValue(name))
                 val target = temporaryFiles.file(targetName)
-                Files.copy(source.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
-                require(target.length() == expectedBytes)
                 restoredFiles += target
+                Files.copy(source.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                CheckpointFiles.verify(target, expectedBytes, manifest.hashes.getValue(name))
                 return target
             }
 
@@ -99,29 +97,40 @@ internal class ProfileIntegrationCheckpointStore private constructor(
                 sensorDefectFiltering = manifest.sensorDefectFiltering,
                 totalDurationMillis = manifest.totalDurationMillis
             )
-        }.getOrElse {
+        } catch (_: Exception) {
             restoredFiles.forEach(File::delete)
             clear()
             null
         }
     }
 
+    // Optional cache must fit in currently free space, without evicting other app caches.
+    @SuppressLint("UsableSpace")
     fun write(run: ProfileIntegrationRun) {
         require(directory.isDirectory || directory.mkdirs())
         try {
-            copyAtomic(run.stackedSky.file, File(directory, STACKED_NAME), run.stackedSky.expectedBytes)
-            copyAtomic(
+            val bytes = run.stackedSky.expectedBytes + run.validCoverage.expectedBytes +
+                (run.sensorDefectAffectedOutput?.expectedBytes ?: 0L)
+            require(directory.usableSpace >= bytes + 32L * 1024L * 1024L) {
+                "Not enough free space for integration checkpoint"
+            }
+            // Invalidate the commit marker before replacing any member of the bundle.
+            File(directory, MANIFEST_NAME).delete()
+            val hashes = linkedMapOf<String, String>()
+            hashes[STACKED_NAME] = CheckpointFiles.copyAtomic(run.stackedSky.file, File(directory, STACKED_NAME), run.stackedSky.expectedBytes)
+            hashes[COVERAGE_NAME] = CheckpointFiles.copyAtomic(
                 run.validCoverage.file,
                 File(directory, COVERAGE_NAME),
                 run.validCoverage.expectedBytes
             )
             run.sensorDefectAffectedOutput?.let { affected ->
-                copyAtomic(affected.file, File(directory, AFFECTED_NAME), affected.expectedBytes)
+                hashes[AFFECTED_NAME] = CheckpointFiles.copyAtomic(affected.file, File(directory, AFFECTED_NAME), affected.expectedBytes)
             } ?: File(directory, AFFECTED_NAME).delete()
             val manifest = Manifest(
                 magic = MAGIC,
                 version = VERSION,
                 fingerprint = fingerprint,
+                hashes = hashes,
                 width = run.stackedSky.width,
                 height = run.stackedSky.height,
                 stackedBytes = run.stackedSky.expectedBytes,
@@ -134,13 +143,8 @@ internal class ProfileIntegrationCheckpointStore private constructor(
                 sensorDefectFiltering = run.sensorDefectFiltering,
                 totalDurationMillis = run.totalDurationMillis
             )
-            val temporary = File(directory, "$MANIFEST_NAME.tmp")
-            BufferedOutputStream(temporary.outputStream()).use { output ->
-                ObjectOutputStream(output).use { it.writeObject(manifest) }
-            }
-            require(temporary.length() in 1..MAX_MANIFEST_BYTES)
-            atomicReplace(temporary, File(directory, MANIFEST_NAME))
-        } catch (error: Throwable) {
+            CheckpointFiles.writeObject(File(directory, MANIFEST_NAME), manifest)
+        } catch (error: Exception) {
             clear()
             throw error
         }
@@ -151,10 +155,61 @@ internal class ProfileIntegrationCheckpointStore private constructor(
         if (root.listFiles().orEmpty().isEmpty()) root.delete()
     }
 
+    fun readPostProcessing(inputSignature: String, temporaryFiles: TemporaryPipelineFiles): FileBackedAdaptiveProcessingResult? {
+        val metadata = File(directory, "postprocessing.bin")
+        if (!metadata.exists()) return null
+        val target = temporaryFiles.file("checkpoint-postprocessed.argb")
+        return try {
+            val saved = CheckpointFiles.readObject(metadata) as PostProcessingCheckpoint
+            require(saved.inputSignature == inputSignature && saved.fingerprint == fingerprint)
+            val source = File(directory, "postprocessed.argb")
+            CheckpointFiles.verify(source, saved.expectedBytes, saved.hash)
+            CheckpointFiles.copyAtomic(source, target, saved.expectedBytes)
+            CheckpointFiles.verify(target, saved.expectedBytes, saved.hash)
+            FileBackedAdaptiveProcessingResult(
+                FileBackedImage(target, saved.width, saved.height, rowStrideBytes = saved.rowStrideBytes).validate(),
+                saved.diagnostics
+            )
+        } catch (_: Exception) {
+            target.delete()
+            clear()
+            null
+        }
+    }
+
+    @SuppressLint("UsableSpace") // Same conservative optional-cache policy as write().
+    fun writePostProcessing(inputSignature: String, result: FileBackedAdaptiveProcessingResult) {
+        require(directory.isDirectory || directory.mkdirs())
+        try {
+            require(directory.usableSpace >= result.image.expectedBytes + 32L * 1024L * 1024L)
+            File(directory, "postprocessing.bin").delete()
+            val hash = CheckpointFiles.copyAtomic(result.image.file, File(directory, "postprocessed.argb"), result.image.expectedBytes)
+            CheckpointFiles.writeObject(File(directory, "postprocessing.bin"), PostProcessingCheckpoint(
+                fingerprint, inputSignature, result.image.width, result.image.height,
+                result.image.rowStrideBytes, result.image.expectedBytes, hash, result.diagnostics
+            ))
+        } catch (error: Exception) {
+            clear()
+            throw error
+        }
+    }
+
+    private data class PostProcessingCheckpoint(
+        val fingerprint: String,
+        val inputSignature: String,
+        val width: Int,
+        val height: Int,
+        val rowStrideBytes: Int,
+        val expectedBytes: Long,
+        val hash: String,
+        val diagnostics: AdaptiveProcessingDiagnostics
+    ) : Serializable
+
     private data class Manifest(
         val magic: Int,
         val version: Int,
         val fingerprint: String,
+        val hashes: Map<String, String>,
         val width: Int,
         val height: Int,
         val stackedBytes: Long,
@@ -175,7 +230,7 @@ internal class ProfileIntegrationCheckpointStore private constructor(
         private const val COVERAGE_NAME = "coverage.f32"
         private const val AFFECTED_NAME = "affected.f32"
         private const val MAGIC = 0x49504350
-        private const val VERSION = 1
+        private const val VERSION = 2
         private const val MAX_MANIFEST_BYTES = 16L * 1024L * 1024L
 
         fun open(
@@ -294,30 +349,6 @@ internal class ProfileIntegrationCheckpointStore private constructor(
                 digest.update(row)
             }
             return digest.digest().joinToString("") { "%02x".format(it) }
-        }
-
-        private fun copyAtomic(source: File, target: File, expectedBytes: Long) {
-            require(source.isFile && source.length() == expectedBytes)
-            val temporary = File(target.parentFile, "${target.name}.tmp")
-            temporary.delete()
-            source.inputStream().buffered().use { input ->
-                temporary.outputStream().buffered().use { output -> input.copyTo(output) }
-            }
-            require(temporary.length() == expectedBytes)
-            atomicReplace(temporary, target)
-        }
-
-        private fun atomicReplace(source: File, target: File) {
-            try {
-                Files.move(
-                    source.toPath(),
-                    target.toPath(),
-                    StandardCopyOption.REPLACE_EXISTING,
-                    StandardCopyOption.ATOMIC_MOVE
-                )
-            } catch (_: Exception) {
-                Files.move(source.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
-            }
         }
 
         private fun deleteDirectory(directory: File) {

@@ -377,15 +377,17 @@ class JpegV2Stage7Test {
             "ResultCandidateStore(",
             "runAutomaticSensorMaskedIntegration(",
             "composeCleanCandidate(",
-            "FileBackedAdaptivePresetProcessor().process",
+            "runProfilePostProcessing(",
             "FileBackedResultQualityAnalyzer(",
             "StoredResultCandidate(",
-            "FileBackedImageReader(selected.image)",
+            "savePrimaryAndAncillaryEnhanced(",
             "finalBitmapAllocationBytes = 0L",
             "ProcessingRunJournal(context)"
         ).forEach { required -> assertTrue(required, profile.contains(required)) }
-        assertTrue(source.contains("FileBackedSkyForegroundComposer().compose"))
-        assertTrue(source.contains("stackedWriter.writeTile("))
+        assertTrue(source("app/src/main/java/com/joe6355/astrophoto/ProfileQualityStage.kt").contains("FileBackedSkyForegroundComposer().compose"))
+        assertTrue(source("app/src/main/java/com/joe6355/astrophoto/ProfileIntegrationStage.kt").contains("stackedWriter.writeTile("))
+        assertTrue(source("app/src/main/java/com/joe6355/astrophoto/ProfilePostProcessingStage.kt").contains("FileBackedAdaptivePresetProcessor().process("))
+        assertTrue(source("app/src/main/java/com/joe6355/astrophoto/ProfileOutputStage.kt").contains("FileBackedImageReader(selected.image)"))
         assertFalse(profile.contains("bitmapFromArgbImage"))
         assertFalse(profile.contains("Bitmap.createBitmap"))
         assertFalse(Regex("(?<!Stored)ResultCandidate\\(").containsMatchIn(profile))
@@ -406,18 +408,20 @@ class JpegV2Stage7Test {
         val source = source("app/src/main/java/com/joe6355/astrophoto/JpegStacker.kt")
         val prepared = source.indexOf("atomicTextFile(\"final-report.json\"")
         val save = source.indexOf("savePrimaryAndAncillaryEnhanced(", prepared)
-        val report = source.indexOf("ProcessingReportWriter(context).write", save)
-        assertTrue(prepared >= 0 && save > prepared && report > save)
-        assertTrue(source.contains("LosslessProcessedImageWriter(context).write"))
-        assertTrue(source.substring(report, report + 700).contains("catch (error: CancellationException)"))
-        assertTrue(source.substring(report, report + 1200).contains("ReportWriteOutcome.Failed"))
+        val publication = source.indexOf("publishProcessingReport(", save)
+        val output = source("app/src/main/java/com/joe6355/astrophoto/ProfileOutputStage.kt")
+        val report = output.indexOf("ProcessingReportWriter(context).write")
+        assertTrue(prepared >= 0 && save > prepared && publication > save && report >= 0)
+        assertTrue(output.contains("LosslessProcessedImageWriter(context).write"))
+        assertTrue(output.substring(report, report + 700).contains("catch (error: CancellationException)"))
+        assertTrue(output.substring(report, report + 1200).contains("ReportWriteOutcome.Failed"))
     }
 
     @Test fun enhancedRemainsAncillaryFileBackedAndCannotChangeResultSelection() {
-        val stacker = source("app/src/main/java/com/joe6355/astrophoto/JpegStacker.kt")
+        val stacker = source("app/src/main/java/com/joe6355/astrophoto/ProfileOutputStage.kt")
         val saveFunction = stacker.substring(
-            stacker.indexOf("private suspend fun savePrimaryAndAncillaryEnhanced("),
-            stacker.indexOf("private data class AncillaryEnhancedPublication")
+            stacker.indexOf("internal suspend fun JpegStacker.savePrimaryAndAncillaryEnhanced("),
+            stacker.indexOf("internal data class AncillaryEnhancedPublication")
         )
         val primarySave = saveFunction.indexOf("publishPrimaryWithExperimentalFallback(")
         val ancillaryStart = saveFunction.indexOf("publishAncillaryEnhanced(")
@@ -433,8 +437,8 @@ class JpegV2Stage7Test {
         assertFalse(saveFunction.contains("Bitmap.createBitmap"))
 
         val ancillaryFunction = stacker.substring(
-            stacker.indexOf("private suspend fun publishAncillaryEnhanced("),
-            stacker.indexOf("suspend fun loadResultPreview(")
+            stacker.indexOf("internal suspend fun JpegStacker.publishAncillaryEnhanced("),
+            stacker.length
         )
         assertTrue(ancillaryFunction.contains("selected.type != ResultCandidateType.CLEAN_STACK"))
         assertTrue(ancillaryFunction.contains("baseline = selected.image"))

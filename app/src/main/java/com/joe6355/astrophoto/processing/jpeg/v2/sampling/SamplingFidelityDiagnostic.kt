@@ -8,7 +8,7 @@ data class SamplingFidelityResult(
     val identityContrastRatio: Float,
     val productionContrastRatio: Float,
     val alternativeContrastRatio: Float
-)
+) : java.io.Serializable
 
 /** Bounded diagnostic only; it does not select or change the production interpolation kernel. */
 class SamplingFidelityDiagnostic(

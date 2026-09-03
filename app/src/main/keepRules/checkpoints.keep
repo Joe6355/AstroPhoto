@@ -1,0 +1,3 @@
+# ObjectOutputStream checkpoints use reflection, class names and field layouts.
+# Keep only the application's serializable processing models, not the pipeline/UI.
+-keep class com.joe6355.astrophoto.processing.jpeg.v2.** implements java.io.Serializable { *; }

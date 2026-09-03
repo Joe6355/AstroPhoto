@@ -43,7 +43,7 @@ class ProcessingForegroundService : Service() {
                     ) {
                         notificationManager.notify(
                             NOTIFICATION_ID,
-                            buildNotification(state.status, progress)
+                            buildNotification(state.statusWithEta, progress)
                         )
                     }
                 }
@@ -100,6 +100,7 @@ class ProcessingForegroundService : Service() {
             .setSmallIcon(android.R.drawable.stat_sys_upload)
             .setContentTitle("AstroPhoto: обработка сессии")
             .setContentText(status)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(status))
             .setContentIntent(openPendingIntent)
             .setOnlyAlertOnce(true)
             .setOngoing(true)

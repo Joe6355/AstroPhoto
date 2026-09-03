@@ -19,7 +19,7 @@ data class StellarCentroidMeasurement(
     val saturationRatio: Float,
     val fitResidual: Float,
     val confidence: Float
-)
+) : java.io.Serializable
 
 data class StellarCentroidDetection(
     val measurement: StellarCentroidMeasurement?,

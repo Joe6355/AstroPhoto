@@ -82,6 +82,18 @@ class ProfileAnalysisCheckpointStoreTest {
         assertFalse(checkpoint.exists())
     }
 
+    @Test fun sameSizeCorruptionIsDetectedBeforeReadingMetadata() {
+        val frame = frame(1200)
+        val store = openStore(frame)
+        store.write(frame, 1, FrameAnalysis.invalid(frame.key, frame.fileName),
+            SkyMaskResult(SkyMask.empty(4, 3), 0f, true),
+            PersistentSensorFrameObservation(frame.key, 1, 4, 3, emptyList()))
+        val file = temporaryFolder.root.walkTopDown().first { it.name == "frame-0001.bin" }
+        file.writeBytes(file.readBytes().also { it[it.lastIndex] = (it.last() + 1).toByte() })
+        assertNull(store.read(frame, 1))
+        assertFalse(checkNotNull(file.parentFile).exists())
+    }
+
     private fun openStore(frame: SessionFrame) = ProfileAnalysisCheckpointStore.open(
         filesRoot = temporaryFolder.root,
         sessionFolder = "session",

@@ -40,6 +40,15 @@ class ProfileRegistrationCheckpointStoreTest {
         assertFalse(checkpoint.exists())
     }
 
+    @Test fun missingCommitChecksumInvalidatesCheckpoint() {
+        val store = openStore(sessionFrame())
+        store.write(diagnostics())
+        val checksum = temporaryFolder.root.walkTopDown().first { it.name == "registration.bin.sha256" }
+        checksum.delete()
+        assertNull(store.read())
+        assertFalse(checkNotNull(checksum.parentFile).exists())
+    }
+
     private fun diagnostics() = SequenceAwareRegistrationEngine().register(
         frames = (0..2).map { index -> TemporalFeatureFrame("f$index", index, stars()) },
         referenceFrameId = "f1",

@@ -266,15 +266,15 @@ class JpegV2Stage11Test {
         assertTrue(profile.contains("val cachedFrames = fullResolutionPreparation.cachedFrames"))
         assertTrue(profile.contains("transform = accepted.registration"))
         assertFalse(profile.substring(refinement, integration).contains("scaledToFullResolution("))
-        assertTrue(source.contains("LinearWeightedIntegrator().integrate("))
-        assertTrue(source.contains("cached.copy(\n                    referenceToSourceTransform = centroidResult.refinedTransform"))
+        assertTrue(Files.readString(Path.of("src/main/java/com/joe6355/astrophoto/ProfileIntegrationStage.kt")).contains("LinearWeightedIntegrator().integrate("))
+        assertTrue(Files.readString(Path.of("src/main/java/com/joe6355/astrophoto/ProfileRegistrationStage.kt")).contains("referenceToSourceTransform = centroidResult.refinedTransform"))
     }
 
     @Test fun productionRefinementUsesOriginalResolutionCacheNotUpscaledThumbnail() {
-        val source = Files.readString(Path.of("src/main/java/com/joe6355/astrophoto/JpegStacker.kt"))
+        val source = Files.readString(Path.of("src/main/java/com/joe6355/astrophoto/ProfileRegistrationStage.kt"))
         val helper = source.substring(
-            source.indexOf("private suspend fun prepareAndRefineFullResolutionFrames("),
-            source.indexOf("private fun logFullResolutionRefinement(")
+            source.indexOf("internal suspend fun JpegStacker.prepareAndRefineFullResolutionFrames("),
+            source.indexOf("internal fun logFullResolutionRefinement(")
         )
         val decode = helper.indexOf("decodeMedianFrame(accepted.frame, targetWidth, targetHeight)")
         val cache = helper.indexOf("ArgbFrameDiskCache.write(")

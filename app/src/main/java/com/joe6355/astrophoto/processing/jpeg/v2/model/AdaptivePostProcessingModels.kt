@@ -6,7 +6,7 @@ data class LinearRgb(
     val red: Float,
     val green: Float,
     val blue: Float
-) {
+) : java.io.Serializable {
     fun maximumAbsolute(): Float = maxOf(kotlin.math.abs(red), kotlin.math.abs(green), kotlin.math.abs(blue))
 }
 
@@ -32,7 +32,7 @@ data class SkyStatisticsResult(
     val estimatedBlackPoint: Float,
     val estimatedSafeWhitePoint: Float,
     val confidence: Float
-) {
+) : java.io.Serializable {
     companion object {
         val EMPTY = SkyStatisticsResult(
             0, 0f, 0f, 0f, 0f, 0f,
@@ -87,9 +87,9 @@ data class GradientRemovalDiagnostics(
     val gridRows: Int,
     val validCells: Int,
     val maximumCorrection: Float
-)
+) : java.io.Serializable
 
-data class NeutralizationDiagnostics(val correction: LinearRgb)
+data class NeutralizationDiagnostics(val correction: LinearRgb) : java.io.Serializable
 
 data class StretchDiagnostics(
     val blackPoint: Float,
@@ -98,12 +98,12 @@ data class StretchDiagnostics(
     val highlightProtectionStrength: Float,
     val appliedBlend: Float,
     val medianSafetyScale: Float
-)
+) : java.io.Serializable
 
 data class ChromaNoiseDiagnostics(
     val strength: Float,
     val radius: Int
-)
+) : java.io.Serializable
 
 data class StarEnhancementDiagnostics(
     val strength: Float,
@@ -111,7 +111,7 @@ data class StarEnhancementDiagnostics(
     val enhanced: Int,
     val rejected: Int,
     val maximumMeasuredWidthGrowth: Float
-)
+) : java.io.Serializable
 
 data class AdaptiveProcessingDiagnostics(
     val preset: String,
@@ -125,7 +125,7 @@ data class AdaptiveProcessingDiagnostics(
     val foregroundDifferenceOutsideMask: Int,
     val processingDurationMillis: Long,
     val stageDurationsMillis: Map<String, Long> = emptyMap()
-)
+) : java.io.Serializable
 
 data class PresetProcessingResult(
     val image: ArgbPixelImage,

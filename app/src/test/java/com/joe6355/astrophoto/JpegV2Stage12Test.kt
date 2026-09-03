@@ -23,6 +23,45 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class JpegV2Stage12Test {
+    @Test fun completedFullResolutionVerificationRoundTripsWithAllEvidence() {
+        val fixture = frameFixture(0.25f, -0.2f)
+        val centroid = refine(fixture)
+        assertTrue(centroid.matches.isNotEmpty())
+        val refinement = com.joe6355.astrophoto.processing.jpeg.v2.registration.FullResolutionRegistrationRefiner().refine(
+            centroid.frameId, false, fixture.reference, fixture.candidate, fixture.initial,
+            fixture.patches, 1f, 1f, 1f, 0.8f)
+        val initial = com.joe6355.astrophoto.processing.jpeg.v2.model.RegistrationResult(
+            fixture.initial.dx, fixture.initial.dy, 0f, 1f, 8, 8, 8, 0f, 0.9f, true, null)
+        val before = mapOf(centroid.frameId to initial)
+        val after = mapOf(centroid.frameId to initial.withTransform(centroid.refinedTransform)
+            .copy(isReliable = centroid.accepted))
+        val checkpoint = com.joe6355.astrophoto.processing.jpeg.v2.registration.FullResolutionCheckpoint(
+            WIDTH, HEIGHT, before, after, mapOf(centroid.frameId to refinement),
+            mapOf(centroid.frameId to centroid),
+            com.joe6355.astrophoto.processing.jpeg.v2.sampling.SamplingFidelityDiagnostic()
+                .measure(fixture.reference, fixture.patches), listOf("test warning"))
+        val root = Files.createTempDirectory("full-resolution-checkpoint").toFile()
+        try {
+            val frame = SessionFrame(centroid.frameId, "frame.jpg", SessionFrameCategory.LIGHTS_JPEG,
+                100, 200, "frame.jpg", null, null)
+            fun store() = com.joe6355.astrophoto.processing.jpeg.v2.registration.ProfileRegistrationCheckpointStore.open(
+                root, "session", AstroProcessingProfile.DEEP_SKY, listOf(frame), listOf(frame.key),
+                WIDTH, HEIGHT, true)
+            store().writeFullResolution(checkpoint)
+            val restored = checkNotNull(store().readFullResolution())
+            assertEquals(checkpoint, restored)
+            assertTrue(restored.matches(WIDTH, HEIGHT, before))
+            assertFalse(restored.matches(WIDTH + 1, HEIGHT, before))
+            assertFalse(restored.matches(WIDTH, HEIGHT, mapOf(frame.key to initial.copy(dx = 99f))))
+            val file = root.walkTopDown().first { it.name == "full-resolution.bin" }
+            file.writeBytes(file.readBytes().also { it[it.lastIndex] = (it.last() + 1).toByte() })
+            assertEquals(null, store().readFullResolution())
+            assertFalse(checkNotNull(file.parentFile).exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     @Test fun scenario01DetectorMeasuresOriginalResolutionX() = assertCentroid(72.20f, 61.35f)
     @Test fun scenario02DetectorMeasuresOriginalResolutionY() = assertCentroid(72.65f, 61.80f)
     @Test fun scenario03ReferenceCentroidIsRefinedIndependently() = assertCentroid(71.75f, 60.70f, 73f, 62f)
@@ -145,15 +184,15 @@ class JpegV2Stage12Test {
     @Test fun scenario43CentroidSmearMeetsGate() = assertTrue(refineFixture().verification.refined.smear <= 0.10f)
     @Test fun scenario44ProductionUsesCentroidBeforeWeights() = assertProductionOrder()
     @Test fun scenario45ProductionUsesOriginalResolutionCache() {
-        val source = jpegStackerSource()
-        val helper = source.substring(source.indexOf("private suspend fun prepareAndRefineFullResolutionFrames("),
-            source.indexOf("private fun logFullResolutionRefinement("))
+        val source = Files.readString(Path.of("src/main/java/com/joe6355/astrophoto/ProfileRegistrationStage.kt"))
+        val helper = source.substring(source.indexOf("internal suspend fun JpegStacker.prepareAndRefineFullResolutionFrames("),
+            source.indexOf("internal fun logFullResolutionRefinement("))
         assertTrue(helper.indexOf("decodeMedianFrame(accepted.frame, targetWidth, targetHeight)") <
             helper.indexOf("centroidRefiner.refine("))
         assertTrue(helper.contains("FileBackedArgbPixelSource(referenceCached, 32)"))
     }
     @Test fun scenario46ProductionIntegratesOnlyCentroidTransform() {
-        val source = jpegStackerSource()
+        val source = Files.readString(Path.of("src/main/java/com/joe6355/astrophoto/ProfileRegistrationStage.kt"))
         assertTrue(source.contains("referenceToSourceTransform = centroidResult.refinedTransform"))
         assertFalse(source.contains("referenceToSourceTransform = result.refinedTransform"))
     }
@@ -180,7 +219,8 @@ class JpegV2Stage12Test {
         assertTrue(gate.contains("MIN_RETENTION_RATIO = 0.90f"))
         assertTrue(gate.contains("MIN_MEDIAN_CONTRAST_RATIO = 0.85f"))
         assertTrue(gate.contains("MAX_LINE_LIKE_SMEAR_RATE = 0.10f"))
-        assertTrue(jpegStackerSource().contains("samplingKernel = sampling.kernel"))
+        assertTrue(Files.readString(Path.of("src/main/java/com/joe6355/astrophoto/ProfileRegistrationStage.kt"))
+            .contains("samplingKernel = sampling.kernel"))
     }
     @Test fun scenario49VerifiedIdentityPassesOnlyWithStrongFullResolutionEvidence() {
         val strong = FullResolutionTransformEvidence(6, 0.95f, 1f, 1f, 0.15f, 0f, 0f)

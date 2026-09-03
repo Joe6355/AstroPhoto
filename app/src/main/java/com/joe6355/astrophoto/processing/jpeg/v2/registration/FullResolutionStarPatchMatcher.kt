@@ -17,7 +17,7 @@ data class FullResolutionStarPatch(
     val sector: Int,
     val motionCluster: TemporalMotionCluster,
     val skyCoverage: Float = 1f
-)
+) : java.io.Serializable
 
 data class StarPatchMatch(
     val correctionDx: Float,
