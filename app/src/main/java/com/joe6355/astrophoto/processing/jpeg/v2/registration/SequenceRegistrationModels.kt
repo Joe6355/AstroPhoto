@@ -8,13 +8,13 @@ data class TemporalFeatureFrame(
     val frameId: String,
     val captureIndex: Int,
     val stars: List<DetectedStar>
-)
+) : java.io.Serializable
 
 data class TemporalTrackObservation(
     val frameId: String,
     val captureIndex: Int,
     val star: DetectedStar
-)
+) : java.io.Serializable
 
 enum class TemporalMotionCluster {
     STATIONARY_CAMERA_SPACE,
@@ -29,14 +29,14 @@ data class TemporalFeatureTrack(
     val velocityY: Float,
     val fitResidual: Float,
     val cluster: TemporalMotionCluster
-)
+) : java.io.Serializable
 
 data class TemporalTrackAnalysis(
     val tracks: List<TemporalFeatureTrack>,
     val motionObservable: Boolean,
     val coherentVelocityX: Float,
     val coherentVelocityY: Float
-) {
+) : java.io.Serializable {
     private val clustersByExactStar: Map<Pair<String, DetectedStar>, TemporalMotionCluster> by lazy(
         LazyThreadSafetyMode.NONE
     ) {
@@ -90,7 +90,7 @@ data class TranslationHypothesis(
     val occupiedSectors: Int,
     val movingTrackSupport: Int,
     val stationaryTrackSupport: Int
-) {
+) : java.io.Serializable {
     fun referenceToSourceTransform(): ReferenceToSourceTransform =
         ReferenceToSourceTransform(dx, dy)
 }
@@ -100,7 +100,7 @@ data class SequenceRegistrationCandidate(
     val captureIndex: Int,
     val isReference: Boolean,
     val hypotheses: List<TranslationHypothesis>
-)
+) : java.io.Serializable
 
 data class StellarSequenceMotionModel(
     val velocityX: Float,
@@ -116,7 +116,7 @@ data class StellarSequenceMotionModel(
     val selectedMotionModel: String,
     val zeroFrameHypotheses: Map<String, TranslationHypothesis> = emptyMap(),
     val nonZeroFrameHypotheses: Map<String, TranslationHypothesis> = emptyMap()
-) {
+) : java.io.Serializable {
     fun predictedTransform(captureIndex: Int): ReferenceToSourceTransform {
         val delta = captureIndex - referenceIndex
         if (delta == 0) return ReferenceToSourceTransform.Identity
@@ -138,7 +138,7 @@ data class RegistrationVerificationMetrics(
     val backgroundNoise: Float,
     val stationaryArtifactStreakEvidence: Float,
     val score: Float
-)
+) : java.io.Serializable
 
 data class FrameRegistrationVerification(
     val selected: RegistrationVerificationMetrics,
@@ -148,7 +148,7 @@ data class FrameRegistrationVerification(
     val doubleApplied: RegistrationVerificationMetrics,
     val sampleCount: Int,
     val confidence: Float
-)
+) : java.io.Serializable
 
 data class RegistrationSequenceVerification(
     val identity: RegistrationVerificationMetrics,
@@ -161,7 +161,7 @@ data class RegistrationSequenceVerification(
     val perFrameAccepted: Map<String, Boolean> = emptyMap(),
     val perFrameComparisons: Map<String, FrameRegistrationVerification> = emptyMap(),
     val aggregation: VerificationAggregation = VerificationAggregation.Empty
-)
+) : java.io.Serializable
 
 data class SequenceAwareRegistrationDiagnostics(
     val trackAnalysis: TemporalTrackAnalysis,
@@ -179,7 +179,7 @@ data class SequenceAwareRegistrationDiagnostics(
     val modelGuidedRegistrations: Map<String, ModelGuidedRegistrationResult> = emptyMap(),
     val frameAcceptancePaths: Map<String, String> = emptyMap(),
     val frameAcceptanceReasons: Map<String, String> = emptyMap()
-)
+) : java.io.Serializable
 
 data class ExpectedSequenceMotionModel(
     val velocityX: Float,
@@ -188,7 +188,7 @@ data class ExpectedSequenceMotionModel(
     val residual: Float,
     val motionObservable: Boolean,
     val verificationScore: Float
-) {
+) : java.io.Serializable {
     fun predictedTransform(captureIndex: Int): ReferenceToSourceTransform {
         val delta = captureIndex - referenceIndex
         if (delta == 0) return ReferenceToSourceTransform.Identity

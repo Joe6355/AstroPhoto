@@ -19,7 +19,7 @@ data class ReferenceToSourceTransform(
     val scale: Float = 1f,
     val rotationCenterX: Float = 0f,
     val rotationCenterY: Float = 0f
-) {
+) : java.io.Serializable {
     init {
         require(
             dx.isFinite() && dy.isFinite() && rotationRadians.isFinite() &&

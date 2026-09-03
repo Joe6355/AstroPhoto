@@ -1,6 +1,7 @@
 package com.joe6355.astrophoto.processing.jpeg.v2.model
 
 import com.joe6355.astrophoto.processing.jpeg.v2.quality.ReferenceStarRetentionStage
+import java.io.Serializable
 
 data class SensorDefectRegionReport(
     val stableRegionId: String,
@@ -10,7 +11,7 @@ data class SensorDefectRegionReport(
     val skySpaceSupport: Int,
     val confidence: Float,
     val classificationReason: String
-)
+) : Serializable
 
 data class SensorDefectConstructionStageReport(
     val stage: String,
@@ -19,7 +20,7 @@ data class SensorDefectConstructionStageReport(
     val outputCount: Int,
     val processedUnitCount: Long,
     val estimatedAllocatedBytes: Long
-)
+) : Serializable
 
 data class SensorDefectFilteringReport(
     val regions: List<SensorDefectRegionReport> = emptyList(),
@@ -73,6 +74,6 @@ data class SensorDefectFilteringReport(
     val candidateMatchingIdentityLookupCount: Long = 0L,
     val constructionStages: List<SensorDefectConstructionStageReport> = emptyList(),
     val referenceStarRetentionStages: List<ReferenceStarRetentionStage> = emptyList()
-) {
+) : Serializable {
     val regionCount: Int get() = regions.size
 }

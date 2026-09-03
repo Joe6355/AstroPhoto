@@ -1,5 +1,7 @@
 package com.joe6355.astrophoto.processing.jpeg.v2.model
 
+import java.io.Serializable
+
 enum class IntegrationMode {
     LINEAR_WEIGHTED_AVERAGE,
     LINEAR_WEIGHTED_REPEATABILITY_ROBUST
@@ -25,4 +27,4 @@ data class IntegrationDiagnostics(
         "plain_weighted_average"
     },
     val sensorDefectFiltering: SensorDefectFilteringReport = SensorDefectFilteringReport()
-)
+) : Serializable

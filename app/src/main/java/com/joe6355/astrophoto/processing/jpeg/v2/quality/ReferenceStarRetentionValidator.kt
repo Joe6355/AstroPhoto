@@ -10,6 +10,7 @@ import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedImageReader
 import kotlin.math.ceil
 import kotlin.math.hypot
 import kotlin.math.sqrt
+import java.io.Serializable
 
 data class ReferenceStarRetentionMetrics(
     val referenceReliableStarCount: Int,
@@ -24,7 +25,7 @@ data class ReferenceStarRetentionMetrics(
     val medianWidthGrowth: Float,
     val medianCentroidShift: Float,
     val lineLikeSmearRate: Float
-)
+) : Serializable
 
 data class ReferenceStarRetentionResult(
     val accepted: Boolean,
@@ -62,14 +63,14 @@ data class ReferenceStarRetentionSource(
     val referenceContribution: Float = 1f,
     val validContributingFrameCount: Int = 0,
     val validContributingFrameWeight: Float = 0f
-)
+) : Serializable
 
 data class ReferenceStarRetentionStage(
     val stage: String,
     val metrics: ReferenceStarRetentionMetrics,
     val sources: List<ReferenceStarRetentionSource>,
     val measurementBasis: String = "direct_argb_measurement"
-)
+) : Serializable
 
 data class ReferenceStarRetentionEvidence(
     val intersectsSourceSensorMask: Boolean,

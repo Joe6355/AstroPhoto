@@ -78,7 +78,6 @@ import com.joe6355.astrophoto.ui.AstroTestTags
 import com.joe6355.astrophoto.ui.theme.AstroColors
 import com.joe6355.astrophoto.processing.jpeg.v2.analysis.JpegFrameAnalyzer
 import com.joe6355.astrophoto.processing.jpeg.v2.analysis.ProfileAnalysisCheckpointStore
-import com.joe6355.astrophoto.processing.jpeg.v2.analysis.ReferenceFrameSelector
 import com.joe6355.astrophoto.processing.jpeg.v2.artifacts.ArtifactFrameObservation
 import com.joe6355.astrophoto.processing.jpeg.v2.artifacts.AutomaticSensorDefectMaskDiagnostics
 import com.joe6355.astrophoto.processing.jpeg.v2.artifacts.AutomaticSensorDefectMaskStageDiagnostics
@@ -114,7 +113,10 @@ import com.joe6355.astrophoto.processing.jpeg.v2.enhancement.fileBackedPixelHash
 import com.joe6355.astrophoto.processing.jpeg.v2.enhancement.publishOptionalEnhanced
 import com.joe6355.astrophoto.processing.jpeg.v2.integration.FrameWeightCalculator
 import com.joe6355.astrophoto.processing.jpeg.v2.integration.FrameWeightInput
+import com.joe6355.astrophoto.processing.jpeg.v2.integration.IntegrationCheckpointFrameSignature
 import com.joe6355.astrophoto.processing.jpeg.v2.integration.LinearWeightedIntegrator
+import com.joe6355.astrophoto.processing.jpeg.v2.integration.ProfileIntegrationCheckpointStore
+import com.joe6355.astrophoto.processing.jpeg.v2.integration.ProfileIntegrationRun
 import com.joe6355.astrophoto.processing.jpeg.v2.integration.WeightedIntegrationFrame
 import com.joe6355.astrophoto.processing.jpeg.v2.masking.ForegroundProtectionMask
 import com.joe6355.astrophoto.processing.jpeg.v2.masking.SkyMaskEstimator
@@ -155,6 +157,7 @@ import com.joe6355.astrophoto.processing.jpeg.v2.registration.FrameAcceptanceDec
 import com.joe6355.astrophoto.processing.jpeg.v2.registration.FullResolutionRefinementResult
 import com.joe6355.astrophoto.processing.jpeg.v2.registration.FullResolutionRegistrationRefiner
 import com.joe6355.astrophoto.processing.jpeg.v2.registration.FullResolutionStarPatch
+import com.joe6355.astrophoto.processing.jpeg.v2.registration.ProfileRegistrationCheckpointStore
 import com.joe6355.astrophoto.processing.jpeg.v2.registration.StellarCentroidFrameRefiner
 import com.joe6355.astrophoto.processing.jpeg.v2.registration.StellarCentroidRefinementPolicy
 import com.joe6355.astrophoto.processing.jpeg.v2.registration.StellarCentroidRefinementResult
@@ -164,6 +167,8 @@ import com.joe6355.astrophoto.processing.jpeg.v2.registration.TemporalFeatureFra
 import com.joe6355.astrophoto.processing.jpeg.v2.registration.TransformSequenceValidator
 import com.joe6355.astrophoto.processing.jpeg.v2.registration.VerificationMetricsAggregator
 import com.joe6355.astrophoto.processing.jpeg.v2.registration.scaledToFullResolution
+import com.joe6355.astrophoto.processing.jpeg.v2.registration.restoreOrComputeRegistration
+import com.joe6355.astrophoto.processing.jpeg.v2.registration.buildTemporalFeatureFrames
 import com.joe6355.astrophoto.processing.jpeg.v2.sampling.ArgbFrameDiskCache
 import com.joe6355.astrophoto.processing.jpeg.v2.sampling.CachedArgbFrame
 import com.joe6355.astrophoto.processing.jpeg.v2.sampling.FileBackedArgbPixelSource
@@ -1369,6 +1374,8 @@ class JpegStacker internal constructor(
         var journalRunId: String? = null
         var pipelineFiles: TemporaryPipelineFiles? = null
         var analysisCheckpointStore: ProfileAnalysisCheckpointStore? = null
+        var registrationCheckpointStore: ProfileRegistrationCheckpointStore? = null
+        var integrationCheckpointStore: ProfileIntegrationCheckpointStore? = null
         var currentStage = "Подготовка"
         val stackResult = runCatching {
             require(profile != AstroProcessingProfile.NORMAL) {
@@ -1465,33 +1472,32 @@ class JpegStacker internal constructor(
                     "staticArtifactConfidence=${formatMetric(staticArtifactMask.confidence)}"
             )
             val referenceSelectionStarted = System.nanoTime()
-            val frameSelector = ReferenceFrameSelector()
-            val integrationSelection = frameSelector.selectForIntegration(
-                analyses = analyzedFrames.map { it.analysis },
-                captureIndexByFrameId = captureIndexByFrameKey,
+            val selection = ProfileFrameSelectionCoordinator.prepare(
+                analyzedFrames = analyzedFrames,
+                analysisFrames = analysisFrames,
+                captureIndexByFrameKey = captureIndexByFrameKey,
+                dimensionsByFrameKey = dimensionsByFrameKey,
                 maxFrames = MAX_PROFILE_FRAMES
             )
-            val selectedAnalysisIds = integrationSelection.analyses.mapTo(mutableSetOf()) { it.id }
-            val qualitySelectedFrames = analysisFrames.filter { it.key in selectedAnalysisIds }
-            val referenceSelection = frameSelector.select(integrationSelection.analyses)
             pipelineTiming.record(
                 "reference_selection",
                 (System.nanoTime() - referenceSelectionStarted) / 1_000_000L
             )
-            val selectedReference = analyzedFrames.first {
-                it.analysis.id == referenceSelection.analysis.id
-            }
-            val referenceDimensions = checkNotNull(
-                dimensionsByFrameKey[selectedReference.frame.key]
+            val selectedReference = selection.selectedReference
+            val selectedFrames = selection.selectedFrames
+            val targetWidth = selection.targetWidth
+            val targetHeight = selection.targetHeight
+            val analysisByFrameKey = selection.analyzedByFrameKey
+            val frameAnalysesByKey = selection.analysesByFrameKey
+            registrationCheckpointStore = ProfileRegistrationCheckpointStore.open(
+                context = context,
+                sessionFolder = session.folderName,
+                profile = profile,
+                frames = frames,
+                selectedFrameKeys = selectedFrames.map { it.key },
+                analysisWidth = selectedReference.analysis.width,
+                analysisHeight = selectedReference.analysis.height
             )
-            val targetWidth = referenceDimensions.first
-            val targetHeight = referenceDimensions.second
-            val selectedFrames = (
-                listOf(selectedReference.frame) + qualitySelectedFrames.filterNot {
-                    it.key == selectedReference.frame.key
-                }
-                ).take(MAX_PROFILE_FRAMES)
-            val analysisByFrameKey = analyzedFrames.associateBy { it.frame.key }
             Log.i(
                 PROFILE_REGISTRATION_TAG,
                 "selectedPreset=${profile.name} inputFrameCount=${frames.size} " +
@@ -1501,7 +1507,7 @@ class JpegStacker internal constructor(
                     "ellipticity=${formatMetric(selectedReference.analysis.medianStarEllipticity)} " +
                     "noise=${formatMetric(selectedReference.analysis.backgroundNoise)} " +
                     "clipping=${formatMetric(selectedReference.analysis.clippingPercent)} " +
-                    "score=${formatMetric(referenceSelection.score)}"
+                    "score=${formatMetric(selection.referenceScore)}"
             )
             Log.i(
                 PROFILE_REGISTRATION_TAG,
@@ -1513,7 +1519,7 @@ class JpegStacker internal constructor(
                     "confidence=1.0000 accepted=true rejectionReason=reference"
             )
             val warnings = mutableListOf<String>()
-            if (integrationSelection.droppedCount > 0) {
+            if (selection.droppedCount > 0) {
                 warnings += "Для полноразмерной обработки выбраны лучшие " +
                     "${selectedFrames.size} из ${frames.size} кадров"
             }
@@ -1540,18 +1546,15 @@ class JpegStacker internal constructor(
                 if (referenceStars < 4) {
                     warnings += "Звёзд найдено мало: $referenceStars"
                 }
-                val analysisRegistration = registerProfileFramesWithWatchdog(
-                    frames = selectedFrames.map { frame ->
-                        val analyzed = checkNotNull(analysisByFrameKey[frame.key])
-                        TemporalFeatureFrame(
-                            frameId = frame.key,
-                            captureIndex = captureIndexByFrameKey.getValue(frame.key),
-                            stars = analyzed.analysis.stars
-                        )
-                    },
+                val analysisRegistration = runProfileRegistrationWithCheckpoint(
+                    store = checkNotNull(registrationCheckpointStore),
+                    selectedFrames = selectedFrames,
+                    analysesByFrameKey = frameAnalysesByKey,
+                    captureIndexByFrameKey = captureIndexByFrameKey,
                     referenceFrameId = selectedReference.frame.key,
                     imageWidth = selectedReference.analysis.width,
-                    imageHeight = selectedReference.analysis.height
+                    imageHeight = selectedReference.analysis.height,
+                    onProgress = onProgress
                 )
                 sequenceDiagnostics = analysisRegistration
                 logSequenceIdentityVerification(analysisRegistration)
@@ -1809,7 +1812,30 @@ class JpegStacker internal constructor(
                         ).normalizedWeight
                     )
                 }
+                integrationCheckpointStore = ProfileIntegrationCheckpointStore.open(
+                    context = context,
+                    sessionFolder = session.folderName,
+                    profile = profile,
+                    width = targetWidth,
+                    height = targetHeight,
+                    frames = acceptedProfileFrames.map { accepted ->
+                        IntegrationCheckpointFrameSignature(
+                            frameId = accepted.frame.key,
+                            fileName = accepted.frame.fileName,
+                            sizeBytes = accepted.frame.sizeBytes,
+                            createdAtMillis = accepted.frame.createdAtMillis,
+                            registration = accepted.registration,
+                            normalizedWeight = checkNotNull(
+                                weightsById[accepted.analysis.id]
+                            ).normalizedWeight
+                        )
+                    },
+                    sensorDefectMask = automaticSensorMask,
+                    integrationSkyMask = initialFullResolutionSkyMask
+                )
                 val integrationRun = runAutomaticSensorMaskedIntegration(
+                    checkpointStore = checkNotNull(integrationCheckpointStore),
+                    temporaryFiles = temporaryFiles,
                     targetWidth = targetWidth,
                     targetHeight = targetHeight,
                     frames = integrationFrames,
@@ -2588,6 +2614,14 @@ class JpegStacker internal constructor(
                 .onFailure { error ->
                     Log.w(PROFILE_REGISTRATION_TAG, "Unable to clear analysis checkpoints", error)
                 }
+            runCatching { registrationCheckpointStore?.clear() }
+                .onFailure { error ->
+                    Log.w(PROFILE_REGISTRATION_TAG, "Unable to clear registration checkpoint", error)
+                }
+            runCatching { integrationCheckpointStore?.clear() }
+                .onFailure { error ->
+                    Log.w(PROFILE_REGISTRATION_TAG, "Unable to clear integration checkpoint", error)
+                }
         }
         Log.i(
             POST_COMPLETION_TAG,
@@ -2737,6 +2771,39 @@ class JpegStacker internal constructor(
                     "Попробуйте исключить кадры без звёзд или с сильным смазом."
             )
         }
+    }
+
+    private suspend fun runProfileRegistrationWithCheckpoint(
+        store: ProfileRegistrationCheckpointStore,
+        selectedFrames: List<SessionFrame>,
+        analysesByFrameKey: Map<String, FrameAnalysis>,
+        captureIndexByFrameKey: Map<String, Int>,
+        referenceFrameId: String,
+        imageWidth: Int,
+        imageHeight: Int,
+        onProgress: suspend (message: String, current: Int, total: Int) -> Unit
+    ): SequenceAwareRegistrationDiagnostics = restoreOrComputeRegistration(
+        store = store,
+        onRestored = {
+            withContext(Dispatchers.Main.immediate) {
+                onProgress(
+                    "Выравнивание восстановлено из checkpoint",
+                    selectedFrames.size,
+                    selectedFrames.size
+                )
+            }
+        }
+    ) {
+        registerProfileFramesWithWatchdog(
+            frames = buildTemporalFeatureFrames(
+                selectedFrames,
+                analysesByFrameKey,
+                captureIndexByFrameKey
+            ),
+            referenceFrameId = referenceFrameId,
+            imageWidth = imageWidth,
+            imageHeight = imageHeight
+        )
     }
 
     private data class SavedProfileArtifacts(
@@ -3409,15 +3476,6 @@ class JpegStacker internal constructor(
         val warnings: List<String>
     )
 
-    private data class AutomaticIntegrationRun(
-        val diagnostics: IntegrationDiagnostics,
-        val stackedSky: FileBackedImage,
-        val validCoverage: FileBackedFloatPlane,
-        val sensorDefectAffectedOutput: FileBackedFloatPlane?,
-        val sensorDefectFiltering: SensorDefectFilteringReport,
-        val totalDurationMillis: Long
-    )
-
     private data class CandidateMaskLineage(
         val stage: String,
         val sampleFilteringPresent: Boolean,
@@ -3721,6 +3779,8 @@ class JpegStacker internal constructor(
     }
 
     private suspend fun runAutomaticSensorMaskedIntegration(
+        checkpointStore: ProfileIntegrationCheckpointStore,
+        temporaryFiles: TemporaryPipelineFiles,
         targetWidth: Int,
         targetHeight: Int,
         frames: List<WeightedIntegrationFrame<CachedArgbFrame>>,
@@ -3731,7 +3791,43 @@ class JpegStacker internal constructor(
         integrationSkyMask: SkyMask,
         candidateStore: ResultCandidateStore,
         onProgress: suspend (message: String, current: Int, total: Int) -> Unit
-    ): AutomaticIntegrationRun {
+    ): ProfileIntegrationRun {
+        checkpointStore.readInto(temporaryFiles)?.let { restored ->
+            withContext(Dispatchers.Main.immediate) {
+                onProgress("Интеграция восстановлена из checkpoint", 1, 1)
+            }
+            return restored
+        }
+        val computed = computeAutomaticSensorMaskedIntegration(
+            targetWidth = targetWidth,
+            targetHeight = targetHeight,
+            frames = frames,
+            maximumWorkingMemory = maximumWorkingMemory,
+            sensorDefectMask = sensorDefectMask,
+            sensorDefectOriginalFrameIndices = sensorDefectOriginalFrameIndices,
+            sensorMaskConstructionDurationMillis = sensorMaskConstructionDurationMillis,
+            integrationSkyMask = integrationSkyMask,
+            candidateStore = candidateStore,
+            onProgress = onProgress
+        )
+        runCatching { checkpointStore.write(computed) }.onFailure { error ->
+            Log.w("AstroPhotoCheckpoint", "integration checkpoint write failed", error)
+        }
+        return computed
+    }
+
+    private suspend fun computeAutomaticSensorMaskedIntegration(
+        targetWidth: Int,
+        targetHeight: Int,
+        frames: List<WeightedIntegrationFrame<CachedArgbFrame>>,
+        maximumWorkingMemory: Long,
+        sensorDefectMask: SensorDefectMask,
+        sensorDefectOriginalFrameIndices: List<Int>,
+        sensorMaskConstructionDurationMillis: Long,
+        integrationSkyMask: SkyMask,
+        candidateStore: ResultCandidateStore,
+        onProgress: suspend (message: String, current: Int, total: Int) -> Unit
+    ): ProfileIntegrationRun {
         var activeMask = sensorDefectMask
         var maskedReport: SensorDefectFilteringReport? = null
         var totalDurationMillis = 0L
@@ -3851,7 +3947,7 @@ class JpegStacker internal constructor(
                     (maskedReport ?: attemptReport).fallbackOrRejectionReason
                 }
             )
-            return AutomaticIntegrationRun(
+            return ProfileIntegrationRun(
                 diagnostics = diagnostics,
                 stackedSky = stackedSky,
                 validCoverage = validCoverage,

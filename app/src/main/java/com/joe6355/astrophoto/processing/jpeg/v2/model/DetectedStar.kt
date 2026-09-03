@@ -9,4 +9,4 @@ data class DetectedStar(
     val width: Float,
     val ellipticity: Float,
     val confidence: Float
-)
+) : java.io.Serializable

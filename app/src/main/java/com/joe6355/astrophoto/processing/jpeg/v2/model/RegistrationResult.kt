@@ -28,7 +28,7 @@ data class RegistrationResult(
     val rawDx: Float = dx,
     val rawDy: Float = dy,
     val rawRotationRadians: Float = rotationRadians
-) {
+) : java.io.Serializable {
     fun referenceToSourceTransform(): ReferenceToSourceTransform = ReferenceToSourceTransform(
         dx = dx,
         dy = dy,

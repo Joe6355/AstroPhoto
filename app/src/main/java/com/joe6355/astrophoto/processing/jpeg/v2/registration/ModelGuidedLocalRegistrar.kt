@@ -26,7 +26,7 @@ data class ModelGuidedRegistrationResult(
     val usedSequencePriorOnly: Boolean,
     val retryUsed: Boolean,
     val rejectionReason: String?
-)
+) : java.io.Serializable
 
 /** Bounded translation refinement centered on an already fitted sequence prediction. */
 class ModelGuidedLocalRegistrar {

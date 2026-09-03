@@ -5,7 +5,7 @@ data class VerificationAggregation(
     val acceptedSampleCount: Int,
     val rejectedSampleCount: Int,
     val acceptedMean: RegistrationVerificationMetrics?
-) {
+) : java.io.Serializable {
     companion object {
         val Empty = VerificationAggregation(0, 0, 0, null)
     }
