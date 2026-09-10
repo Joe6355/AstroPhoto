@@ -12,6 +12,14 @@ class TemporaryPipelineFiles private constructor(
 ) : AutoCloseable {
     private var closed = false
 
+    @android.annotation.SuppressLint("UsableSpace")
+    fun requireSpace(additionalBytes: Long) {
+        check(!closed)
+        require(additionalBytes >= 0L && directory.usableSpace >= additionalBytes + 32L * 1024L * 1024L) {
+            "Недостаточно места для временных файлов обработки"
+        }
+    }
+
     fun file(name: String): File {
         require(SAFE_FILE_NAME.matches(name)) { "Unsafe temporary file name" }
         return File(directory, name)

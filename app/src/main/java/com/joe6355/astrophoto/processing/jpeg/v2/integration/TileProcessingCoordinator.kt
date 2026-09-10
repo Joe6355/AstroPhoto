@@ -11,15 +11,18 @@ class TileProcessingCoordinator(
         outputWidth: Int,
         outputHeight: Int,
         robustMode: Boolean,
-        maximumWorkingMemoryBytes: Long
+        maximumWorkingMemoryBytes: Long,
+        residentBufferBytes: Long = outputWidth.toLong() * outputHeight * 8L,
+        highPrecisionOutput: Boolean = false
     ): TilePlan {
         require(outputWidth > 0 && outputHeight > 0)
         require(maximumWorkingMemoryBytes > 0)
         var tileWidth = minOf(preferredTileSize, outputWidth)
         var tileHeight = minOf(preferredTileSize, outputHeight)
-        val fullResolutionBuffers = outputWidth.toLong() * outputHeight *
-            (OUTPUT_BITMAP_BYTES_PER_PIXEL + ONE_DECODED_FRAME_BYTES_PER_PIXEL)
-        val bytesPerTilePixel = if (robustMode) ROBUST_TILE_BYTES_PER_PIXEL else PLAIN_TILE_BYTES_PER_PIXEL
+        require(residentBufferBytes >= 0)
+        val fullResolutionBuffers = residentBufferBytes
+        val bytesPerTilePixel = (if (robustMode) ROBUST_TILE_BYTES_PER_PIXEL else PLAIN_TILE_BYTES_PER_PIXEL) +
+            (if (highPrecisionOutput) 4L else 0L)
         while (
             estimatedPeak(fullResolutionBuffers, tileWidth, tileHeight, bytesPerTilePixel) > maximumWorkingMemoryBytes &&
             (tileWidth > minimumTileSize || tileHeight > minimumTileSize)
@@ -33,6 +36,9 @@ class TileProcessingCoordinator(
             }
             tileWidth = minOf(tileWidth, outputWidth)
             tileHeight = minOf(tileHeight, outputHeight)
+        }
+        require(estimatedPeak(fullResolutionBuffers, tileWidth, tileHeight, bytesPerTilePixel) <= maximumWorkingMemoryBytes) {
+            "Minimum integration tile exceeds safe memory budget"
         }
         val columns = (outputWidth + tileWidth - 1) / tileWidth
         val rows = (outputHeight + tileHeight - 1) / tileHeight
@@ -77,9 +83,8 @@ class TileProcessingCoordinator(
     companion object {
         const val DEFAULT_TILE_SIZE = 256
         const val MINIMUM_TILE_SIZE = 32
-        private const val OUTPUT_BITMAP_BYTES_PER_PIXEL = 4L
-        private const val ONE_DECODED_FRAME_BYTES_PER_PIXEL = 4L
-        private const val PLAIN_TILE_BYTES_PER_PIXEL = 25L
-        private const val ROBUST_TILE_BYTES_PER_PIXEL = 52L
+        // Accumulators, output, coverage, mask and the optional affected-output callback buffer.
+        private const val PLAIN_TILE_BYTES_PER_PIXEL = 33L
+        private const val ROBUST_TILE_BYTES_PER_PIXEL = 60L
     }
 }

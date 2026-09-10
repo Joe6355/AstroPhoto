@@ -284,19 +284,38 @@ class ManualAlignmentPathSelectionTest {
         assertEquals("astrophoto.jpeg.processing/3", ProcessingReport.SCHEMA_VERSION)
     }
 
-    @Test fun productionWiresTheGuardedSelectorIntoEveryManualAlignedMode() {
+    @Test fun everyManualModePreservesPlanAndPublishesOnlyIntegratedFrames() = runBlocking {
+        ManualAlignedStackMode.entries.forEach { mode ->
+            val plan = sequencePlan()
+            val selection = selectManualAlignmentPath(plan.frames.size, mode) {
+                ManualSequenceAlignmentPlanningResult.Ready(plan)
+            }
+            val frames = plan.frames.indices.toList()
+            val work = manualSequenceFrameWork(frames, selection.sequencePlan, mode)
+            val expected = plan.frames.filter { it.accepted }.map { it.originalFrameIndex }
+            assertEquals(expected, work.map { it.originalFrameIndex })
+            val report = requireNotNull(manualSequenceIntegrationReport(
+                selection, mode, work.map { it.originalFrameIndex }
+            )).publishedSuccessfully()
+            assertEquals(expected, report.integratedOriginalFrameIndices)
+            assertTrue(report.alignmentPathReport.outputPublished)
+            assertFalse(report.alignmentPathReport.legacyFallbackUsed)
+        }
+    }
+
+    @Test fun productionUsesOneGuardedCoordinatorAndFailureReportsCannotPublishImages() {
         val source = Files.readString(
             Path.of("src/main/java/com/joe6355/astrophoto/JpegStacker.kt")
         )
-        assertEquals(4, Regex("runManualStackingOperation\\(").findAll(source).count())
-        assertEquals(
-            4,
-            Regex("prepareManualSequenceAlignmentSelection\\(").findAll(source).count() - 1
-        )
+        val coordinator = source.substring(source.indexOf("private suspend fun runTiledManualStack("),
+            source.indexOf("suspend fun profileStack("))
+        assertTrue(coordinator.contains("runManualStackingOperation("))
+        assertTrue(coordinator.contains("prepareManualSequenceAlignmentSelection("))
         ManualAlignedStackMode.entries.forEach { mode ->
             assertTrue(
                 "$mode is not wired into the typed selector",
-                source.contains("mode = ManualAlignedStackMode.${mode.name}")
+                source.substringBefore("private suspend fun runTiledManualStack(")
+                    .contains("ManualAlignedStackMode.${mode.name}")
             )
         }
         val plannerStart = source.indexOf("private suspend fun prepareManualSequenceAlignmentSelection")

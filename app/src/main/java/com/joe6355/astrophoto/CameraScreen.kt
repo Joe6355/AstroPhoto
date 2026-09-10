@@ -228,9 +228,9 @@ internal fun CameraScreen(
         coroutineScope.launch(Dispatchers.IO) {
             val result = sessionStore.writeSessionInfo(session, metadata)
             if (result.isFailure) {
+                android.util.Log.w("AstroPhotoSession", "Session metadata write failed", result.exceptionOrNull())
                 withContext(Dispatchers.Main) {
-                    saveLocationStatus =
-                        "Не удалось обновить session_info: ${result.exceptionOrNull()?.message}"
+                    saveLocationStatus = "Не удалось сохранить сведения о сессии. Проверьте свободное место."
                 }
             }
         }
@@ -2874,12 +2874,18 @@ internal enum class UiCaptureMode {
 internal fun manualCaptureResultMatchesRequest(result: ManualCaptureResult): Boolean {
     val exposureMatches = result.requestedExposureTimeNs != null &&
         result.actualExposureTimeNs != null &&
+        result.requestedExposureTimeNs > 0L && result.actualExposureTimeNs > 0L &&
         !materiallyLowerThanRequested(
             result.requestedExposureTimeNs,
             result.actualExposureTimeNs
+        ) &&
+        !materiallyLowerThanRequested(
+            result.actualExposureTimeNs,
+            result.requestedExposureTimeNs
         )
     val isoMatches = result.requestedIso != null &&
         result.actualIso != null &&
+        result.requestedIso > 0 && result.actualIso > 0 &&
         !materiallyLowerThanRequested(result.requestedIso, result.actualIso) &&
         !materiallyHigherThanRequested(result.requestedIso, result.actualIso)
     return exposureMatches && isoMatches

@@ -73,7 +73,8 @@ class FullResolutionFrameVerification(
         val accepted = matches.filter { it.accepted }
         if (accepted.isEmpty()) return FullResolutionTransformEvidence.Empty
         val residuals = accepted.map { match ->
-            kotlin.math.hypot(match.dx - transform.dx, match.dy - transform.dy)
+            val predicted = transform.mapOutputToSource(match.reference.x, match.reference.y)
+            kotlin.math.hypot(match.candidate.x - predicted.x, match.candidate.y - predicted.y)
         }
         val contrastRatios = accepted.map { match ->
             val referenceContrast = (match.reference.peak - match.reference.background).coerceAtLeast(0.0001f)

@@ -10,6 +10,7 @@ import com.joe6355.astrophoto.processing.jpeg.v2.model.SensorDefectFilteringRepo
 import com.joe6355.astrophoto.processing.jpeg.v2.model.SkyMask
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedFloatPlane
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedImage
+import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedPixelFormat
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.TemporaryPipelineFiles
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.CheckpointFiles
 import com.joe6355.astrophoto.processing.jpeg.v2.model.AdaptiveProcessingDiagnostics
@@ -67,6 +68,7 @@ internal class ProfileIntegrationCheckpointStore private constructor(
                 restore(STACKED_NAME, "checkpoint-integrated-sky.argb", manifest.stackedBytes),
                 manifest.width,
                 manifest.height,
+                pixelFormat = FileBackedPixelFormat.valueOf(manifest.stackedPixelFormat),
                 rowStrideBytes = manifest.stackedRowStrideBytes
             ).validate()
             val coverage = FileBackedFloatPlane(
@@ -134,6 +136,7 @@ internal class ProfileIntegrationCheckpointStore private constructor(
                 width = run.stackedSky.width,
                 height = run.stackedSky.height,
                 stackedBytes = run.stackedSky.expectedBytes,
+                stackedPixelFormat = run.stackedSky.pixelFormat.name,
                 stackedRowStrideBytes = run.stackedSky.rowStrideBytes,
                 coverageBytes = run.validCoverage.expectedBytes,
                 coverageRowStrideBytes = run.validCoverage.rowStrideBytes,
@@ -167,7 +170,8 @@ internal class ProfileIntegrationCheckpointStore private constructor(
             CheckpointFiles.copyAtomic(source, target, saved.expectedBytes)
             CheckpointFiles.verify(target, saved.expectedBytes, saved.hash)
             FileBackedAdaptiveProcessingResult(
-                FileBackedImage(target, saved.width, saved.height, rowStrideBytes = saved.rowStrideBytes).validate(),
+                FileBackedImage(target, saved.width, saved.height,
+                    pixelFormat = FileBackedPixelFormat.valueOf(saved.pixelFormat), rowStrideBytes = saved.rowStrideBytes).validate(),
                 saved.diagnostics
             )
         } catch (_: Exception) {
@@ -186,7 +190,8 @@ internal class ProfileIntegrationCheckpointStore private constructor(
             val hash = CheckpointFiles.copyAtomic(result.image.file, File(directory, "postprocessed.argb"), result.image.expectedBytes)
             CheckpointFiles.writeObject(File(directory, "postprocessing.bin"), PostProcessingCheckpoint(
                 fingerprint, inputSignature, result.image.width, result.image.height,
-                result.image.rowStrideBytes, result.image.expectedBytes, hash, result.diagnostics
+                result.image.rowStrideBytes, result.image.expectedBytes, hash, result.diagnostics,
+                result.image.pixelFormat.name
             ))
         } catch (error: Exception) {
             clear()
@@ -202,7 +207,8 @@ internal class ProfileIntegrationCheckpointStore private constructor(
         val rowStrideBytes: Int,
         val expectedBytes: Long,
         val hash: String,
-        val diagnostics: AdaptiveProcessingDiagnostics
+        val diagnostics: AdaptiveProcessingDiagnostics,
+        val pixelFormat: String
     ) : Serializable
 
     private data class Manifest(
@@ -213,6 +219,7 @@ internal class ProfileIntegrationCheckpointStore private constructor(
         val width: Int,
         val height: Int,
         val stackedBytes: Long,
+        val stackedPixelFormat: String,
         val stackedRowStrideBytes: Int,
         val coverageBytes: Long,
         val coverageRowStrideBytes: Int,
@@ -230,7 +237,7 @@ internal class ProfileIntegrationCheckpointStore private constructor(
         private const val COVERAGE_NAME = "coverage.f32"
         private const val AFFECTED_NAME = "affected.f32"
         private const val MAGIC = 0x49504350
-        private const val VERSION = 2
+        private const val VERSION = 8
         private const val MAX_MANIFEST_BYTES = 16L * 1024L * 1024L
 
         fun open(

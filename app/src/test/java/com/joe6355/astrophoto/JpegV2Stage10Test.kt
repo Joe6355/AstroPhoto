@@ -419,12 +419,15 @@ class JpegV2Stage10Test {
 
     @Test fun productionCachesAndIntegratesOnlyFinalReliableRegistrations() {
         val source = Files.readString(Path.of("src/main/java/com/joe6355/astrophoto/JpegStacker.kt"))
+        val registrationStage = Files.readString(
+            Path.of("src/main/java/com/joe6355/astrophoto/ProfileRegistrationStage.kt")
+        )
         val profile = source.substring(
             source.indexOf("suspend fun profileStack("),
             source.indexOf("suspend fun loadResultPreview(")
         )
-        assertTrue(profile.contains("if (!registration.isReliable) return@mapNotNull null"))
-        assertTrue(profile.contains("acceptedProfileFrames.removeAll { !it.registration.isReliable }"))
+        assertTrue(registrationStage.contains("if (!registration.isReliable) return@mapNotNull null"))
+        assertTrue(registrationStage.contains("acceptedFrames.removeAll { !it.registration.isReliable }"))
         assertTrue(profile.contains("val cachedFrames = fullResolutionPreparation.cachedFrames"))
         assertTrue(profile.contains("acceptedProfileFrames += fullResolutionPreparation.acceptedFrames"))
         assertTrue(profile.contains("val integrationFrames = cachedFrames.map"))

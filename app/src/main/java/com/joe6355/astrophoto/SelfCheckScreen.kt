@@ -7,6 +7,8 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.ImageFormat
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.media.AudioManager
@@ -328,7 +330,7 @@ fun SelfCheckScreen(
     }
 }
 
-private class SelfCheckRunner(private val context: Context) {
+internal class SelfCheckRunner(private val context: Context) {
     private val settingsStore = CameraSettingsStore(context)
     private val sessionStore = ShootingSessionStore(context)
     private val storageChecker = StorageSpaceChecker(context)
@@ -667,21 +669,45 @@ private class SelfCheckRunner(private val context: Context) {
 
     private fun probeMediaStore(relativePath: String, name: String): WriteProbe {
         val resolver = context.contentResolver
-        val collection = MediaStore.Files.getContentUri("external")
+        val imageProbe = relativePath.startsWith("${Environment.DIRECTORY_PICTURES}/")
+        val collection = if (imageProbe) MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            else MediaStore.Files.getContentUri("external")
         var uri: Uri? = null
         return try {
             uri = resolver.insert(
                 collection,
                 ContentValues().apply {
-                    put(MediaStore.Files.FileColumns.DISPLAY_NAME, name)
-                    put(MediaStore.Files.FileColumns.MIME_TYPE, "text/plain")
+                    put(MediaStore.Files.FileColumns.DISPLAY_NAME,
+                        if (imageProbe) name.removeSuffix(".txt") + ".png" else name)
+                    put(MediaStore.Files.FileColumns.MIME_TYPE, if (imageProbe) "image/png" else "text/plain")
                     put(MediaStore.Files.FileColumns.RELATIVE_PATH, relativePath)
                     put(MediaStore.Files.FileColumns.IS_PENDING, 1)
                 }
             ) ?: error("MediaStore не создал временный файл")
             resolver.openOutputStream(uri, "w")?.use {
-                it.write("AstroPhoto self-check".toByteArray())
+                if (imageProbe) {
+                    val bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
+                    try {
+                        bitmap.eraseColor(android.graphics.Color.BLACK)
+                        check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) {
+                            "Не удалось записать тестовое изображение"
+                        }
+                    } finally {
+                        bitmap.recycle()
+                    }
+                } else {
+                    it.write("AstroPhoto self-check".toByteArray())
+                }
             } ?: error("Не удалось записать временный файл")
+            if (imageProbe) {
+                val decoded = resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
+                    ?: error("Не удалось прочитать тестовое изображение")
+                try {
+                    check(decoded.width == 2 && decoded.height == 2) { "Тестовое изображение повреждено" }
+                } finally {
+                    decoded.recycle()
+                }
+            }
             resolver.update(
                 uri,
                 ContentValues().apply {

@@ -169,7 +169,7 @@ class JpegV2Stage7Test {
             AlphaMaskPixelSource(AlphaMask(width, height, coverageValues)),
             outputWriter,
             alphaWriter,
-            budget(),
+            JpegMemoryBudget(RuntimeHeapSnapshot(32L * MIB + 64L * 1024L, 0, 0), reserveBytes = 32L * MIB),
             PipelineMemoryTracker()
         )
         val actualPixels = readAll(actual.image)
@@ -257,7 +257,7 @@ class JpegV2Stage7Test {
         assertTrue(quality.contains("FileBackedSuspiciousPointClassifier.isSuspicious"))
         assertTrue(processor.contains("suppressNewSuspiciousPoints("))
         assertTrue(processor.contains("FileBackedSuspiciousPointClassifier.coordinates"))
-        assertTrue(processor.contains("baselineReader.argbAt(x, y)"))
+        assertTrue(processor.contains("baselineReader.processingColorAt(x, y)"))
     }
 
     @Test fun sharedClassifierFindsOnlyNewIsolatedPoint() = withRun { _, store ->
@@ -385,7 +385,7 @@ class JpegV2Stage7Test {
             "ProcessingRunJournal(context)"
         ).forEach { required -> assertTrue(required, profile.contains(required)) }
         assertTrue(source("app/src/main/java/com/joe6355/astrophoto/ProfileQualityStage.kt").contains("FileBackedSkyForegroundComposer().compose"))
-        assertTrue(source("app/src/main/java/com/joe6355/astrophoto/ProfileIntegrationStage.kt").contains("stackedWriter.writeTile("))
+        assertTrue(source("app/src/main/java/com/joe6355/astrophoto/ProfileIntegrationStage.kt").contains("stackedWriter.writeLinearTile("))
         assertTrue(source("app/src/main/java/com/joe6355/astrophoto/ProfilePostProcessingStage.kt").contains("FileBackedAdaptivePresetProcessor().process("))
         assertTrue(source("app/src/main/java/com/joe6355/astrophoto/ProfileOutputStage.kt").contains("FileBackedImageReader(selected.image)"))
         assertFalse(profile.contains("bitmapFromArgbImage"))
@@ -520,7 +520,7 @@ class JpegV2Stage7Test {
         val root = Files.createTempDirectory("stage7-run").toFile()
         val run = TemporaryPipelineFiles.create(root)
         try {
-            block(run, ResultCandidateStore(run))
+            block(run, ResultCandidateStore(run, com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedPixelFormat.ARGB_8888))
         } finally {
             run.close()
             root.deleteRecursively()

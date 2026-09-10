@@ -39,6 +39,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -49,7 +52,10 @@ import com.joe6355.astrophoto.ui.AstroScaffold
 import com.joe6355.astrophoto.ui.AstroSegmentedControl
 import com.joe6355.astrophoto.ui.AstroSpacing
 import com.joe6355.astrophoto.ui.theme.AstroColors
-import kotlin.math.max
+import com.joe6355.astrophoto.processing.jpeg.v2.analysis.JpegFrameAnalyzer
+import com.joe6355.astrophoto.processing.jpeg.v2.analysis.ReferenceFrameSelector
+import com.joe6355.astrophoto.processing.jpeg.v2.masking.SkyMaskEstimator
+import com.joe6355.astrophoto.processing.jpeg.v2.model.FrameAnalysis
 
 enum class AutoSelectionSensitivity(val title: String) {
     SOFT("Мягко"),
@@ -89,7 +95,8 @@ private data class RawFrameMetrics(
     val brightness: Double,
     val clippedPercent: Double,
     val sharpness: Double,
-    val readError: Boolean
+    val readError: Boolean,
+    val stellarAnalysis: FrameAnalysis
 )
 
 internal data class AutoFrameAnalysis(
@@ -97,7 +104,8 @@ internal data class AutoFrameAnalysis(
     val brightness: Double,
     val clippedPercent: Double,
     val sharpness: Double,
-    val status: AutoFrameStatus
+    val status: AutoFrameStatus,
+    val stellarAnalysis: FrameAnalysis? = null
 )
 
 internal data class AutoSelectionReport(
@@ -110,33 +118,10 @@ internal data class StackFrameSelection(
     val droppedCount: Int
 )
 
-internal data class StackFrameQualityCandidate(
-    val captureIndex: Int,
-    val statusRank: Int,
-    val sharpness: Double,
-    val clippedPercent: Double,
-    val brightness: Double
-)
-
-internal fun selectBestStackFrameIndices(
-    candidates: List<StackFrameQualityCandidate>,
-    maxFrames: Int
-): List<Int> {
-    require(maxFrames > 0)
-    return candidates
-        .sortedWith(
-            compareByDescending<StackFrameQualityCandidate> { it.statusRank }
-                .thenByDescending { it.sharpness }
-                .thenBy { it.clippedPercent }
-                .thenByDescending { it.brightness }
-                .thenBy { it.captureIndex }
-        )
-        .take(maxFrames)
-        .map { it.captureIndex }
-        .sorted()
-}
-
 internal class JpegAutoSelector(private val context: Context) {
+    private val frameAnalyzer = JpegFrameAnalyzer()
+    private val skyMaskEstimator = SkyMaskEstimator()
+
     suspend fun analyze(
         frames: List<SessionFrame>,
         sensitivity: AutoSelectionSensitivity,
@@ -146,14 +131,18 @@ internal class JpegAutoSelector(private val context: Context) {
         val rawMetrics = mutableListOf<RawFrameMetrics>()
 
         frames.forEachIndexed { index, frame ->
+            currentCoroutineContext().ensureActive()
             val metrics = runCatching { calculateMetrics(frame) }
                 .getOrElse {
+                    if (it is CancellationException) throw it
+                    if (it is Error) throw it
                     RawFrameMetrics(
                         frame = frame,
                         brightness = 0.0,
                         clippedPercent = 0.0,
                         sharpness = 0.0,
-                        readError = true
+                        readError = true,
+                        stellarAnalysis = FrameAnalysis.invalid(frame.key, frame.fileName)
                     )
                 }
             rawMetrics += metrics
@@ -165,6 +154,9 @@ internal class JpegAutoSelector(private val context: Context) {
         val thresholds = sensitivity.thresholds()
         val sharpnessCandidates = rawMetrics.filter {
             !it.readError &&
+                it.stellarAnalysis.hardInvalidReason == null &&
+                it.stellarAnalysis.reliableStarCount >= 3 &&
+                it.stellarAnalysis.medianStarWidth.isFinite() &&
                 it.brightness > thresholds.blackBrightness &&
                 it.brightness < thresholds.brightBrightness &&
                 it.clippedPercent < thresholds.clippedPercent
@@ -192,7 +184,8 @@ internal class JpegAutoSelector(private val context: Context) {
                         darkBrightness = adaptiveDarkBrightness,
                         sharpnessBaseline = sharpnessBaseline,
                         compareSharpness = sharpnessComparisonAvailable
-                    )
+                    ),
+                    stellarAnalysis = metrics.stellarAnalysis
                 )
             },
             sharpnessComparisonAvailable = sharpnessComparisonAvailable
@@ -205,29 +198,24 @@ internal class JpegAutoSelector(private val context: Context) {
         onProgress: suspend (current: Int, total: Int) -> Unit
     ): StackFrameSelection {
         require(maxFrames > 0)
-        if (frames.size <= maxFrames) return StackFrameSelection(frames, 0)
-
         val report = analyze(frames, AutoSelectionSensitivity.NORMAL, onProgress)
-        val candidates = report.frames.mapIndexedNotNull { index, analysis ->
+        val candidates = report.frames.mapNotNull { analysis ->
             if (analysis.status == AutoFrameStatus.READ_ERROR ||
                 analysis.status == AutoFrameStatus.BLACK
             ) {
                 null
             } else {
-                StackFrameQualityCandidate(
-                    captureIndex = index,
-                    statusRank = analysis.status.stackRank,
-                    sharpness = analysis.sharpness,
-                    clippedPercent = analysis.clippedPercent,
-                    brightness = analysis.brightness
-                )
+                analysis.stellarAnalysis?.takeIf { it.hardInvalidReason == null }
             }
         }
         require(candidates.size >= 2) {
             "После анализа качества осталось меньше двух читаемых JPEG кадров"
         }
-        val selectedIndices = selectBestStackFrameIndices(candidates, maxFrames).toSet()
-        val selected = frames.filterIndexed { index, _ -> index in selectedIndices }
+        val captureIndices = frames.mapIndexed { index, frame -> frame.key to index }.toMap()
+        val selectedIds = ReferenceFrameSelector().selectForIntegration(
+            candidates, captureIndices, maxFrames
+        ).analyses.mapTo(hashSetOf()) { it.id }
+        val selected = frames.filter { it.key in selectedIds }
         return StackFrameSelection(
             frames = selected,
             droppedCount = frames.size - selected.size
@@ -235,7 +223,7 @@ internal class JpegAutoSelector(private val context: Context) {
     }
 
     private fun calculateMetrics(frame: SessionFrame): RawFrameMetrics {
-        val bitmap = decodeSampled(frame, 720)
+        val bitmap = decodeSampled(frame, 1024)
             ?: error("Не удалось прочитать файл")
         return try {
             val width = bitmap.width
@@ -245,55 +233,29 @@ internal class JpegAutoSelector(private val context: Context) {
             }
             val pixels = IntArray(width * height)
             bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
-            val grayscale = IntArray(pixels.size)
             var brightnessSum = 0L
-            var clippedPixels = 0L
-
-            pixels.forEachIndexed { index, color ->
+            pixels.forEach { color ->
                 val red = color ushr 16 and 0xFF
                 val green = color ushr 8 and 0xFF
                 val blue = color and 0xFF
                 val luminance = (red * 77 + green * 150 + blue * 29) ushr 8
-                grayscale[index] = luminance
                 brightnessSum += luminance
-                if (red >= 250 && green >= 250 && blue >= 250) {
-                    clippedPixels++
-                }
             }
-
-            var laplacianSum = 0.0
-            var laplacianSquareSum = 0.0
-            var laplacianCount = 0
-            var y = 1
-            while (y < height - 1) {
-                var x = 1
-                while (x < width - 1) {
-                    val index = y * width + x
-                    val laplacian =
-                        grayscale[index - 1] +
-                            grayscale[index + 1] +
-                            grayscale[index - width] +
-                            grayscale[index + width] -
-                            4 * grayscale[index]
-                    laplacianSum += laplacian
-                    laplacianSquareSum += laplacian.toDouble() * laplacian
-                    laplacianCount++
-                    x += 2
-                }
-                y += 2
-            }
-            val laplacianMean = laplacianSum / max(1, laplacianCount)
-            val sharpness = (
-                laplacianSquareSum / max(1, laplacianCount) -
-                    laplacianMean * laplacianMean
-                ).coerceAtLeast(0.0)
+            val image = ArgbPixelImage(width, height, pixels)
+            val analysis = frameAnalyzer.analyze(
+                frame.key, frame.fileName, image, skyMaskEstimator.estimate(image)
+            )
+            val sharpness = if (analysis.medianStarWidth.isFinite()) {
+                1.0 / analysis.medianStarWidth.coerceAtLeast(0.1f)
+            } else 0.0
 
             RawFrameMetrics(
                 frame = frame,
                 brightness = brightnessSum.toDouble() / pixels.size,
-                clippedPercent = clippedPixels * 100.0 / pixels.size,
+                clippedPercent = analysis.clippingPercent.toDouble(),
                 sharpness = sharpness,
-                readError = false
+                readError = false,
+                stellarAnalysis = analysis
             )
         } finally {
             bitmap.recycle()
@@ -314,16 +276,7 @@ internal class JpegAutoSelector(private val context: Context) {
         ) {
             sampleSize *= 2
         }
-        return openFrame(frame)?.use {
-            BitmapFactory.decodeStream(
-                it,
-                null,
-                BitmapFactory.Options().apply {
-                    inSampleSize = sampleSize
-                    inPreferredConfig = Bitmap.Config.ARGB_8888
-                }
-            )
-        }
+        return decodeOrientedJpeg({ openFrame(frame) }, sampleSize)
     }
 
     private fun openFrame(frame: SessionFrame): InputStream? =
@@ -340,13 +293,18 @@ internal class JpegAutoSelector(private val context: Context) {
         sharpnessBaseline: Double,
         compareSharpness: Boolean
     ): AutoFrameStatus = when {
-        metrics.readError -> AutoFrameStatus.READ_ERROR
-        metrics.brightness <= thresholds.blackBrightness -> AutoFrameStatus.BLACK
+        metrics.readError || metrics.stellarAnalysis.hardInvalidReason == "invalid_metrics" ->
+            AutoFrameStatus.READ_ERROR
+        metrics.stellarAnalysis.hardInvalidReason == "black" ||
+            (metrics.brightness <= thresholds.blackBrightness &&
+                metrics.stellarAnalysis.reliableStarCount == 0) -> AutoFrameStatus.BLACK
+        metrics.stellarAnalysis.hardInvalidReason == "critical_clipping" -> AutoFrameStatus.OVEREXPOSED
         metrics.brightness >= thresholds.brightBrightness ||
             metrics.clippedPercent >= thresholds.clippedPercent ->
             AutoFrameStatus.OVEREXPOSED
         metrics.brightness < darkBrightness -> AutoFrameStatus.TOO_DARK
         compareSharpness &&
+            metrics.stellarAnalysis.reliableStarCount >= 3 &&
             metrics.sharpness < sharpnessBaseline * thresholds.blurFactor ->
             AutoFrameStatus.BLURRY
         else -> AutoFrameStatus.OK
@@ -377,15 +335,6 @@ internal class JpegAutoSelector(private val context: Context) {
             )
         }
 
-    private val AutoFrameStatus.stackRank: Int
-        get() = when (this) {
-            AutoFrameStatus.OK -> 4
-            AutoFrameStatus.BLURRY -> 3
-            AutoFrameStatus.TOO_DARK -> 2
-            AutoFrameStatus.OVEREXPOSED -> 1
-            AutoFrameStatus.BLACK,
-            AutoFrameStatus.READ_ERROR -> 0
-        }
 }
 
 internal fun robustSharpnessBaseline(values: List<Double>): Double {
@@ -508,7 +457,7 @@ fun JpegAutoSelectionScreen(
                                 status = if (it.sharpnessComparisonAvailable) {
                                     "Анализ завершён"
                                 } else {
-                                    "Недостаточно кадров для сравнения резкости"
+                                    "Недостаточно звёздных кадров для сравнения FWHM"
                                 }
                             },
                             onFailure = {
@@ -638,14 +587,27 @@ private fun AutoAnalysisCard(
             Text(
                 text = String.format(
                     locale,
-                    "Яркость: %.1f • Пересвет: %.2f%% • Резкость: %.1f",
+                    "Яркость: %.1f • Пересвет: %.2f%%",
                     result.brightness,
-                    result.clippedPercent,
-                    result.sharpness
+                    result.clippedPercent
                 ),
                 color = AstroColors.TextSecondary,
                 style = MaterialTheme.typography.bodySmall
             )
+            result.stellarAnalysis?.let { stars ->
+                Text(
+                    text = if (stars.reliableStarCount > 0 && stars.medianStarWidth.isFinite()) {
+                        String.format(
+                            locale,
+                            "Звёзд: %d • FWHM: %.2f px (проба) • SNR: %.1f • Эллиптичность: %.2f",
+                            stars.reliableStarCount, stars.medianStarWidth,
+                            stars.medianStarSnr, stars.medianStarEllipticity
+                        )
+                    } else "Надёжные звёзды не найдены; FWHM недоступен",
+                    color = AstroColors.TextSecondary,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
             Text(
                 text = result.status.title,
                 color = result.status.color,

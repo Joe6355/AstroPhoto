@@ -1,6 +1,7 @@
 package com.joe6355.astrophoto.processing.jpeg.v2.postprocessing
 
 import com.joe6355.astrophoto.processing.jpeg.v2.model.SkyStatisticsResult
+import com.joe6355.astrophoto.processing.jpeg.v2.color.LinearRgb16
 import kotlin.math.sqrt
 
 internal data class SkyBackgroundToneMatch(
@@ -37,6 +38,18 @@ internal object SkyBackgroundToneMatcher {
             (red - offset).coerceAtLeast(0f),
             (green - offset).coerceAtLeast(0f),
             (blue - offset).coerceAtLeast(0f)
+        )
+    }
+
+    fun applyLinear(color: Long, alpha: Float, match: SkyBackgroundToneMatch): Long {
+        if (alpha <= 0f || match.linearOffset <= MIN_OFFSET) return color
+        val luminance = LinearRgb16.luminance(color)
+        val shadowSafety = smoothStep(0f, match.processedMedian.coerceAtLeast(MIN_HEADROOM), luminance)
+        val offset = match.linearOffset * sqrt(alpha.coerceIn(0f, 1f)) * shadowSafety
+        return LinearRgb16.pack(
+            (LinearRgb16.red(color) - offset).coerceAtLeast(0f),
+            (LinearRgb16.green(color) - offset).coerceAtLeast(0f),
+            (LinearRgb16.blue(color) - offset).coerceAtLeast(0f)
         )
     }
 

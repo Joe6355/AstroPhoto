@@ -37,7 +37,13 @@ class MutableSampledSrgb(
     var blue: Float = 0f
 )
 
-class PreparedReferenceToSourceTransform(transform: ReferenceToSourceTransform) {
+class PreparedReferenceToSourceTransform(
+    transform: ReferenceToSourceTransform,
+    private val preserveMappingOperationOrder: Boolean = false
+) {
+    private val scale = transform.scale
+    private val cosine = cos(transform.rotationRadians)
+    private val sine = sin(transform.rotationRadians)
     private val scaledCosine = transform.scale * cos(transform.rotationRadians)
     private val scaledSine = transform.scale * sin(transform.rotationRadians)
     private val centerX = transform.rotationCenterX
@@ -48,12 +54,14 @@ class PreparedReferenceToSourceTransform(transform: ReferenceToSourceTransform) 
     fun sourceX(outputX: Float, outputY: Float): Float {
         val relativeX = outputX - centerX
         val relativeY = outputY - centerY
+        if (preserveMappingOperationOrder) return scale * (cosine * relativeX - sine * relativeY) + centerX + dx
         return scaledCosine * relativeX - scaledSine * relativeY + centerX + dx
     }
 
     fun sourceY(outputX: Float, outputY: Float): Float {
         val relativeX = outputX - centerX
         val relativeY = outputY - centerY
+        if (preserveMappingOperationOrder) return scale * (sine * relativeX + cosine * relativeY) + centerY + dy
         return scaledSine * relativeX + scaledCosine * relativeY + centerY + dy
     }
 }

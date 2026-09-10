@@ -255,8 +255,8 @@ class JpegV2Stage11Test {
     @Test fun productionOrderUsesFinalRefinedFramesWeightsAndSampler() {
         val source = Files.readString(Path.of("src/main/java/com/joe6355/astrophoto/JpegStacker.kt"))
         val profile = source.substring(source.indexOf("suspend fun profileStack("), source.indexOf("suspend fun loadResultPreview("))
-        val provisional = profile.indexOf("val provisionalAcceptedFrames")
-        val refinement = profile.indexOf("prepareAndRefineFullResolutionFrames(")
+        val provisional = profile.indexOf("prepareProvisionalProfileRegistration(")
+        val refinement = profile.indexOf("prepareFullResolutionWithReferenceRecovery(")
         val weights = profile.indexOf("FrameWeightCalculator().calculate(")
         val integration = profile.indexOf("runAutomaticSensorMaskedIntegration(")
         assertTrue(provisional in 0 until refinement)

@@ -51,6 +51,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.core.content.ContextCompat
@@ -181,7 +182,17 @@ class SessionBrowserRepository(private val context: Context) {
                 }
             }
         }
-        return builders.values.map { it.build() }
+        val infoStore = SessionInfoStore(context)
+        infoStore.folders().forEach { folder ->
+            builders.getOrPut(folder) { MutableSessionSummary(folder, "$basePath$folder/") }
+        }
+        return builders.values.map {
+            it.infoContent = infoStore.read(it.folderName, readLegacyIfMissing = false) ?: it.infoContent
+            if (it.createdAtMillis == 0L) {
+                it.createdAtMillis = it.infoContent.sessionInfoValue("createdAtMillis").toLongOrNull() ?: 0L
+            }
+            it.build()
+        }
             .sortedByDescending { it.createdAtMillis }
     }
 
@@ -191,11 +202,10 @@ class SessionBrowserRepository(private val context: Context) {
             Environment.DIRECTORY_PICTURES
         )
         val root = File(pictures, "AstroPhoto")
-        if (!root.exists()) return emptyList()
-
-        return root.listFiles()
-            ?.filter { it.isDirectory }
-            ?.map { directory ->
+        val infoStore = SessionInfoStore(context)
+        val folders = root.listFiles().orEmpty().filter { it.isDirectory }.map { it.name } + infoStore.folders()
+        return folders.distinct().map { File(root, it) }
+            .map { directory ->
                 val builder = MutableSessionSummary(
                     folderName = directory.name,
                     relativePath = "Pictures/AstroPhoto/${directory.name}/"
@@ -214,10 +224,13 @@ class SessionBrowserRepository(private val context: Context) {
                                 .getOrDefault("")
                         }
                     }
+                builder.infoContent = infoStore.read(directory.name, readLegacyIfMissing = false) ?: builder.infoContent
+                if (builder.createdAtMillis == 0L) {
+                    builder.createdAtMillis = builder.infoContent.sessionInfoValue("createdAtMillis").toLongOrNull() ?: 0L
+                }
                 builder.build()
             }
-            ?.sortedByDescending { it.createdAtMillis }
-            .orEmpty()
+            .sortedByDescending { it.createdAtMillis }
     }
 
     private class MutableSessionSummary(
@@ -535,7 +548,7 @@ fun SessionsScreen(
 }
 
 @Composable
-private fun SessionSummaryCard(
+internal fun SessionSummaryCard(
     session: SessionSummary,
     active: Boolean,
     onClick: () -> Unit
@@ -547,14 +560,13 @@ private fun SessionSummaryCard(
         )
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
                     text = session.sessionName,
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
                 if (active) {
                     Text("Активная", color = AstroColors.Success)
@@ -753,7 +765,7 @@ fun SessionDetailsScreen(
                     managementStatus = buildString {
                         append("Сессия переименована: ${renamed.newSessionName}")
                         if (!renamed.metadataUpdated) {
-                            append("\nНе удалось обновить session_info.txt")
+                            append("\nСведения сохранены, но прежнюю запись сессии удалить не удалось")
                         }
                     }
                     onRenamed(renamedSummary)

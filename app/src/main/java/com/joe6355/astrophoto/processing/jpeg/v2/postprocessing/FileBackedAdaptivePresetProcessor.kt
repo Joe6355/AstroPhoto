@@ -1,5 +1,6 @@
 package com.joe6355.astrophoto.processing.jpeg.v2.postprocessing
 
+import com.joe6355.astrophoto.processing.jpeg.v2.color.LinearRgb16
 import com.joe6355.astrophoto.AstroProcessingProfile
 import com.joe6355.astrophoto.processing.jpeg.v2.composition.FileBackedSkyForegroundComposer
 import com.joe6355.astrophoto.processing.jpeg.v2.color.SrgbTransfer
@@ -43,7 +44,8 @@ class FileBackedAdaptivePresetProcessor internal constructor(
     private val composer: FileBackedSkyForegroundComposer = FileBackedSkyForegroundComposer(),
     private val featureFlags: AdaptiveProcessingFeatureFlags = AdaptiveProcessingFeatureFlags(),
     private val experimentalStrengthVariant: ExperimentalStarStrengthVariant =
-        ExperimentalStarStrengthVariant.PRODUCTION_SELECTED
+        ExperimentalStarStrengthVariant.PRODUCTION_SELECTED,
+    private val legacyArgb: Boolean = false
 ) {
     suspend fun process(
         stackedSky: FileBackedImage,
@@ -57,7 +59,13 @@ class FileBackedAdaptivePresetProcessor internal constructor(
         memoryTracker: PipelineMemoryTracker,
         sensorDefectAffectedOutput: FileBackedFloatPlane? = null,
         onProgress: suspend (message: String, current: Int, total: Int) -> Unit = { _, _, _ -> }
-    ): FileBackedAdaptiveProcessingResult = withExperimentalSafeFallback(
+    ): FileBackedAdaptiveProcessingResult = if (!legacyArgb &&
+        stackedSky.pixelFormat == com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedPixelFormat.ARGB_8888
+    ) {
+        FileBackedAdaptivePresetProcessor(statistics, composer, featureFlags, experimentalStrengthVariant, true)
+            .process(stackedSky, referenceForeground, effectiveSkyAlpha, profile, frameCount, alignedStackStars,
+                store, memoryBudget, memoryTracker, sensorDefectAffectedOutput, onProgress)
+    } else withExperimentalSafeFallback(
         enabled = profile == AstroProcessingProfile.EXPERIMENTAL_STARS,
         primary = {
             processInternal(
@@ -90,6 +98,22 @@ class FileBackedAdaptivePresetProcessor internal constructor(
         }
     )
 
+    // ARGB fixtures/checkpoints retain their original per-stage quantization. RGB16 stays linear throughout.
+    private fun FileBackedImageReader.processingColorAt(x: Int, y: Int): Long =
+        if (legacyArgb) argbAt(x, y).toLong() else linearRgbAt(x, y)
+
+    private fun packProcessingColor(red: Float, green: Float, blue: Float): Long =
+        if (legacyArgb) packLinear(red, green, blue).toLong() else LinearRgb16.pack(red, green, blue)
+
+    private fun linearChannel(color: Long, shift: Int): Float =
+        if (legacyArgb) SrgbTransfer.srgbToLinear((color.toInt() ushr shift and 255) / 255f)
+        else when (shift) { 16 -> LinearRgb16.red(color); 8 -> LinearRgb16.green(color); else -> LinearRgb16.blue(color) }
+
+    private fun linearLuminance(color: Long): Float =
+        0.2126f * linearChannel(color, 16) + 0.7152f * linearChannel(color, 8) + 0.0722f * linearChannel(color, 0)
+
+    private fun displayColor(color: Long): Int = if (legacyArgb) color.toInt() else LinearRgb16.toArgb(color)
+
     private suspend fun processInternal(
         stackedSky: FileBackedImage,
         referenceForeground: FileBackedImage,
@@ -115,10 +139,14 @@ class FileBackedAdaptivePresetProcessor internal constructor(
         val parameters = ExistingPresetParameterMapper.parametersFor(profile, frameCount)
         val durations = linkedMapOf<String, Long>()
         fun elapsed(start: Long) = (System.nanoTime() - start) / 1_000_000L
+        // Finished file-backed images are immutable and owned by this run. Reuse statistics only for the same image.
+        val statisticsByImage = mutableMapOf<FileBackedImage, SkyStatisticsResult>()
         fun fileStatistics(image: FileBackedImage): SkyStatisticsResult =
-            FileBackedImageReader(image).use { reader ->
-                FileBackedFloatPlaneReader(effectiveSkyAlpha).use { alpha ->
-                    statistics.calculate(reader, alpha, alignedStackStars)
+            statisticsByImage.getOrPut(image) {
+                FileBackedImageReader(image).use { reader ->
+                    FileBackedFloatPlaneReader(effectiveSkyAlpha).use { alpha ->
+                        statistics.calculate(reader, alpha, alignedStackStars)
+                    }
                 }
             }
 
@@ -144,7 +172,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
 
         onProgress("Удаление светового загрязнения", 1, TOTAL_STAGES)
         stageStarted = System.nanoTime()
-        var working = gradientPass(
+        val working = gradientPass(
             stackedSky,
             effectiveSkyAlpha,
             alignedStackStars,
@@ -157,6 +185,10 @@ class FileBackedAdaptivePresetProcessor internal constructor(
         )
         val gradientDiagnostics = working.second
         var workingImage = working.first
+        fun replaceWorking(next: FileBackedImage) {
+            if (workingImage !== next && workingImage !== stackedSky) store.deleteTemporary(workingImage)
+            workingImage = next
+        }
         durations["gradient_removal"] = elapsed(stageStarted)
         var currentStatistics = fileStatistics(workingImage)
 
@@ -173,8 +205,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
             memoryBudget,
             memoryTracker
         )
-        store.deleteTemporary(workingImage)
-        workingImage = neutralized.first
+        replaceWorking(neutralized.first)
         val neutralizationDiagnostics = neutralized.second
         durations["background_neutralization"] = elapsed(stageStarted)
         currentStatistics = fileStatistics(workingImage)
@@ -192,12 +223,12 @@ class FileBackedAdaptivePresetProcessor internal constructor(
             parameters.maximumSkyMedianFactor,
             parameters.targetDisplaySkyMedian,
             parameters.minimumBlackWhiteSeparation,
+            ::fileStatistics,
             store,
             memoryBudget,
             memoryTracker
         )
-        store.deleteTemporary(workingImage)
-        workingImage = stretched.first
+        replaceWorking(stretched.first)
         val stretchDiagnostics = stretched.second
         durations["stretch"] = elapsed(stageStarted)
         currentStatistics = fileStatistics(workingImage)
@@ -215,8 +246,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
             memoryBudget,
             memoryTracker
         )
-        store.deleteTemporary(workingImage)
-        workingImage = chroma.first
+        replaceWorking(chroma.first)
         val chromaDiagnostics = chroma.second
         durations["chroma_reduction"] = elapsed(stageStarted)
 
@@ -254,8 +284,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
                 memoryTracker
             )
         }
-        store.deleteTemporary(workingImage)
-        workingImage = enhanced.first
+        replaceWorking(enhanced.first)
         val starDiagnostics = enhanced.second
         durations["star_enhancement"] = elapsed(stageStarted)
 
@@ -278,8 +307,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
                 memoryBudget,
                 memoryTracker
             )
-            store.deleteTemporary(workingImage)
-            workingImage = blended
+            replaceWorking(blended)
             after = fileStatistics(workingImage)
         }
 
@@ -294,10 +322,10 @@ class FileBackedAdaptivePresetProcessor internal constructor(
                 memoryBudget,
                 memoryTracker
             ) { x, y, color, _, alpha ->
-                SkyBackgroundToneMatcher.apply(color, alpha.alphaAt(x, y), backgroundMatch)
+                if (legacyArgb) SkyBackgroundToneMatcher.apply(color.toInt(), alpha.alphaAt(x, y), backgroundMatch).toLong()
+                else SkyBackgroundToneMatcher.applyLinear(color, alpha.alphaAt(x, y), backgroundMatch)
             }
-            store.deleteTemporary(workingImage)
-            workingImage = matched
+            replaceWorking(matched)
             after = fileStatistics(workingImage)
         }
         durations["background_matching"] = elapsed(stageStarted)
@@ -333,7 +361,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
             alphaForCoverage.close()
             alphaPrecomputed.close()
         }
-        store.deleteTemporary(workingImage)
+        if (workingImage !== stackedSky) store.deleteTemporary(workingImage)
         store.deleteTemporary(composite.effectiveSkyAlpha)
         val pointSafe = suppressNewSuspiciousPoints(
             candidate = composite.image,
@@ -498,7 +526,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
                 tracker,
                 halo = 1
             ) { x, y, color, _, _ ->
-                if (y.toLong() * candidate.width + x in newPoints) baselineReader.argbAt(x, y) else color
+                if (y.toLong() * candidate.width + x in newPoints) baselineReader.processingColorAt(x, y) else color
             }
         }
     }
@@ -516,7 +544,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
     ): Pair<FileBackedImage, GradientRemovalDiagnostics> {
         val grid = GradientGrid.create(input.width, input.height)
         if (strength <= 0f || stats.skyPixelCount == 0) {
-            return transform("gradient-copy", input, alphaPlane, store, budget, tracker) { _, _, color, _, _ -> color } to
+            return input to
                 GradientRemovalDiagnostics(0f, grid.columns, grid.rows, 0, 0f)
         }
         val starCores = StarCoreIndex.create(input.width, input.height, stars)
@@ -526,7 +554,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
             FileBackedFloatPlaneReader(alphaPlane).use { alpha ->
                 for (y in 0 until input.height) for (x in 0 until input.width) {
                     if (alpha.alphaAt(x, y) < STATISTICS_ALPHA_THRESHOLD || starCores.contains(x, y)) continue
-                    val color = image.argbAt(x, y)
+                    val color = image.processingColorAt(x, y)
                     val red = linearChannel(color, 16)
                     val green = linearChannel(color, 8)
                     val blue = linearChannel(color, 0)
@@ -558,7 +586,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
             validCells++
         }
         if (validCells == 0) {
-            return transform("gradient-copy", input, alphaPlane, store, budget, tracker) { _, _, color, _, _ -> color } to
+            return input to
                 GradientRemovalDiagnostics(0f, grid.columns, grid.rows, 0, 0f)
         }
         fillMissing(redModel, grid, stats.channelMedian.red)
@@ -581,7 +609,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
                 val correctionBlue = ((grid.sample(smoothBlue, x, y) - stats.channelMedian.blue) * applied * scale)
                     .coerceIn(-maximumCorrection, maximumCorrection)
                 maximumApplied = maxOf(maximumApplied, abs(correctionRed), abs(correctionGreen), abs(correctionBlue))
-                packLinear(
+                packProcessingColor(
                     (linearChannel(color, 16) - correctionRed).coerceAtLeast(0f),
                     (linearChannel(color, 8) - correctionGreen).coerceAtLeast(0f),
                     (linearChannel(color, 0) - correctionBlue).coerceAtLeast(0f)
@@ -603,7 +631,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
         tracker: PipelineMemoryTracker
     ): Pair<FileBackedImage, NeutralizationDiagnostics> {
         if (strength <= 0f || stats.skyPixelCount == 0) {
-            return transform("neutral-copy", input, alphaPlane, store, budget, tracker) { _, _, color, _, _ -> color } to
+            return input to
                 NeutralizationDiagnostics(LinearRgb(0f, 0f, 0f))
         }
         val median = stats.channelMedian
@@ -626,7 +654,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
                 val luminance = 0.2126f * red + 0.7152f * green + 0.0722f * blue
                 val scale = sqrt(alphaValue.coerceIn(0f, 1f)) *
                     (1f - smoothStep(highlightStart, highlightEnd, luminance))
-                packLinear(
+                packProcessingColor(
                     (red + correction.red * scale).coerceAtLeast(0f),
                     (green + correction.green * scale).coerceAtLeast(0f),
                     (blue + correction.blue * scale).coerceAtLeast(0f)
@@ -647,6 +675,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
         maximumSkyMedianFactor: Float,
         targetDisplaySkyMedian: Float,
         minimumSeparation: Float,
+        measure: (FileBackedImage) -> SkyStatisticsResult,
         store: ResultCandidateStore,
         budget: JpegMemoryBudget,
         tracker: PipelineMemoryTracker
@@ -654,7 +683,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
         val black = minOf(stats.lowPercentile, stats.estimatedBlackPoint).coerceIn(0f, 1f - minimumSeparation)
         val white = maxOf(stats.estimatedSafeWhitePoint, black + minimumSeparation).coerceAtMost(1f)
         if (stretchBlend <= 0f || asinhStrength <= 0f || stats.skyPixelCount == 0) {
-            return transform("stretch-copy", input, alphaPlane, store, budget, tracker) { _, _, color, _, _ -> color } to
+            return input to
                 StretchDiagnostics(black, white, asinhStrength, highlightProtection, 0f, 1f)
         }
         val denominator = asinh(asinhStrength.toDouble()).toFloat().coerceAtLeast(0.0001f)
@@ -692,12 +721,10 @@ class FileBackedAdaptivePresetProcessor internal constructor(
                 if (maximum < MAX_UNCLIPPED_VALUE && maximum * scale > MAX_UNCLIPPED_VALUE) {
                     scale = MAX_UNCLIPPED_VALUE / maximum.coerceAtLeast(MIN_LUMINANCE)
                 }
-                packLinear(red * scale, green * scale, blue * scale)
+                packProcessingColor(red * scale, green * scale, blue * scale)
             }
         }
-        val stretchedStats = FileBackedImageReader(stretched).use { image ->
-            FileBackedFloatPlaneReader(alphaPlane).use { alpha -> statistics.calculate(image, alpha, stars) }
-        }
+        val stretchedStats = measure(stretched)
         val allowedMedian = maxOf(
             targetLinearMedian,
             stats.luminanceMedian * maximumSkyMedianFactor,
@@ -733,7 +760,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
                 if (stats.chromaNoiseEstimate >= CHROMA_NOISE_REFERENCE) 1 else 0
             ).coerceIn(1, maximumRadius)
         if (strength <= 0f || radius <= 0 || stats.skyPixelCount == 0) {
-            return transform("chroma-copy", input, alphaPlane, store, budget, tracker) { _, _, color, _, _ -> color } to
+            return input to
                 ChromaNoiseDiagnostics(0f, 0)
         }
         val starsIndex = StarCoreIndex.create(input.width, input.height, stars, 2.2f)
@@ -762,7 +789,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
                             if (nx !in 0 until input.width || ny !in 0 until input.height ||
                                 starsIndex.contains(nx, ny) || alpha.alphaAt(nx, ny) <= OPERATION_ALPHA_THRESHOLD
                             ) return@forEach
-                            val neighbor = channels(image.argbAt(nx, ny))
+                            val neighbor = channels(image.processingColorAt(nx, ny))
                             val difference = abs(neighbor.luminance - center.luminance)
                             if (difference > edgeLimit) return@forEach
                             val weight = 1f / (1f + distance + difference / edgeLimit)
@@ -776,7 +803,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
                         val redChroma = (center.red - center.luminance) * (1f - local) + redSum / weightSum * local
                         val blueChroma = (center.blue - center.luminance) * (1f - local) + blueSum / weightSum * local
                         val fitted = fitChroma(center.luminance, redChroma, blueChroma)
-                        packLinear(fitted.red, fitted.green, fitted.blue)
+                        packProcessingColor(fitted.red, fitted.green, fitted.blue)
                     }
                 }
             }
@@ -800,17 +827,10 @@ class FileBackedAdaptivePresetProcessor internal constructor(
         tracker: PipelineMemoryTracker
     ): Pair<FileBackedImage, StarEnhancementDiagnostics> {
         if (strength <= 0f || maximumDetailGain <= 1f) {
-            return transform(
-                "experimental-stars-copy",
-                input,
-                alphaPlane,
-                store,
-                budget,
-                tracker
-            ) { _, _, color, _, _ -> color } to
+            return input to
                 StarEnhancementDiagnostics(strength, stars.size, 0, stars.size, 0f)
         }
-        val changes = mutableMapOf<Long, Int>()
+        val changes = mutableMapOf<Long, Long>()
         val noiseFloor = ExperimentalStarEnhancementSupport.noiseFloor(stats)
         var considered = 0
         var enhanced = 0
@@ -855,13 +875,13 @@ class FileBackedAdaptivePresetProcessor internal constructor(
                                 rejected++
                                 return@forEach
                             }
-                            val centerColor = image.argbAt(centerX, centerY)
+                            val centerColor = image.processingColorAt(centerX, centerY)
                             val centerLuminance = linearLuminance(centerColor)
                             val centerDetail = centerLuminance - background
                             if (
                                 centerDetail <= noiseFloor || centerLuminance >= SATURATED_STAR_LIMIT ||
                                 ExperimentalStarEnhancementSupport.isSingleChannelSpike(
-                                    centerColor,
+                                    displayColor(centerColor),
                                     background,
                                     centerDetail
                                 )
@@ -884,7 +904,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
                                     alpha.alphaAt(x, y) <= OPERATION_ALPHA_THRESHOLD ||
                                     (defect?.alphaAt(x, y) ?: 0f) > 0f
                                 ) continue
-                                if (linearLuminance(image.argbAt(x, y)) - background >= supportThreshold) {
+                                if (linearLuminance(image.processingColorAt(x, y)) - background >= supportThreshold) {
                                     support++
                                 }
                             }
@@ -911,7 +931,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
                                 val x = centerX + dx
                                 val y = centerY + dy
                                 if (x !in 0 until input.width || y !in 0 until input.height) continue
-                                val color = image.argbAt(x, y)
+                                val color = image.processingColorAt(x, y)
                                 val luminance = linearLuminance(color)
                                 val localDetail = luminance - background
                                 val supportWeight = ExperimentalStarEnhancementSupport.supportWeight(
@@ -936,7 +956,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
                                 ).coerceAtMost(ExperimentalStarEnhancementSupport.MAX_ENHANCED_VALUE)
                                 if (target <= luminance) continue
                                 val scale = target / luminance
-                                val enhancedColor = packLinear(
+                                val enhancedColor = packProcessingColor(
                                     linearChannel(color, 16) * scale,
                                     linearChannel(color, 8) * scale,
                                     linearChannel(color, 0) * scale
@@ -988,10 +1008,10 @@ class FileBackedAdaptivePresetProcessor internal constructor(
         tracker: PipelineMemoryTracker
     ): Pair<FileBackedImage, StarEnhancementDiagnostics> {
         if (strength <= 0f || maximumDetailGain <= 1f || stars.isEmpty()) {
-            return transform("stars-copy", input, alphaPlane, store, budget, tracker) { _, _, color, _, _ -> color } to
+            return input to
                 StarEnhancementDiagnostics(strength, stars.size, 0, stars.size, 0f)
         }
-        val changes = mutableMapOf<Long, Int>()
+        val changes = mutableMapOf<Long, Long>()
         var enhanced = 0
         var rejected = 0
         val noiseFloor = maxOf(MIN_DETAIL, stats.luminanceMad * 2.2f)
@@ -1011,7 +1031,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
                         rejected++
                         return@forEach
                     }
-                    val centerColor = image.argbAt(cx, cy)
+                    val centerColor = image.processingColorAt(cx, cy)
                     val centerLuminance = linearLuminance(centerColor)
                     val detail = centerLuminance - background
                     if (detail <= noiseFloor || centerLuminance >= SATURATED_STAR_LIMIT ||
@@ -1027,7 +1047,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
                         val x = cx + dx
                         val y = cy + dy
                         if (x in 0 until input.width && y in 0 until input.height &&
-                            linearLuminance(image.argbAt(x, y)) - background >= detail * MIN_CORE_DETAIL_FRACTION
+                            linearLuminance(image.processingColorAt(x, y)) - background >= detail * MIN_CORE_DETAIL_FRACTION
                         ) support++
                     }
                     if (support !in MIN_STAR_SUPPORT..MAX_STAR_SUPPORT) {
@@ -1059,7 +1079,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
                             alpha.alphaAt(x, y) < STATISTICS_ALPHA_THRESHOLD
                         ) continue
                         val key = y.toLong() * input.width + x
-                        val color = changes[key] ?: image.argbAt(x, y)
+                        val color = changes[key] ?: image.processingColorAt(x, y)
                         val luminance = linearLuminance(color)
                         val localDetail = luminance - background
                         if (localDetail < detail * MIN_CORE_DETAIL_FRACTION || luminance <= MIN_DETAIL) continue
@@ -1067,7 +1087,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
                         val gain = 1f + (multiplier - 1f) * radialWeight
                         val target = (background + localDetail * gain).coerceAtMost(MAX_ENHANCED_VALUE)
                         val scale = target / luminance
-                        changes[key] = packLinear(
+                        changes[key] = packProcessingColor(
                             linearChannel(color, 16) * scale,
                             linearChannel(color, 8) * scale,
                             linearChannel(color, 0) * scale
@@ -1103,55 +1123,63 @@ class FileBackedAdaptivePresetProcessor internal constructor(
         val decision = budget.chooseTile(
             original.width,
             original.height,
-            minOf(original.width, PREFERRED_TILE_SIZE),
-            minOf(original.height, PREFERRED_TILE_SIZE),
-            argbBuffers = 3,
-            floatBuffers = 1
+            original.width,
+            minOf(original.height, 32),
+            argbBuffers = 6,
+            floatBuffers = 1,
+            residentBytes = original.width.toLong() * 160L
         )
         require(decision.accepted) { "Insufficient safe memory for Stage 4 $label" }
         if (decision.retryRequired) tracker.recordRetry()
         tracker.recordTile("stage4-$label", decision.tileWidth, decision.tileHeight)
         tracker.recordBoundary("stage4-$label", decision.estimatedBytes, 0)
         val writer = store.createTemporaryWriter(label, original.width, original.height)
-        FileBackedImageReader(original).use { firstReader ->
-            FileBackedImageReader(processed).use { secondReader ->
-                FileBackedFloatPlaneReader(alphaPlane).use { alpha ->
-                    var top = 0
-                    while (top < original.height) {
-                        val tileHeight = minOf(decision.tileHeight, original.height - top)
-                        var left = 0
-                        while (left < original.width) {
-                            val tileWidth = minOf(decision.tileWidth, original.width - left)
-                            val pixels = IntArray(tileWidth * tileHeight)
-                            for (row in 0 until tileHeight) for (column in 0 until tileWidth) {
-                                val x = left + column
-                                val y = top + row
-                                val first = firstReader.argbAt(x, y)
-                                pixels[row * tileWidth + column] = if (
-                                    alpha.alphaAt(x, y) <= OPERATION_ALPHA_THRESHOLD
-                                ) {
-                                    first
-                                } else {
-                                    val second = secondReader.argbAt(x, y)
-                                    packLinear(
-                                        linearChannel(first, 16) +
-                                            (linearChannel(second, 16) - linearChannel(first, 16)) * amount,
-                                        linearChannel(first, 8) +
-                                            (linearChannel(second, 8) - linearChannel(first, 8)) * amount,
-                                        linearChannel(first, 0) +
-                                            (linearChannel(second, 0) - linearChannel(first, 0)) * amount
-                                    )
+        try {
+            FileBackedImageReader(original).use { firstReader ->
+                FileBackedImageReader(processed).use { secondReader ->
+                    FileBackedFloatPlaneReader(alphaPlane).use { alpha ->
+                        var top = 0
+                        while (top < original.height) {
+                            val tileHeight = minOf(decision.tileHeight, original.height - top)
+                            var left = 0
+                            while (left < original.width) {
+                                val tileWidth = minOf(decision.tileWidth, original.width - left)
+                                val pixels = LongArray(tileWidth * tileHeight)
+                                for (row in 0 until tileHeight) for (column in 0 until tileWidth) {
+                                    val x = left + column
+                                    val y = top + row
+                                    val first = firstReader.processingColorAt(x, y)
+                                    pixels[row * tileWidth + column] = if (
+                                        alpha.alphaAt(x, y) <= OPERATION_ALPHA_THRESHOLD
+                                    ) {
+                                        first
+                                    } else {
+                                        val second = secondReader.processingColorAt(x, y)
+                                        packProcessingColor(
+                                            linearChannel(first, 16) +
+                                                (linearChannel(second, 16) - linearChannel(first, 16)) * amount,
+                                            linearChannel(first, 8) +
+                                                (linearChannel(second, 8) - linearChannel(first, 8)) * amount,
+                                            linearChannel(first, 0) +
+                                                (linearChannel(second, 0) - linearChannel(first, 0)) * amount
+                                        )
+                                    }
                                 }
+                                if (legacyArgb) writer.writeTile(left, top, tileWidth, tileHeight, IntArray(pixels.size) { pixels[it].toInt() })
+                                else writer.writeLinearTile(left, top, tileWidth, tileHeight, pixels)
+                                left += tileWidth
                             }
-                            writer.writeTile(left, top, tileWidth, tileHeight, pixels)
-                            left += tileWidth
+                            top += tileHeight
                         }
-                        top += tileHeight
                     }
                 }
             }
+            return writer.finish()
+        } catch (error: Throwable) {
+            runCatching { writer.close() }
+            runCatching { store.deleteTemporary(writer.image) }
+            throw error
         }
-        return writer.finish()
     }
 
     private inline fun transform(
@@ -1165,47 +1193,55 @@ class FileBackedAdaptivePresetProcessor internal constructor(
         crossinline operation: (
             x: Int,
             y: Int,
-            color: Int,
+            color: Long,
             image: FileBackedImageReader,
             alpha: AlphaPixelSource
-        ) -> Int
+        ) -> Long
     ): FileBackedImage {
         val decision = budget.chooseTile(
             input.width,
             input.height,
-            minOf(input.width, PREFERRED_TILE_SIZE),
-            minOf(input.height, PREFERRED_TILE_SIZE),
+            input.width,
+            minOf(input.height, 32),
             halo = halo,
-            argbBuffers = 2,
-            floatBuffers = 1
+            argbBuffers = 4,
+            floatBuffers = 1,
+            residentBytes = input.width.toLong() * (maxOf(4, halo * 2 + 3) * 16L + 24L)
         )
         require(decision.accepted) { "Insufficient safe memory for Stage 4 $label" }
         if (decision.retryRequired) tracker.recordRetry()
         tracker.recordTile("stage4-$label", decision.tileWidth, decision.tileHeight, halo)
         tracker.recordBoundary("stage4-$label", decision.estimatedBytes, 0)
         val writer = store.createTemporaryWriter(label, input.width, input.height)
-        FileBackedImageReader(input, cachedRows = maxOf(4, halo * 2 + 3)).use { image ->
-            FileBackedFloatPlaneReader(alphaPlane, cachedRows = maxOf(4, halo * 2 + 3)).use { alpha ->
-                var top = 0
-                while (top < input.height) {
-                    val tileHeight = minOf(decision.tileHeight, input.height - top)
-                    var left = 0
-                    while (left < input.width) {
-                        val tileWidth = minOf(decision.tileWidth, input.width - left)
-                        val pixels = IntArray(tileWidth * tileHeight)
-                        for (row in 0 until tileHeight) for (column in 0 until tileWidth) {
-                            val x = left + column
-                            val y = top + row
-                            pixels[row * tileWidth + column] = operation(x, y, image.argbAt(x, y), image, alpha)
+        try {
+            FileBackedImageReader(input, cachedRows = maxOf(4, halo * 2 + 3)).use { image ->
+                FileBackedFloatPlaneReader(alphaPlane, cachedRows = maxOf(4, halo * 2 + 3)).use { alpha ->
+                    var top = 0
+                    while (top < input.height) {
+                        val tileHeight = minOf(decision.tileHeight, input.height - top)
+                        var left = 0
+                        while (left < input.width) {
+                            val tileWidth = minOf(decision.tileWidth, input.width - left)
+                            val pixels = LongArray(tileWidth * tileHeight)
+                            for (row in 0 until tileHeight) for (column in 0 until tileWidth) {
+                                val x = left + column
+                                val y = top + row
+                                pixels[row * tileWidth + column] = operation(x, y, image.processingColorAt(x, y), image, alpha)
+                            }
+                            if (legacyArgb) writer.writeTile(left, top, tileWidth, tileHeight, IntArray(pixels.size) { pixels[it].toInt() })
+                                else writer.writeLinearTile(left, top, tileWidth, tileHeight, pixels)
+                            left += tileWidth
                         }
-                        writer.writeTile(left, top, tileWidth, tileHeight, pixels)
-                        left += tileWidth
+                        top += tileHeight
                     }
-                    top += tileHeight
                 }
             }
+            return writer.finish()
+        } catch (error: Throwable) {
+            runCatching { writer.close() }
+            runCatching { store.deleteTemporary(writer.image) }
+            throw error
         }
-        return writer.finish()
     }
 
     private fun finalSafetyScale(
@@ -1241,7 +1277,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
 
     private data class Channels(val red: Float, val green: Float, val blue: Float, val luminance: Float)
 
-    private fun channels(color: Int): Channels {
+    private fun channels(color: Long): Channels {
         val red = linearChannel(color, 16)
         val green = linearChannel(color, 8)
         val blue = linearChannel(color, 0)
@@ -1282,7 +1318,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
                 mask.alphaAt(x, y) < minimumAlpha ||
                 (sensorDefectAffectedOutput?.alphaAt(x, y) ?: 0f) > 0f
             ) continue
-            values[count++] = linearLuminance(image.argbAt(x, y))
+            values[count++] = linearLuminance(image.processingColorAt(x, y))
         }
         if (count < MIN_ANNULUS_SAMPLES) return Float.NaN
         values.sort(0, count)
@@ -1293,7 +1329,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
         star.confidence >= 0.32f && star.width in 0.65f..4.4f &&
             star.ellipticity <= 0.62f && star.localContrast > 0f
 
-    private fun isSingleChannelSpike(color: Int, background: Float, detail: Float): Boolean {
+    private fun isSingleChannelSpike(color: Long, background: Float, detail: Float): Boolean {
         val deltas = floatArrayOf(
             linearChannel(color, 16) - background,
             linearChannel(color, 8) - background,

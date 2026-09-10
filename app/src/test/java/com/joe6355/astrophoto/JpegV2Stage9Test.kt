@@ -228,10 +228,13 @@ class JpegV2Stage9Test {
         val frameAnalysis = Files.readString(
             Path.of("src/main/java/com/joe6355/astrophoto/ProfileFrameAnalysisCoordinator.kt")
         )
+        val registrationStage = Files.readString(
+            Path.of("src/main/java/com/joe6355/astrophoto/ProfileRegistrationStage.kt")
+        )
         assertTrue(profile.contains("ProfileFrameAnalysisCoordinator("))
         assertTrue(frameAnalysis.contains("profileCaptureIndices(frames)"))
         assertFalse(profile.contains("cappedFrames.indexOfFirst"))
-        assertTrue(profile.contains("scaledToFullResolution(scaleX, scaleY)"))
+        assertTrue(registrationStage.contains("scaledToFullResolution(scaleX, scaleY)"))
         assertTrue(profile.contains("runAutomaticSensorMaskedIntegration("))
         val integration = Files.readString(Path.of("src/main/java/com/joe6355/astrophoto/ProfileIntegrationStage.kt"))
         assertTrue(integration.contains("LinearWeightedIntegrator().integrate("))

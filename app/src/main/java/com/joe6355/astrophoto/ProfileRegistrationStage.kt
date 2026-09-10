@@ -3,10 +3,12 @@ package com.joe6355.astrophoto
 import android.util.Log
 import androidx.compose.runtime.getValue
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
+import java.util.UUID
 import com.joe6355.astrophoto.processing.jpeg.v2.diagnostics.ProcessingReport
 import com.joe6355.astrophoto.processing.jpeg.v2.model.RegistrationResult
 import com.joe6355.astrophoto.processing.jpeg.v2.model.SkyMask
@@ -20,6 +22,12 @@ import com.joe6355.astrophoto.processing.jpeg.v2.registration.StellarCentroidFra
 import com.joe6355.astrophoto.processing.jpeg.v2.registration.StellarCentroidRefinementPolicy
 import com.joe6355.astrophoto.processing.jpeg.v2.registration.StellarCentroidRefinementResult
 import com.joe6355.astrophoto.processing.jpeg.v2.registration.SequenceAwareRegistrationDiagnostics
+import com.joe6355.astrophoto.processing.jpeg.v2.registration.ExpectedSequenceMotionModel
+import com.joe6355.astrophoto.processing.jpeg.v2.registration.OrderedRegistration
+import com.joe6355.astrophoto.processing.jpeg.v2.registration.TransformSequenceValidator
+import com.joe6355.astrophoto.processing.jpeg.v2.registration.scaledToFullResolution
+import com.joe6355.astrophoto.processing.jpeg.v2.registration.buildTemporalFeatureFrames
+import com.joe6355.astrophoto.processing.jpeg.v2.registration.rankedReferenceRecoveryCandidates
 import com.joe6355.astrophoto.processing.jpeg.v2.sampling.ArgbFrameDiskCache
 import com.joe6355.astrophoto.processing.jpeg.v2.sampling.CachedArgbFrame
 import com.joe6355.astrophoto.processing.jpeg.v2.sampling.FileBackedArgbPixelSource
@@ -30,6 +38,265 @@ import com.joe6355.astrophoto.processing.jpeg.v2.memory.JpegMemoryBudget
 import com.joe6355.astrophoto.processing.jpeg.v2.memory.PipelineMemoryTracker
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.TemporaryPipelineFiles
 import com.joe6355.astrophoto.JpegStacker.Companion.PROFILE_REGISTRATION_TAG
+
+private const val MAX_FULL_RES_REFERENCE_RECOVERY_ATTEMPTS = 3
+private const val FULL_RES_CACHE_RESERVE_BYTES = 32L * 1024L * 1024L
+
+internal data class ProvisionalProfileRegistrationResult(
+    val allRegistrationsByKey: Map<String, RegistrationResult>,
+    val acceptedFrames: List<AcceptedProfileFrame>,
+    val scaleX: Float,
+    val scaleY: Float,
+    val fullVelocityScale: Float,
+    val sequenceScore: Float,
+    val sequenceSmoothnessScore: Float,
+    val sequencePriorAgreementScore: Float
+)
+
+internal data class FullResolutionReferencePreparationResult(
+    val selection: ProfileFrameSelectionPreparation,
+    val diagnostics: SequenceAwareRegistrationDiagnostics,
+    val provisional: ProvisionalProfileRegistrationResult,
+    val fullResolution: FullResolutionPreparationResult,
+    val warnings: List<String>
+)
+
+/** Apply the same scaling and sequence gate for the primary and recovered references. */
+internal fun prepareProvisionalProfileRegistration(
+    selection: ProfileFrameSelectionPreparation,
+    diagnostics: SequenceAwareRegistrationDiagnostics,
+    captureIndexByFrameKey: Map<String, Int>
+): ProvisionalProfileRegistrationResult {
+    val selectedReference = selection.selectedReference
+    val scaleX = selection.targetWidth.toFloat() /
+        selectedReference.analysis.width.coerceAtLeast(1)
+    val scaleY = selection.targetHeight.toFloat() /
+        selectedReference.analysis.height.coerceAtLeast(1)
+    val allRegistrationsByKey = diagnostics.registrations
+        .mapValuesTo(linkedMapOf()) { (_, registration) ->
+            registration.scaledToFullResolution(scaleX, scaleY)
+        }
+    val acceptedFrames = selection.selectedFrames.mapNotNull { frame ->
+        val registration = checkNotNull(allRegistrationsByKey[frame.key])
+        if (!registration.isReliable) return@mapNotNull null
+        AcceptedProfileFrame(
+            frame = frame,
+            analysis = checkNotNull(selection.analyzedByFrameKey[frame.key]).analysis,
+            registration = registration,
+            captureIndex = captureIndexByFrameKey.getValue(frame.key)
+        )
+    }.toMutableList()
+    val fullVelocityScale = (scaleX + scaleY) * 0.5f
+    val sequenceValidation = TransformSequenceValidator().validate(
+        acceptedFrames.map { accepted ->
+            OrderedRegistration(
+                frameId = accepted.frame.key,
+                captureIndex = accepted.captureIndex,
+                isReference = accepted.frame.key == selectedReference.frame.key,
+                registration = accepted.registration
+            )
+        },
+        expectedMotionModel = ExpectedSequenceMotionModel(
+            velocityX = diagnostics.model.velocityX * scaleX,
+            velocityY = diagnostics.model.velocityY * scaleY,
+            referenceIndex = diagnostics.model.referenceIndex,
+            residual = diagnostics.model.residual * fullVelocityScale,
+            motionObservable = diagnostics.model.motionObservable,
+            verificationScore = diagnostics.verification.selectedModel.score
+        )
+    )
+    val validatedByKey = sequenceValidation.registrations.associate {
+        it.frameId to it.registration
+    }
+    acceptedFrames.replaceAll { accepted ->
+        accepted.copy(registration = validatedByKey[accepted.frame.key] ?: accepted.registration)
+    }
+    acceptedFrames.removeAll { !it.registration.isReliable }
+    validatedByKey.forEach { (key, registration) ->
+        allRegistrationsByKey[key] = registration
+    }
+    return ProvisionalProfileRegistrationResult(
+        allRegistrationsByKey = allRegistrationsByKey,
+        acceptedFrames = acceptedFrames,
+        scaleX = scaleX,
+        scaleY = scaleY,
+        fullVelocityScale = fullVelocityScale,
+        sequenceScore = sequenceValidation.score,
+        sequenceSmoothnessScore = sequenceValidation.smoothnessScore,
+        sequencePriorAgreementScore = sequenceValidation.motionModelAgreementScore
+    )
+}
+
+/**
+ * Keep reference recovery inside the registration stage. Every candidate must pass the
+ * unchanged thumbnail, sequence and full-resolution gates before it can replace the primary.
+ */
+internal suspend fun JpegStacker.prepareFullResolutionWithReferenceRecovery(
+    checkpointStore: ProfileRegistrationCheckpointStore,
+    initialSelection: ProfileFrameSelectionPreparation,
+    startingSelection: ProfileFrameSelectionPreparation,
+    startingDiagnostics: SequenceAwareRegistrationDiagnostics,
+    startingProvisional: ProvisionalProfileRegistrationResult,
+    dimensionsByFrameKey: Map<String, Pair<Int, Int>>,
+    captureIndexByFrameKey: Map<String, Int>,
+    profile: AstroProcessingProfile,
+    userApprovedInsufficientFrames: Boolean,
+    temporaryFiles: TemporaryPipelineFiles,
+    memoryBudget: JpegMemoryBudget,
+    memoryTracker: PipelineMemoryTracker,
+    onProgress: suspend (message: String, current: Int, total: Int) -> Unit
+): FullResolutionReferencePreparationResult {
+    suspend fun refine(
+        selection: ProfileFrameSelectionPreparation,
+        diagnostics: SequenceAwareRegistrationDiagnostics,
+        provisional: ProvisionalProfileRegistrationResult
+    ): FullResolutionPreparationResult {
+        val pixelCount = selection.targetWidth.toLong() * selection.targetHeight
+        val requiredCacheBytes = pixelCount * Int.SIZE_BYTES * provisional.acceptedFrames.size
+        val requiredTemporaryBytes = requiredCacheBytes + pixelCount * 28L
+        require(
+            availableTemporaryBytes(temporaryFiles.directory) >=
+                requiredTemporaryBytes + FULL_RES_CACHE_RESERVE_BYTES
+        ) {
+            "Недостаточно временного места для полноразмерной JPEG-обработки"
+        }
+        return prepareAndRefineFullResolutionFrames(
+            checkpointStore = checkpointStore,
+            provisionalFrames = provisional.acceptedFrames,
+            selectedReference = selection.selectedReference,
+            targetWidth = selection.targetWidth,
+            targetHeight = selection.targetHeight,
+            scaleX = provisional.scaleX,
+            scaleY = provisional.scaleY,
+            fullVelocityScale = provisional.fullVelocityScale,
+            registrationDiagnostics = diagnostics,
+            fullResolutionSkyMask = scaleSkyMask(
+                selection.selectedReference.skyMask.mask,
+                selection.targetWidth,
+                selection.targetHeight
+            ),
+            temporaryFiles = temporaryFiles,
+            memoryBudget = memoryBudget,
+            memoryTracker = memoryTracker,
+            onProgress = onProgress
+        )
+    }
+
+    val fullResolution = refine(startingSelection, startingDiagnostics, startingProvisional)
+    if (
+        fullResolution.acceptedFrames.size >= profile.minimumFrames ||
+        userApprovedInsufficientFrames
+    ) {
+        return FullResolutionReferencePreparationResult(
+            startingSelection,
+            startingDiagnostics,
+            startingProvisional,
+            fullResolution,
+            emptyList()
+        )
+    }
+
+    val originalDiagnostics = startingDiagnostics
+    val featureFrames = buildTemporalFeatureFrames(
+        initialSelection.selectedFrames,
+        initialSelection.analysesByFrameKey,
+        captureIndexByFrameKey
+    )
+    val candidates = rankedReferenceRecoveryCandidates(
+        initialSelection.selectedFrames.map {
+            initialSelection.analysesByFrameKey.getValue(it.key)
+        },
+        captureIndexByFrameKey,
+        startingSelection.selectedReference.frame.key
+    )
+    var fullResolutionAttempts = 0
+    for ((candidateIndex, scoredCandidate) in candidates.withIndex()) {
+        if (fullResolutionAttempts >= MAX_FULL_RES_REFERENCE_RECOVERY_ATTEMPTS) break
+        currentCoroutineContext().ensureActive()
+        val candidateKey = scoredCandidate.analysis.id
+        withContext(Dispatchers.Main.immediate) {
+            onProgress(
+                "Проверка другой опоры ${candidateIndex + 1} из ${candidates.size}",
+                candidateIndex + 1,
+                candidates.size
+            )
+        }
+        val candidateDiagnostics = registerProfileFramesWithWatchdog(
+            featureFrames,
+            candidateKey,
+            scoredCandidate.analysis.width,
+            scoredCandidate.analysis.height
+        )
+        if (candidateDiagnostics.registrations.values.count { it.isReliable } <
+            profile.minimumFrames
+        ) continue
+        val candidateSelection = ProfileFrameSelectionCoordinator.withReference(
+            initialSelection,
+            candidateKey,
+            dimensionsByFrameKey
+        )
+        val candidateProvisional = prepareProvisionalProfileRegistration(
+            candidateSelection,
+            candidateDiagnostics,
+            captureIndexByFrameKey
+        )
+        if (candidateProvisional.acceptedFrames.size < profile.minimumFrames) continue
+        fullResolutionAttempts++
+        checkpointStore.clearFullResolution()
+        val candidateFullResolution = refine(
+            candidateSelection,
+            candidateDiagnostics,
+            candidateProvisional
+        )
+        Log.i(
+            PROFILE_REGISTRATION_TAG,
+            "fullResolutionReferenceRecoveryAttempt=$fullResolutionAttempts/" +
+                "$MAX_FULL_RES_REFERENCE_RECOVERY_ATTEMPTS " +
+                "frame=${candidateSelection.selectedReference.frame.fileName} " +
+                "accepted=${candidateFullResolution.acceptedFrames.size}"
+        )
+        if (candidateFullResolution.acceptedFrames.size < profile.minimumFrames) {
+            candidateFullResolution.cachedFrames.forEach { (_, cached) -> cached.file.delete() }
+            continue
+        }
+        fullResolution.cachedFrames.forEach { (_, cached) -> cached.file.delete() }
+        try {
+            checkpointStore.write(candidateDiagnostics)
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            Log.w(
+                "AstroPhotoCheckpoint",
+                "Recovered reference checkpoint unavailable",
+                error
+            )
+        }
+        return FullResolutionReferencePreparationResult(
+            selection = candidateSelection,
+            diagnostics = candidateDiagnostics,
+            provisional = candidateProvisional,
+            fullResolution = candidateFullResolution,
+            warnings = listOf(
+                "Опорный кадр заменён после полноразмерной проверки: " +
+                    candidateSelection.selectedReference.frame.fileName
+            )
+        )
+    }
+
+    try {
+        checkpointStore.clearFullResolution()
+        checkpointStore.write(originalDiagnostics)
+    } catch (error: Exception) {
+        if (error is CancellationException) throw error
+        Log.w("AstroPhotoCheckpoint", "Unable to restore initial reference checkpoint", error)
+    }
+    return FullResolutionReferencePreparationResult(
+        startingSelection,
+        startingDiagnostics,
+        startingProvisional,
+        fullResolution,
+        emptyList()
+    )
+}
 
 internal suspend fun JpegStacker.prepareAndRefineFullResolutionFrames(
     checkpointStore: ProfileRegistrationCheckpointStore?,
@@ -55,6 +322,9 @@ internal suspend fun JpegStacker.prepareAndRefineFullResolutionFrames(
     )
     memoryBudget.requireAllocation(decodeEstimate)
     memoryTracker.recordBoundary("integration-frame-decode", decodeEstimate.bytes, 1)
+    // A recovery attempt shares the run directory with the primary. Keep its cache distinct
+    // so the original result remains usable if every replacement reference fails.
+    val cacheAttemptId = UUID.randomUUID().toString()
     val provisionalCachedFrames = provisionalFrames.mapIndexed { index, accepted ->
         context.ensureActive()
         withContext(Dispatchers.Main.immediate) {
@@ -69,7 +339,7 @@ internal suspend fun JpegStacker.prepareAndRefineFullResolutionFrames(
         val cached = try {
             ArgbFrameDiskCache.write(
                 bitmap,
-                temporaryFiles.file("frame-${index.toString().padStart(3, '0')}.argb"),
+                temporaryFiles.file("frame-$cacheAttemptId-${index.toString().padStart(3, '0')}.argb"),
                 accepted.registration.referenceToSourceTransform()
             ) { row ->
                 if (row % 64 == 0) context.ensureActive()
@@ -100,7 +370,7 @@ internal suspend fun JpegStacker.prepareAndRefineFullResolutionFrames(
             restored.finalRegistrations, restored.refinements, restored.centroids,
             restored.samplingFidelity, restored.warnings)
     }
-    if (restored != null) checkpointStore.clear()
+    if (restored != null) checkpointStore.clearFullResolution()
     val patches = buildFullResolutionStarPatches(
         selectedReference = selectedReference,
         targetWidth = targetWidth,
@@ -117,7 +387,9 @@ internal suspend fun JpegStacker.prepareAndRefineFullResolutionFrames(
     val centroidResults = linkedMapOf<String, StellarCentroidRefinementResult>()
     val warnings = mutableListOf<String>()
     val refiner = FullResolutionRegistrationRefiner()
-    val centroidRefiner = StellarCentroidFrameRefiner()
+    val centroidRefiner = StellarCentroidFrameRefiner(rotationDiagnostic = {
+        Log.i(PROFILE_REGISTRATION_TAG, it)
+    })
     provisionalCachedFrames.forEachIndexed { index, (accepted, cached) ->
         context.ensureActive()
         withContext(Dispatchers.Main.immediate) {

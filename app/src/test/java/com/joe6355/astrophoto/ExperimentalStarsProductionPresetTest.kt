@@ -4,6 +4,7 @@ import com.joe6355.astrophoto.processing.jpeg.v2.analysis.JpegStarDetector
 import com.joe6355.astrophoto.processing.jpeg.v2.model.SkyMask
 import com.joe6355.astrophoto.processing.jpeg.v2.model.StarEnhancementDiagnostics
 import com.joe6355.astrophoto.processing.jpeg.v2.postprocessing.ExperimentalStarStrengthVariant
+import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedPixelFormat
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.math.abs
@@ -21,7 +22,7 @@ internal data class ExperimentalStrengthEvaluation(
 )
 
 class ExperimentalStarsProductionPresetTest {
-    @Test fun urbanWindow30PresetIsDeterministicStrongerAndProtected() = runBlocking {
+    @Test fun legacyArgbUrbanWindow30PresetIsDeterministicStrongerAndProtected() = runBlocking {
         val runner = SkyMaskReplayDiagnosticRunner()
         val baseline = runner.analyze(UrbanWindow30ReplayFixture.fixture)
         assertEquals(EXISTING_SAFE_ARGB_SHA256, ReplayDiagnosticHashing.sha256Argb(baseline.cleanComposed))
@@ -123,7 +124,8 @@ class ExperimentalStarsProductionPresetTest {
             stars = stars,
             sensorDefectAffectedOutput = baseline.sensorDefectAffectedOutput,
             experimentalStrengthVariant = variant,
-            onStarDiagnostics = { diagnostics = it }
+            onStarDiagnostics = { diagnostics = it },
+            pixelFormat = FileBackedPixelFormat.ARGB_8888
         )
         ExperimentalStrengthEvaluation(variant, image, checkNotNull(diagnostics))
     }

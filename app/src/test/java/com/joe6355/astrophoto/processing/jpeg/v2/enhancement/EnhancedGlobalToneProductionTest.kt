@@ -419,6 +419,53 @@ class EnhancedGlobalToneProductionTest {
     }
 
     @Test
+    fun noOpEnhancementStagesRetainTheirInputAndCoordinatorKeepsTheCandidate() {
+        TemporaryPipelineFiles.create(temporaryFolder.root).use { files ->
+            val store = ResultCandidateStore(files)
+            val baseline = store.createTemporaryWriter("baseline", 8, 8).use { writer ->
+                repeat(8) { writer.writeRow(it, IntArray(8) { 0xFF101418.toInt() }) }
+                writer.finish()
+            }
+            val alpha = store.createFloatPlaneWriter("alpha", 8, 8).use { writer ->
+                repeat(8) { writer.writeRow(it, FloatArray(8)) }
+                writer.finish()
+            }
+            val originalHash = fileBackedPixelHash(baseline)
+            val denoiser = ProtectedLuminanceDenoiser()
+            val noise = denoiser.prepareNoiseMap(baseline, alpha, emptyList(), store)
+            val filesBefore = files.directory.listFiles().orEmpty().map { it.name }.sorted()
+            assertEquals(0, noise.metrics.eligiblePixelCount)
+            assertSame(baseline, denoiser.apply(baseline, alpha, emptyList(), noise, store).image)
+            assertSame(baseline, ProtectedFaintStarEnhancer().apply(baseline, alpha, emptyList(), store).image)
+            assertEquals(filesBefore, files.directory.listFiles().orEmpty().map { it.name }.sorted())
+            store.deleteTemporary(noise.plane)
+
+            val validator = object : EnhancedGlobalToneValidator() {
+                override fun validate(
+                    baseline: FileBackedImage,
+                    candidate: FileBackedImage,
+                    effectiveSkyAlpha: FileBackedFloatPlane,
+                    confirmedStars: List<DetectedStar>,
+                    anchors: GlobalToneAnchors,
+                    generatedScaleLimitedPixelCount: Int,
+                    maximumLinearChannel: Double,
+                    gain: Double
+                ): EnhancedGlobalToneValidation {
+                    candidate.validate()
+                    return acceptedCandidate(candidate).validation
+                }
+            }
+            val result = EnhancedGlobalToneProcessor(validator = validator).createCandidate(
+                baseline, alpha, emptyList(), store
+            )
+            assertTrue(result.generation.image.file.isFile)
+            assertEquals(0, result.generation.luminanceDenoise.changedPixelCount)
+            assertEquals(0, result.generation.faintStarEnhancement.changedPixelCount)
+            assertEquals(originalHash, fileBackedPixelHash(baseline))
+        }
+    }
+
+    @Test
     fun validationFailureImmediatelyRemovesGeneratedCandidate() {
         val baselineWriter = FileBackedImageWriter(
             file = File(temporaryFolder.root, "validation-baseline.argb"),

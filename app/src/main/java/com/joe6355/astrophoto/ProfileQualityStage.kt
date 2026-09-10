@@ -10,7 +10,7 @@ import com.joe6355.astrophoto.processing.jpeg.v2.composition.MaskFeathering
 import com.joe6355.astrophoto.processing.jpeg.v2.composition.FileBackedCompositeResult
 import com.joe6355.astrophoto.processing.jpeg.v2.composition.FileBackedSkyForegroundComposer
 import com.joe6355.astrophoto.processing.jpeg.v2.composition.ReferenceStarSignalPreserver
-import com.joe6355.astrophoto.processing.jpeg.v2.enhancement.fileBackedPixelHash
+import com.joe6355.astrophoto.processing.jpeg.v2.enhancement.fileBackedDisplayPixelHash
 import com.joe6355.astrophoto.processing.jpeg.v2.integration.WeightedIntegrationFrame
 import com.joe6355.astrophoto.processing.jpeg.v2.masking.ForegroundProtectionMask
 import com.joe6355.astrophoto.processing.jpeg.v2.masking.SkyMaskRefiner
@@ -414,7 +414,7 @@ internal fun JpegStacker.candidateMaskLineage(
         cleanCandidateMasked = cleanLineage.sampleFilteringPresent,
         processedCandidateMasked = processedLineage?.sampleFilteringPresent == true,
         selectedCandidateMasked = selectedLineage.sampleFilteringPresent,
-        selectedCandidateHash = fileBackedPixelHash(selected.image),
+        selectedCandidateHash = fileBackedDisplayPixelHash(selected.image),
         starPreservationMaskAware = starPreservation.maskAware,
         starPreservationMaskedReferenceSamplesSkipped =
             starPreservation.maskedReferenceSamplesSkipped,

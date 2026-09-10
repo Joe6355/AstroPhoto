@@ -245,8 +245,21 @@ class JpegPostCompletionHotfixTest {
             source.indexOf("private fun appendMediaStoreSessionInfo("),
             source.indexOf("private fun appendLegacySessionInfo(")
         )
-        assertTrue(helper.contains("val uri = existingUri ?: return false"))
+        assertTrue(helper.contains("SessionInfoStore(context).append(session, block)"))
         assertFalse(helper.contains("resolver.insert("))
+        val metadata = source("app/src/main/java/com/joe6355/astrophoto/SessionInfoStore.kt")
+        assertFalse(metadata.contains("resolver.insert("))
+        val root = Files.createTempDirectory("imported-session-info").toFile()
+        try {
+            val store = SessionInfoStore(root)
+            store.update("Session_imported", "sessionName: Imported\n") {
+                it + "outputFile: Processed/result.png\n"
+            }
+            assertEquals("sessionName: Imported\noutputFile: Processed/result.png\n",
+                SessionInfoStore(root).read("Session_imported"))
+        } finally {
+            root.deleteRecursively()
+        }
     }
 
     private fun result(

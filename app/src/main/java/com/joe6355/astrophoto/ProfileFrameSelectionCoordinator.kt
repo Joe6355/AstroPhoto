@@ -16,6 +16,31 @@ internal data class ProfileFrameSelectionPreparation(
 
 /** Owns deterministic quality selection and reference-frame preparation. */
 internal object ProfileFrameSelectionCoordinator {
+    /** Promote the actual registration reference before any full-resolution work or composition. */
+    fun withReference(
+        preparation: ProfileFrameSelectionPreparation,
+        referenceFrameKey: String,
+        dimensionsByFrameKey: Map<String, Pair<Int, Int>>
+    ): ProfileFrameSelectionPreparation {
+        if (preparation.selectedReference.frame.key == referenceFrameKey) return preparation
+        require(preparation.selectedFrames.any { it.key == referenceFrameKey })
+        val reference = preparation.analyzedByFrameKey.getValue(referenceFrameKey)
+        require(reference.analysis.hardInvalidReason == null)
+        val dimensions = dimensionsByFrameKey.getValue(referenceFrameKey)
+        val score = ReferenceFrameSelector().scoreAll(preparation.selectedFrames.map {
+            preparation.analysesByFrameKey.getValue(it.key)
+        }).single { it.analysis.id == referenceFrameKey }.score
+        return preparation.copy(
+            selectedReference = reference,
+            selectedFrames = listOf(reference.frame) + preparation.selectedFrames.filterNot {
+                it.key == referenceFrameKey
+            },
+            targetWidth = dimensions.first,
+            targetHeight = dimensions.second,
+            referenceScore = score
+        )
+    }
+
     fun prepare(
         analyzedFrames: List<ProfileAnalyzedFrame>,
         analysisFrames: List<SessionFrame>,

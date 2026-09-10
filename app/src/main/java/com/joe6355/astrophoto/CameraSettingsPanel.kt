@@ -316,6 +316,8 @@ private class CameraPanelNestedScrollConnection(
     private val scope: CoroutineScope,
     private val anchorChange: State<(CameraPanelAnchor) -> Unit>
 ) : NestedScrollConnection {
+    private var panelMovedDuringScroll = false
+
     override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
         val delta = available.y
         val shouldMovePanel = shouldCameraPanelConsumeScroll(
@@ -329,7 +331,9 @@ private class CameraPanelNestedScrollConnection(
         val previous = offsetState.floatValue
         offsetState.floatValue = (previous + delta)
             .coerceIn(anchors.expandedOffset, anchors.collapsedOffset)
-        return Offset(0f, offsetState.floatValue - previous)
+        val consumed = offsetState.floatValue - previous
+        if (consumed != 0f) panelMovedDuringScroll = true
+        return Offset(0f, consumed)
     }
 
     override fun onPostScroll(
@@ -345,7 +349,10 @@ private class CameraPanelNestedScrollConnection(
         val canCollapse = available.y > 0f && scrollAtTop() &&
             offsetState.floatValue < anchors.collapsedOffset
         val canExpand = available.y < 0f && offsetState.floatValue > anchors.expandedOffset
-        if (!canCollapse && !canExpand) return Velocity.Zero
+        // A drag may already reach an endpoint or end with zero velocity. Commit its
+        // anchor too; otherwise the visible height and the saved/back-button state disagree.
+        if (!panelMovedDuringScroll && !canCollapse && !canExpand) return Velocity.Zero
+        panelMovedDuringScroll = false
         val target = settleCameraPanelAnchor(
             offsetPx = offsetState.floatValue,
             velocityPxPerSecond = available.y,

@@ -1,6 +1,7 @@
 package com.joe6355.astrophoto.processing.jpeg.v2.enhancement
 
 import com.joe6355.astrophoto.processing.jpeg.v2.color.SrgbTransfer
+import com.joe6355.astrophoto.processing.jpeg.v2.color.LinearRgb16
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
@@ -39,32 +40,55 @@ class GlobalToneTransform(
         val red = decode8(argb ushr 16 and 0xFF)
         val green = decode8(argb ushr 8 and 0xFF)
         val blue = decode8(argb and 0xFF)
-        val luminance = linearLuminance(red, green, blue)
-        if (luminance <= epsilon) {
-            return GlobalTonePixelResult(
-                argb = argb,
-                scaleLimited = false,
-                maximumLinearChannel = max(red, max(green, blue))
-            )
-        }
-
-        val luminancePrime = toneLuminance(luminance, anchors, gain)
-        val requestedScale = luminancePrime / max(luminance, epsilon)
-        val maximumInputChannel = max(red, max(green, blue))
-        val gamutScale = 1.0 / max(maximumInputChannel, epsilon)
-        val scale = min(requestedScale, gamutScale)
-        val outRed = red * scale
-        val outGreen = green * scale
-        val outBlue = blue * scale
+        val adjustment = adjustment(red, green, blue, anchors, gain)
         val alpha = argb ushr 24 and 0xFF
         return GlobalTonePixelResult(
             argb = (alpha shl 24) or
-                (encode8(outRed) shl 16) or
-                (encode8(outGreen) shl 8) or
-                encode8(outBlue),
-            scaleLimited = gamutScale + SCALE_LIMIT_TOLERANCE < requestedScale,
-            maximumLinearChannel = max(outRed, max(outGreen, outBlue))
+                (encode8(red * adjustment.scale) shl 16) or
+                (encode8(green * adjustment.scale) shl 8) or
+                encode8(blue * adjustment.scale),
+            scaleLimited = adjustment.scaleLimited,
+            maximumLinearChannel = adjustment.maximumLinearChannel
         )
+    }
+
+    private data class Adjustment(val scale: Double, val scaleLimited: Boolean, val maximumLinearChannel: Double)
+
+    private fun adjustment(red: Double, green: Double, blue: Double, anchors: GlobalToneAnchors, gain: Double): Adjustment {
+        val luminance = linearLuminance(red, green, blue)
+        val maximumInput = max(red, max(green, blue))
+        if (luminance <= epsilon) return Adjustment(1.0, false, maximumInput)
+        val requestedScale = toneLuminance(luminance, anchors, gain) / max(luminance, epsilon)
+        val gamutScale = 1.0 / max(maximumInput, epsilon)
+        val scale = min(requestedScale, gamutScale)
+        return Adjustment(scale, gamutScale + SCALE_LIMIT_TOLERANCE < requestedScale, maximumInput * scale)
+    }
+
+    fun transformLinearRow(
+        source: LongArray,
+        destination: LongArray,
+        anchors: GlobalToneAnchors,
+        gain: Double = APPROVED_GAIN,
+        pixelCount: Int = source.size
+    ): GlobalToneRowMetrics {
+        require(gain in 0.0..1.0 && pixelCount in 0..min(source.size, destination.size))
+        var limited = 0
+        var maximum = 0.0
+        for (index in 0 until pixelCount) {
+            val color = source[index]
+            val red = LinearRgb16.red(color).toDouble()
+            val green = LinearRgb16.green(color).toDouble()
+            val blue = LinearRgb16.blue(color).toDouble()
+            val adjustment = adjustment(red, green, blue, anchors, gain)
+            destination[index] = LinearRgb16.pack(
+                (red * adjustment.scale).toFloat(),
+                (green * adjustment.scale).toFloat(),
+                (blue * adjustment.scale).toFloat()
+            )
+            if (adjustment.scaleLimited) limited++
+            maximum = max(maximum, adjustment.maximumLinearChannel)
+        }
+        return GlobalToneRowMetrics(limited, maximum)
     }
 
     fun transformRow(

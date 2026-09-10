@@ -1,6 +1,8 @@
 package com.joe6355.astrophoto
 
 import kotlin.math.roundToInt
+import com.joe6355.astrophoto.processing.jpeg.v2.color.LinearRgb16
+import com.joe6355.astrophoto.processing.jpeg.v2.color.SrgbTransfer
 
 fun subtractMasterDark(
     light: AveragePixelFrame,
@@ -83,4 +85,16 @@ private fun subtractDarkChannel(
 }
 
 private const val DARK_SUBTRACTION_STRENGTH = 0.65f
+
+internal fun subtractDarkChannelPrecise(light: Float, dark: Float, neutralOffset: Int): Float =
+    (light - dark * DARK_SUBTRACTION_STRENGTH + neutralOffset).coerceIn(0f, 255f)
+
+internal fun subtractMasterDarkLinearRgb(light: Long, dark: Long, neutralOffset: Int): Long {
+    fun channel(lightValue: Float, darkValue: Float): Float = SrgbTransfer.srgbToLinear(
+        subtractDarkChannelPrecise(SrgbTransfer.linearToSrgb(lightValue) * 255f,
+            SrgbTransfer.linearToSrgb(darkValue) * 255f, neutralOffset) / 255f
+    )
+    return LinearRgb16.pack(channel(LinearRgb16.red(light), LinearRgb16.red(dark)),
+        channel(LinearRgb16.green(light), LinearRgb16.green(dark)), channel(LinearRgb16.blue(light), LinearRgb16.blue(dark)))
+}
 private const val OPAQUE_ALPHA = 0xFF000000.toInt()

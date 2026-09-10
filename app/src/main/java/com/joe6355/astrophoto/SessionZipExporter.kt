@@ -308,8 +308,9 @@ class SessionZipExporter(private val context: Context) {
             while (cursor.moveToNext()) {
                 val name = cursor.getString(nameIndex).orEmpty()
                 if (name.isBlank()) continue
-                val relativeDirectory = cursor.getString(pathIndex).orEmpty()
-                    .removePrefix(basePath)
+                val sourceDirectory = cursor.getString(pathIndex).orEmpty()
+                if (!sourceDirectory.startsWith(basePath)) continue
+                val relativeDirectory = sourceDirectory.removePrefix(basePath)
                 val relativePath = sanitizeEntryPath("$relativeDirectory$name")
                 if (relativePath.equals("README.txt", ignoreCase = true)) continue
                 val uri = ContentUris.withAppendedId(
@@ -325,6 +326,7 @@ class SessionZipExporter(private val context: Context) {
         }
         appendRawSidecars(sources, session)
         appendFallbackProcessingReports(sources, session)
+        sources.removeAll { it.relativePath.equals("session_info.txt", ignoreCase = true) }
         if (sources.none {
                 it.relativePath.equals("session_info.txt", ignoreCase = true)
             }
@@ -363,6 +365,7 @@ class SessionZipExporter(private val context: Context) {
         }
         appendRawSidecars(sources, session)
         appendFallbackProcessingReports(sources, session)
+        sources.removeAll { it.relativePath.equals("session_info.txt", ignoreCase = true) }
         if (sources.none {
                 it.relativePath.equals("session_info.txt", ignoreCase = true)
             }
@@ -500,79 +503,12 @@ class SessionZipExporter(private val context: Context) {
     }
 
     private fun appendMediaStoreInfo(session: SessionSummary, block: String) {
-        val resolver = context.contentResolver
-        val collection = MediaStore.Files.getContentUri("external")
-        val path =
-            "${Environment.DIRECTORY_PICTURES}/AstroPhoto/${session.folderName}/"
-        val uri = resolver.query(
-            collection,
-            arrayOf(MediaStore.Files.FileColumns._ID),
-            "${MediaStore.Files.FileColumns.DISPLAY_NAME}=? AND " +
-                "${MediaStore.Files.FileColumns.RELATIVE_PATH}=?",
-            arrayOf("session_info.txt", path),
-            null
-        )?.use { cursor ->
-            if (cursor.moveToFirst()) {
-                ContentUris.withAppendedId(collection, cursor.getLong(0))
-            } else {
-                null
-            }
-        }
-        val existing = uri?.let {
-            resolver.openInputStream(it)?.bufferedReader()?.use { reader ->
-                reader.readText()
-            }
-        }.orEmpty()
-        var inserted = false
-        val target = uri ?: resolver.insert(
-            collection,
-            ContentValues().apply {
-                put(MediaStore.Files.FileColumns.DISPLAY_NAME, "session_info.txt")
-                put(MediaStore.Files.FileColumns.MIME_TYPE, "text/plain")
-                put(MediaStore.Files.FileColumns.RELATIVE_PATH, path)
-                put(MediaStore.Files.FileColumns.IS_PENDING, 1)
-            }
-        )?.also { inserted = true } ?: error("Не удалось обновить session_info.txt")
-        try {
-            resolver.openOutputStream(target, "wt")?.bufferedWriter()?.use { writer ->
-                val base = existing.ifBlank {
-                    "sessionName: ${session.sessionName}\n"
-                }
-                writer.write(base.trimEnd())
-                writer.write(block)
-            } ?: error("Не удалось обновить session_info.txt")
-            if (inserted) {
-                resolver.update(
-                    target,
-                    ContentValues().apply {
-                        put(MediaStore.Files.FileColumns.IS_PENDING, 0)
-                    },
-                    null,
-                    null
-                )
-            }
-        } catch (error: Exception) {
-            if (inserted) resolver.delete(target, null, null)
-            throw error
-        }
+        SessionInfoStore(context).append(session, block)
     }
 
-    @Suppress("DEPRECATION")
     private fun appendFileInfo(session: SessionSummary, block: String) {
-        val pictures = Environment.getExternalStoragePublicDirectory(
-            Environment.DIRECTORY_PICTURES
-        )
-        val file = File(
-            pictures,
-            "AstroPhoto/${session.folderName}/session_info.txt"
-        )
-        file.parentFile?.mkdirs()
-        if (!file.exists()) {
-            file.writeText("sessionName: ${session.sessionName}\n")
-        }
-        file.appendText(block)
+        SessionInfoStore(context).append(session, block)
     }
-
     private fun uniqueMediaStoreName(
         collection: Uri,
         path: String,
@@ -633,7 +569,7 @@ class SessionZipExporter(private val context: Context) {
             ?: "неизвестно"
 
     private fun fallbackSessionInfo(session: SessionSummary): String =
-        session.infoContent.takeIf {
+        (SessionInfoStore(context).read(session.folderName) ?: session.infoContent).takeIf {
             it.isNotBlank() && it != "Нет информации"
         } ?: buildString {
             appendLine("sessionName: ${session.sessionName.ifBlank { "неизвестно" }}")

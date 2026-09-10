@@ -32,7 +32,8 @@ internal fun manualSensorDefectCoveragePlan(
     plan: ManualSequenceAlignmentPlan?,
     mode: ManualAlignedStackMode,
     outputWidth: Int,
-    outputHeight: Int
+    outputHeight: Int,
+    checkCancelled: () -> Unit = {}
 ): ManualSensorDefectCoveragePlan? {
     if (plan == null) return null
     require(outputWidth > 0 && outputHeight > 0)
@@ -66,31 +67,47 @@ internal fun manualSensorDefectCoveragePlan(
     val commonPixelCountLong = commonRegion.width.toLong() * commonRegion.height
     require(commonPixelCountLong in 1..Int.MAX_VALUE)
     val commonPixelCount = commonPixelCountLong.toInt()
-    val exclusions = IntArray(commonPixelCount)
+    // Sorted sparse sensor coordinates; only one bounded strip of counters is resident.
+    val stripHeight = minOf(32, commonRegion.height)
+    val exclusions = IntArray(commonRegion.width * stripHeight)
+    val remainingHistogram = IntArray(accepted.size + 1)
     var excludedSamples = 0L
-    accepted.forEach { decision ->
-        mask.footprintPixels.forEach { sourcePixel ->
-            val outputX = sourcePixel.x - decision.shift.dx
-            val outputY = sourcePixel.y - decision.shift.dy
-            if (
-                outputX in commonRegion.left until commonRegion.right &&
-                outputY in commonRegion.top until commonRegion.bottom
-            ) {
-                val index = (outputY - commonRegion.top) * commonRegion.width +
-                    (outputX - commonRegion.left)
+    var affected = 0
+    var insufficient = 0
+    fun lowerBound(sourceY: Int): Int {
+        var low = 0
+        var high = mask.footprintPixels.size
+        while (low < high) {
+            val middle = (low + high) ushr 1
+            if (mask.footprintPixels[middle].y < sourceY) low = middle + 1 else high = middle
+        }
+        return low
+    }
+    for (top in commonRegion.top until commonRegion.bottom step stripHeight) {
+        checkCancelled()
+        val rows = minOf(stripHeight, commonRegion.bottom - top)
+        val pixels = commonRegion.width * rows
+        exclusions.fill(0, 0, pixels)
+        accepted.forEach { decision ->
+            val from = lowerBound(top + decision.shift.dy)
+            val until = lowerBound(top + rows + decision.shift.dy)
+            for (sourceIndex in from until until) {
+                val sourcePixel = mask.footprintPixels[sourceIndex]
+                val outputX = sourcePixel.x - decision.shift.dx
+                if (outputX !in commonRegion.left until commonRegion.right) continue
+                val outputY = sourcePixel.y - decision.shift.dy
+                val index = (outputY - top) * commonRegion.width + outputX - commonRegion.left
                 exclusions[index]++
                 excludedSamples++
             }
         }
-    }
-    val remainingHistogram = IntArray(accepted.size + 1)
-    var affected = 0
-    var insufficient = 0
-    exclusions.forEach { excluded ->
-        val remaining = (accepted.size - excluded).coerceIn(0, accepted.size)
-        remainingHistogram[remaining]++
-        if (excluded > 0) affected++
-        if (remaining < mode.minimumFrameCount) insufficient++
+        for (index in 0 until pixels) {
+            val excluded = exclusions[index]
+            val remaining = (accepted.size - excluded).coerceIn(0, accepted.size)
+            remainingHistogram[remaining]++
+            if (excluded > 0) affected++
+            if (remaining < mode.minimumFrameCount) insufficient++
+        }
     }
     val insufficientFraction = insufficient.toFloat() / commonPixelCount
     if (insufficientFraction > MAX_INSUFFICIENT_COVERAGE_FRACTION) {

@@ -1,6 +1,7 @@
 package com.joe6355.astrophoto.processing.jpeg.v2.postprocessing
 
 import com.joe6355.astrophoto.processing.jpeg.v2.color.SrgbTransfer
+import com.joe6355.astrophoto.processing.jpeg.v2.color.LinearRgb16
 import com.joe6355.astrophoto.processing.jpeg.v2.model.AlphaMask
 import com.joe6355.astrophoto.processing.jpeg.v2.model.DetectedStar
 import kotlin.math.ceil
@@ -8,6 +9,15 @@ import kotlin.math.roundToInt
 
 internal const val STATISTICS_ALPHA_THRESHOLD = 0.98f
 internal const val OPERATION_ALPHA_THRESHOLD = 0.0001f
+
+internal fun linearChannel(color: Long, shift: Int): Float = when (shift) {
+    16 -> LinearRgb16.red(color)
+    8 -> LinearRgb16.green(color)
+    0 -> LinearRgb16.blue(color)
+    else -> error("Invalid RGB channel")
+}
+
+internal fun linearLuminance(color: Long): Float = LinearRgb16.luminance(color)
 
 internal fun linearChannel(color: Int, shift: Int): Float =
     SrgbTransfer.srgbToLinear((color ushr shift and 0xFF) / 255f)

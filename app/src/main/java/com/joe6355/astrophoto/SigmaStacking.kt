@@ -1,5 +1,8 @@
 package com.joe6355.astrophoto
 
+import com.joe6355.astrophoto.processing.jpeg.v2.color.LinearRgb16
+import com.joe6355.astrophoto.processing.jpeg.v2.color.SrgbTransfer
+
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
@@ -80,6 +83,15 @@ private fun sigmaClipChannel(
     sigmaThreshold: Double,
     iterations: Int
 ): Int {
+    return sigmaClipChannelMean(values, initialCount, sigmaThreshold, iterations).roundToInt().coerceIn(0, 255)
+}
+
+private fun sigmaClipChannelMean(
+    values: IntArray,
+    initialCount: Int,
+    sigmaThreshold: Double,
+    iterations: Int
+): Double {
     var count = initialCount
 
     repeat(iterations) {
@@ -92,7 +104,7 @@ private fun sigmaClipChannel(
             squaredDifferenceSum += difference * difference
         }
         val standardDeviation = sqrt(squaredDifferenceSum / count)
-        if (standardDeviation == 0.0) return mean.roundToInt().coerceIn(0, 255)
+        if (standardDeviation == 0.0) return mean
 
         val threshold = sigmaThreshold * standardDeviation
         var acceptedCount = 0
@@ -103,14 +115,29 @@ private fun sigmaClipChannel(
                 acceptedCount++
             }
         }
-        if (acceptedCount == 0) return mean.roundToInt().coerceIn(0, 255)
-        if (acceptedCount == count) return mean.roundToInt().coerceIn(0, 255)
+        if (acceptedCount == 0) return mean
+        if (acceptedCount == count) return mean
         count = acceptedCount
     }
 
     var finalSum = 0L
     for (index in 0 until count) finalSum += values[index]
-    return (finalSum.toDouble() / count).roundToInt().coerceIn(0, 255)
+    return finalSum.toDouble() / count
+}
+
+internal fun sigmaClipLinearRgbPixel(
+    colors: IntArray, channels: Array<IntArray>, count: Int, sigmaThreshold: Double, iterations: Int = 1
+): Long {
+    require(count in 1..colors.size && channels.size == 3)
+    require(sigmaThreshold.isFinite() && sigmaThreshold > 0.0 && iterations > 0)
+    for (channel in 0..2) for (index in 0 until count) {
+        channels[channel][index] = colors[index] ushr ((2 - channel) * 8) and 255
+    }
+    return LinearRgb16.pack(
+        SrgbTransfer.srgbToLinear((sigmaClipChannelMean(channels[0], count, sigmaThreshold, iterations) / 255.0).toFloat()),
+        SrgbTransfer.srgbToLinear((sigmaClipChannelMean(channels[1], count, sigmaThreshold, iterations) / 255.0).toFloat()),
+        SrgbTransfer.srgbToLinear((sigmaClipChannelMean(channels[2], count, sigmaThreshold, iterations) / 255.0).toFloat())
+    )
 }
 
 private fun validateSigmaFrames(frames: List<AveragePixelFrame>) {

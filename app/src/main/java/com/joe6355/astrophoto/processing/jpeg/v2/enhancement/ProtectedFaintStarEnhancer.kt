@@ -5,7 +5,7 @@ import com.joe6355.astrophoto.processing.jpeg.v2.postprocessing.FileBackedSkySta
 import com.joe6355.astrophoto.processing.jpeg.v2.postprocessing.ExperimentalStarEnhancementSupport
 import com.joe6355.astrophoto.processing.jpeg.v2.postprocessing.linearChannel
 import com.joe6355.astrophoto.processing.jpeg.v2.postprocessing.linearLuminance
-import com.joe6355.astrophoto.processing.jpeg.v2.postprocessing.packLinear
+import com.joe6355.astrophoto.processing.jpeg.v2.color.LinearRgb16
 import com.joe6355.astrophoto.processing.jpeg.v2.postprocessing.smoothStep
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedFloatPlane
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedFloatPlaneReader
@@ -28,6 +28,7 @@ data class ProtectedFaintStarEnhancementMetrics(
 }
 
 data class ProtectedFaintStarEnhancementResult(
+    /** May be the input itself when no stars qualify; callers must retain that file. */
     val image: FileBackedImage,
     val metrics: ProtectedFaintStarEnhancementMetrics
 )
@@ -65,7 +66,7 @@ class ProtectedFaintStarEnhancer(
             }
         }
         val activeStars = confirmedStars + discoveredStars
-        val changes = mutableMapOf<Long, Int>()
+        val changes = mutableMapOf<Long, Long>()
         var considered = 0
         var enhanced = 0
         var maximumGain = 0f
@@ -84,7 +85,7 @@ class ProtectedFaintStarEnhancer(
                     ) return@forEach
                     val background = annulusMedian(image, alpha, centerX, centerY, star.width)
                     if (!background.isFinite()) return@forEach
-                    val centerLuminance = linearLuminance(image.argbAt(centerX, centerY))
+                    val centerLuminance = linearLuminance(image.linearRgbAt(centerX, centerY))
                     val centerDetail = centerLuminance - background
                     if (centerDetail <= noiseFloor) return@forEach
                     val supportThreshold = maxOf(noiseFloor * 0.55f, centerDetail * MIN_CORE_DETAIL_FRACTION)
@@ -95,7 +96,7 @@ class ProtectedFaintStarEnhancer(
                         val y = centerY + dy
                         if (
                             alpha.alphaAt(x, y) >= FULL_SKY_ALPHA &&
-                            linearLuminance(image.argbAt(x, y)) - background >= supportThreshold
+                            linearLuminance(image.linearRgbAt(x, y)) - background >= supportThreshold
                         ) support++
                     }
                     if (support !in MINIMUM_SUPPORT..MAXIMUM_SUPPORT) return@forEach
@@ -116,7 +117,7 @@ class ProtectedFaintStarEnhancer(
                         val y = centerY + dy
                         if (alpha.alphaAt(x, y) < FULL_SKY_ALPHA) continue
                         val key = y.toLong() * input.width + x
-                        val color = changes[key] ?: image.argbAt(x, y)
+                        val color = changes[key] ?: image.linearRgbAt(x, y)
                         val luminance = linearLuminance(color)
                         val localDetail = luminance - background
                         if (localDetail < supportThreshold || luminance <= MINIMUM_LUMINANCE) continue
@@ -125,7 +126,7 @@ class ProtectedFaintStarEnhancer(
                         val target = (background + localDetail * (1f + localGain))
                             .coerceAtMost(MAXIMUM_ENHANCED_LUMINANCE)
                         val scale = target / luminance
-                        changes[key] = packLinear(
+                        changes[key] = LinearRgb16.pack(
                             linearChannel(color, 16) * scale,
                             linearChannel(color, 8) * scale,
                             linearChannel(color, 0) * scale
@@ -137,16 +138,19 @@ class ProtectedFaintStarEnhancer(
                 }
             }
         }
+        if (changes.isEmpty()) return ProtectedFaintStarEnhancementResult(
+            input, ProtectedFaintStarEnhancementMetrics(discoveredStars.size, considered, enhanced, 0, maximumGain)
+        )
+        val row = LongArray(input.width)
         val writer = store.createTemporaryWriter("protected-faint-stars", input.width, input.height)
-        val row = IntArray(input.width)
         try {
             FileBackedImageReader(input).use { image ->
                 for (y in 0 until input.height) {
-                    image.readArgbRow(y, row)
+                    image.readLinearRow(y, row)
                     for (x in 0 until input.width) {
                         changes[y.toLong() * input.width + x]?.let { row[x] = it }
                     }
-                    writer.writeRow(y, row)
+                    writer.writeLinearRow(y, row)
                 }
             }
             return ProtectedFaintStarEnhancementResult(
@@ -187,7 +191,7 @@ class ProtectedFaintStarEnhancer(
             val x = centerX + dx
             val y = centerY + dy
             if (alpha.alphaAt(x, y) < FULL_SKY_ALPHA) continue
-            values[count++] = linearLuminance(image.argbAt(x, y))
+            values[count++] = linearLuminance(image.linearRgbAt(x, y))
         }
         if (count < MINIMUM_ANNULUS_SAMPLES) return Float.NaN
         values.sort(0, count)

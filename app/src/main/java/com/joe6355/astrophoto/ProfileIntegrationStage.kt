@@ -100,12 +100,13 @@ internal suspend fun computeAutomaticSensorMaskedIntegration(
                 outputHeight = targetHeight,
                 frames = frames,
                 maximumWorkingMemoryBytes = maximumWorkingMemory,
+                residentBufferBytes = targetWidth.toLong() * 128L + 256L * 1024L,
                 openSource = { cached -> FileBackedArgbPixelSource(cached) },
                 allowRobustClipping = false,
                 sensorDefectMask = activeMask,
                 includeOutputPixel = integrationSkyMask::contains,
-                writeTile = { tile, pixels ->
-                    stackedWriter.writeTile(
+                writeLinearTile = { tile, pixels ->
+                    stackedWriter.writeLinearTile(
                         tile.left,
                         tile.top,
                         tile.width,

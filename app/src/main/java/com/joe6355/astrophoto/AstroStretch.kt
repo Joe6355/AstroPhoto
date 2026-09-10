@@ -1,6 +1,8 @@
 package com.joe6355.astrophoto
 
 import android.graphics.Bitmap
+import com.joe6355.astrophoto.processing.jpeg.v2.color.LinearRgb16
+import com.joe6355.astrophoto.processing.jpeg.v2.color.SrgbTransfer
 import kotlin.math.ln
 import kotlin.math.pow
 import kotlin.math.roundToInt
@@ -177,10 +179,22 @@ private fun stretchChannel(
     denominator: Double,
     gamma: Double
 ): Int {
+    return (stretchEncodedChannel(value.toFloat(), black, range, strength, denominator, gamma) * 255.0)
+        .roundToInt().coerceIn(0, 255)
+}
+
+private fun stretchEncodedChannel(value: Float, black: Int, range: Float, strength: Double, denominator: Double, gamma: Double): Double {
     val normalized = ((value - black) / range).coerceIn(0f, 1f).toDouble()
     val logCurve = ln(1.0 + strength * normalized) / denominator
-    val lifted = logCurve.pow(1.0 / gamma)
-    return (lifted * 255.0).roundToInt().coerceIn(0, 255)
+    return logCurve.pow(1.0 / gamma)
+}
+
+internal fun stretchLinearRgbColor(color: Long, parameters: AstroStretchParameters): Long {
+    fun channel(value: Float): Float = SrgbTransfer.srgbToLinear(stretchEncodedChannel(
+        SrgbTransfer.linearToSrgb(value) * 255f, parameters.blackPoint, parameters.range,
+        parameters.strength, parameters.denominator, parameters.gamma
+    ).toFloat())
+    return LinearRgb16.pack(channel(LinearRgb16.red(color)), channel(LinearRgb16.green(color)), channel(LinearRgb16.blue(color)))
 }
 
 private fun clippingStats(image: ArgbPixelImage): Pair<Float, Float> {

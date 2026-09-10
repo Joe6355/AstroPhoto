@@ -1,6 +1,5 @@
 package com.joe6355.astrophoto
 
-import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
@@ -886,53 +885,7 @@ class ProcessedImageEditor(private val context: Context) {
                 }"
             )
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            appendMediaStoreInfo(session, block)
-        } else {
-            appendLegacyInfo(session, block)
-        }
-    }
-
-    private fun appendMediaStoreInfo(session: SessionSummary, block: String) {
-        val resolver = context.contentResolver
-        val collection = MediaStore.Files.getContentUri("external")
-        val relativePath =
-            "${Environment.DIRECTORY_PICTURES}/AstroPhoto/${session.folderName}/"
-        val uri = resolver.query(
-            collection,
-            arrayOf(MediaStore.Files.FileColumns._ID),
-            "${MediaStore.Files.FileColumns.DISPLAY_NAME}=? AND " +
-                "${MediaStore.Files.FileColumns.RELATIVE_PATH}=?",
-            arrayOf("session_info.txt", relativePath),
-            null
-        )?.use { cursor ->
-            if (cursor.moveToFirst()) {
-                ContentUris.withAppendedId(collection, cursor.getLong(0))
-            } else {
-                null
-            }
-        } ?: error("session_info.txt не найден")
-        val current = resolver.openInputStream(uri)
-            ?.bufferedReader()
-            ?.use { it.readText() }
-            .orEmpty()
-        resolver.openOutputStream(uri, "wt")?.bufferedWriter()?.use {
-            it.write(current.trimEnd())
-            it.write(block)
-        } ?: error("Не удалось обновить session_info.txt")
-    }
-
-    @Suppress("DEPRECATION")
-    private fun appendLegacyInfo(session: SessionSummary, block: String) {
-        val pictures = Environment.getExternalStoragePublicDirectory(
-            Environment.DIRECTORY_PICTURES
-        )
-        val file = File(
-            pictures,
-            "AstroPhoto/${session.folderName}/session_info.txt"
-        )
-        file.parentFile?.mkdirs()
-        file.appendText(block)
+        SessionInfoStore(context).append(session, block)
     }
 
     companion object {

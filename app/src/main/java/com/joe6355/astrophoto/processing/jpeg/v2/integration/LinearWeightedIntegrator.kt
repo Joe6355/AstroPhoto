@@ -1,6 +1,7 @@
 package com.joe6355.astrophoto.processing.jpeg.v2.integration
 
 import com.joe6355.astrophoto.processing.jpeg.v2.color.SrgbTransfer
+import com.joe6355.astrophoto.processing.jpeg.v2.color.LinearRgb16
 import com.joe6355.astrophoto.processing.jpeg.v2.artifacts.SensorDefectMask
 import com.joe6355.astrophoto.processing.jpeg.v2.model.IntegrationDiagnostics
 import com.joe6355.astrophoto.processing.jpeg.v2.model.IntegrationMode
@@ -36,13 +37,18 @@ class LinearWeightedIntegrator(
         allowRobustClipping: Boolean = true,
         sensorDefectMask: SensorDefectMask? = null,
         includeOutputPixel: (Int, Int) -> Boolean = { _, _ -> true },
-        writeTile: (TileSpec, IntArray) -> Unit,
+        writeTile: ((TileSpec, IntArray) -> Unit)? = null,
         writeCoverageTile: (TileSpec, FloatArray) -> Unit = { _, _ -> },
         writeSensorDefectAffectedTile: (TileSpec, BooleanArray) -> Unit = { _, _ -> },
-        onTileCompleted: suspend (TileSpec) -> Unit = {}
+        onTileCompleted: suspend (TileSpec) -> Unit = {},
+        writeLinearTile: ((TileSpec, LongArray) -> Unit)? = null,
+        residentBufferBytes: Long = outputWidth.toLong() * outputHeight * 8L
     ): IntegrationDiagnostics {
         require(outputWidth > 0 && outputHeight > 0)
         require(frames.isNotEmpty())
+        require((writeTile == null) != (writeLinearTile == null)) {
+            "Provide exactly one ARGB8 or linear RGB16 output writer"
+        }
         require(frames.all { it.transform.isReliable && it.normalizedWeight > 0f })
         val robustMode = allowRobustClipping &&
             frames.size >= RobustSampleAccumulator.MIN_ROBUST_SAMPLES
@@ -50,7 +56,9 @@ class LinearWeightedIntegrator(
             outputWidth,
             outputHeight,
             robustMode,
-            maximumWorkingMemoryBytes
+            maximumWorkingMemoryBytes,
+            residentBufferBytes = residentBufferBytes,
+            highPrecisionOutput = writeLinearTile != null
         )
         val started = System.nanoTime()
         var validPixels = 0L
@@ -61,14 +69,10 @@ class LinearWeightedIntegrator(
             it.enabled && it.regions.isNotEmpty()
         }
         val filteringApplied = activeSensorDefectMask != null
-        val preparedTransforms = if (filteringApplied) {
-            frames.associate { frame ->
-                frame.id to PreparedReferenceToSourceTransform(
-                    frame.transform.referenceToSourceTransform()
-                )
-            }
-        } else {
-            emptyMap()
+        val preparedTransforms = frames.map { frame ->
+            PreparedReferenceToSourceTransform(
+                frame.transform.referenceToSourceTransform(), preserveMappingOperationOrder = !filteringApplied
+            )
         }
         var excludedSamples = 0L
         var affectedOutputPixels = 0L
@@ -81,7 +85,7 @@ class LinearWeightedIntegrator(
             currentCoroutineContext().ensureActive()
             val accumulator = RobustSampleAccumulator(tile.pixelCount, robustMode)
             val affectedByMask = if (filteringApplied) BooleanArray(tile.pixelCount) else null
-            for (frame in frames) {
+            for ((frameIndex, frame) in frames.withIndex()) {
                 currentCoroutineContext().ensureActive()
                 openSource(frame.source).use { source ->
                     if (filteringApplied) {
@@ -94,8 +98,8 @@ class LinearWeightedIntegrator(
                                 "does not match source ${source.width}x${source.height}"
                         }
                     }
-                    val preparedTransform = preparedTransforms[frame.id]
-                    val reusableSample = if (filteringApplied) MutableSampledSrgb() else null
+                    val preparedTransform = preparedTransforms[frameIndex]
+                    val reusableSample = MutableSampledSrgb()
                     for (localY in 0 until tile.height) {
                         if (localY % 32 == 0) currentCoroutineContext().ensureActive()
                         val outputY = tile.top + localY
@@ -105,7 +109,7 @@ class LinearWeightedIntegrator(
                             val accumulatorIndex = localY * tile.width + localX
                             if (filteringApplied) {
                                 val mask = checkNotNull(activeSensorDefectMask)
-                                val transform = checkNotNull(preparedTransform)
+                                val transform = preparedTransform
                                 val sourceX = transform.sourceX(
                                     outputX.toFloat(),
                                     outputY.toFloat()
@@ -119,7 +123,7 @@ class LinearWeightedIntegrator(
                                     checkNotNull(affectedByMask)[accumulatorIndex] = true
                                     continue
                                 }
-                                val sample = checkNotNull(reusableSample)
+                                val sample = reusableSample
                                 if (!sampler.sampleAt(source, sourceX, sourceY, sample)) continue
                                 accumulator.add(
                                     index = accumulatorIndex,
@@ -129,12 +133,11 @@ class LinearWeightedIntegrator(
                                     weight = frame.normalizedWeight
                                 )
                             } else {
-                                val sample = sampler.sample(
-                                    source,
-                                    frame.transform,
-                                    outputX.toFloat(),
-                                    outputY.toFloat()
-                                ) ?: continue
+                                val transform = preparedTransform
+                                val sample = reusableSample
+                                if (!sampler.sampleAt(source,
+                                        transform.sourceX(outputX.toFloat(), outputY.toFloat()),
+                                        transform.sourceY(outputX.toFloat(), outputY.toFloat()), sample)) continue
                                 accumulator.add(
                                     index = accumulatorIndex,
                                     red = SrgbTransfer.srgbToLinear(sample.red),
@@ -147,13 +150,13 @@ class LinearWeightedIntegrator(
                     }
                 }
             }
-            val output = IntArray(tile.pixelCount)
+            val output = if (writeLinearTile == null) IntArray(tile.pixelCount) { OPAQUE_BLACK } else null
+            val linearOutput = if (writeLinearTile != null) LongArray(tile.pixelCount) else null
             val coverage = FloatArray(tile.pixelCount)
-            output.indices.forEach { index ->
+            (0 until tile.pixelCount).forEach { index ->
                 val outputX = tile.left + index % tile.width
                 val outputY = tile.top + index / tile.width
                 if (!includeOutputPixel(outputX, outputY)) {
-                    output[index] = OPAQUE_BLACK
                     coverage[index] = 0f
                     return@forEach
                 }
@@ -161,7 +164,6 @@ class LinearWeightedIntegrator(
                 if (affectedByMask?.get(index) == true) affectedOutputPixels++
                 val pixel = accumulator.finish(index)
                 if (pixel == null) {
-                    output[index] = OPAQUE_BLACK
                     coverage[index] = 0f
                     insufficientCoveragePixels++
                     minimumValidWeight = 0f
@@ -178,10 +180,15 @@ class LinearWeightedIntegrator(
                         (ratio * validWeightRatioHistogram.lastIndex).roundToInt()
                             .coerceIn(0, validWeightRatioHistogram.lastIndex)
                     ]++
-                    output[index] = linearToArgb(pixel.red, pixel.green, pixel.blue)
+                    if (linearOutput != null) {
+                        linearOutput[index] = LinearRgb16.pack(pixel.red, pixel.green, pixel.blue)
+                    } else {
+                        checkNotNull(output)[index] = linearToArgb(pixel.red, pixel.green, pixel.blue)
+                    }
                 }
             }
-            writeTile(tile, output)
+            if (linearOutput != null) checkNotNull(writeLinearTile)(tile, linearOutput)
+            else checkNotNull(writeTile)(tile, checkNotNull(output))
             writeCoverageTile(tile, coverage)
             affectedByMask?.let { writeSensorDefectAffectedTile(tile, it) }
             onTileCompleted(tile)
@@ -281,7 +288,7 @@ class LinearWeightedIntegrator(
     }
 
     private fun linearToArgb(red: Float, green: Float, blue: Float): Int {
-        // This is the only v2 precision boundary before unavoidable legacy Bitmap post-processing.
+        // Compatibility adapter for callers explicitly requesting ARGB8 tiles.
         val srgbRed = (SrgbTransfer.linearToSrgb(red) * 255f).roundToInt().coerceIn(0, 255)
         val srgbGreen = (SrgbTransfer.linearToSrgb(green) * 255f).roundToInt().coerceIn(0, 255)
         val srgbBlue = (SrgbTransfer.linearToSrgb(blue) * 255f).roundToInt().coerceIn(0, 255)

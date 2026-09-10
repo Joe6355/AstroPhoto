@@ -52,17 +52,15 @@ class SensorDefectMask(
     val enabled: Boolean,
     val rejectionReason: String? = null
 ) {
-    private val footprint = BooleanArray(
-        width.toLong().times(height).also {
-            require(width > 0 && height > 0 && it <= Int.MAX_VALUE)
-        }.toInt()
-    )
+    private val footprint: IntArray
 
     val footprintPixels: List<SensorDefectFootprintPixel>
     val maskedPixelCount: Int
     val maskedSourceFraction: Float
 
     init {
+        require(width > 0 && height > 0 && width.toLong() * height <= Int.MAX_VALUE)
+        val indices = hashSetOf<Int>()
         regions.forEach { region ->
             require(region.classification == PersistentArtifactClassification.SENSOR_DEFECT)
             require(region.confidence in 0f..1f)
@@ -70,12 +68,11 @@ class SensorDefectMask(
             require(region.skySpaceSupport in 0..region.totalFrameCount)
             region.footprintPixels.forEach { pixel ->
                 require(pixel.x in 0 until width && pixel.y in 0 until height)
-                footprint[pixel.y * width + pixel.x] = true
+                indices += pixel.y * width + pixel.x
             }
         }
-        footprintPixels = footprint.indices
-            .asSequence()
-            .filter { footprint[it] }
+        footprint = indices.toIntArray().also { it.sort() }
+        footprintPixels = footprint.asSequence()
             .map { SensorDefectFootprintPixel(it % width, it / width) }
             .toList()
         maskedPixelCount = footprintPixels.size
@@ -87,7 +84,7 @@ class SensorDefectMask(
         enabled &&
             sourceX in 0 until width &&
             sourceY in 0 until height &&
-            footprint[sourceY * width + sourceX]
+            footprint.binarySearch(sourceY * width + sourceX) >= 0
 
     fun intersectsBilinearSample(sourceX: Float, sourceY: Float): Boolean {
         if (

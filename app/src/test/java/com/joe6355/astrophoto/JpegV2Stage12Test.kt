@@ -23,6 +23,101 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class JpegV2Stage12Test {
+    @Test fun centroidVerificationMeasuresRotationAndCenterNotCachedShifts() {
+        val transform = ReferenceToSourceTransform(3f, -2f, 0.02f, 1f, 80f, 70f)
+        val matches = (0..7).map { index ->
+            val match = match(20f, index % 4)
+            val reference = match.reference.copy(x = 20f + index * 15f, y = 30f + index % 3 * 35f)
+            val mapped = transform.mapOutputToSource(reference.x, reference.y)
+            match.copy(reference = reference, candidate = reference.copy(x = mapped.x, y = mapped.y),
+                dx = transform.dx, dy = transform.dy)
+        }
+        val evidence = com.joe6355.astrophoto.processing.jpeg.v2.registration.FullResolutionFrameVerification()
+            .verifyCentroids(matches, transform, transform.copy(rotationRadians = 0f), transform)
+        assertEquals(0f, evidence.refined.centroidResidual, 0.0001f)
+        assertTrue(evidence.zncc.centroidResidual > 0.3f)
+        assertTrue(evidence.inverse.centroidResidual > 1f)
+    }
+
+    @Test fun fullResolutionRefinerRecoversRotationWithDistributedStars() {
+        val stars = (0 until 4).flatMap { row -> (0 until 4).map { col ->
+            Star(25f + col * 40f + row * 1.3f, 23f + row * 28f + col * 0.7f)
+        } }
+        // Translation-only is an absent rotation estimate, not a measured zero-degree prior.
+        val trueTransform = ReferenceToSourceTransform(-4f, 3f, 0.0045f)
+        val candidate = stars.map { star ->
+            val mapped = trueTransform.mapOutputToSource(star.x, star.y)
+            star.copy(x = mapped.x, y = mapped.y)
+        }
+        val initial = trueTransform.copy(rotationRadians = 0f)
+        val fixture = FrameFixture(render(stars), render(candidate), initial, initial,
+            stars.mapIndexed { index, star -> FullResolutionStarPatch(
+                star.x, star.y, 1f, star.amplitude, star.sigma * 2.35482f, 0f,
+                index / 4, TemporalMotionCluster.COHERENT_MOVING_SKY, 1f)
+            })
+        val result = refine(fixture)
+        assertTrue(result.rejectionReason, result.accepted)
+        assertEquals(trueTransform.rotationRadians, result.refinedTransform.rotationRadians, 0.0005f)
+        assertTrue(result.percentile90Residual < 0.1f)
+
+        val isolatedOutlier = candidate.mapIndexed { index, star ->
+            if (index == 0) star.copy(x = star.x + 1.2f, y = star.y - 0.8f) else star
+        }
+        val robust = refine(fixture.copy(candidate = render(isolatedOutlier)))
+        assertTrue(robust.rejectionReason, robust.accepted)
+        assertEquals(trueTransform.rotationRadians, robust.refinedTransform.rotationRadians, 0.0005f)
+        assertTrue(robust.diagnostics.any { it.rejectionReason == "centroid_rigid_outlier" })
+        assertTrue(robust.percentile90Residual < 0.1f)
+
+        val insufficient = refine(fixture.copy(patches = fixture.patches.take(6)))
+        assertEquals(0f, insufficient.refinedTransform.rotationRadians, 0f)
+
+        val failedVerification = refine(fixture.copy(candidate = render(candidate, brightness = 0.5f)))
+        assertFalse(failedVerification.accepted)
+        assertEquals(0f, failedVerification.refinedTransform.rotationRadians, 0f)
+    }
+
+    @Test fun rejectsFiniteButMisalignedCentroidSolution() {
+        assertEquals("centroid_median_residual_high", residualDecision(2.78f, 3.5f).rejectionReason)
+        assertEquals("centroid_p90_residual_high", residualDecision(0.2f, 1.2f).rejectionReason)
+        assertTrue(residualDecision(0.35f, 0.60f).accepted)
+    }
+
+    @Test fun rotationWithZeroOriginTranslationIsNotStationaryMotion() {
+        val stars = (0 until 4).flatMap { row -> (0 until 4).map { col ->
+            Star(25f + col * 40f + row * 1.3f, 23f + row * 28f + col * 0.7f)
+        } }
+        val actual = ReferenceToSourceTransform(0f, 0f, 0.03f)
+        val candidate = stars.map { star ->
+            val mapped = actual.mapOutputToSource(star.x, star.y)
+            star.copy(x = mapped.x, y = mapped.y)
+        }
+        val initial = actual.copy(dx = 3f, dy = -2f)
+        val result = refine(FrameFixture(render(stars), render(candidate), initial, initial,
+            stars.mapIndexed { index, star -> FullResolutionStarPatch(
+                star.x, star.y, 1f, star.amplitude, star.sigma * 2.35482f, 0f,
+                index / 4, TemporalMotionCluster.COHERENT_MOVING_SKY, 1f)
+            }))
+        assertTrue(result.rejectionReason, result.accepted)
+        assertEquals(actual.rotationRadians, result.refinedTransform.rotationRadians, 0.0005f)
+        assertEquals(0f, result.refinedTransform.dx, 0.1f)
+        assertEquals(0f, result.refinedTransform.dy, 0.1f)
+        assertTrue(result.percentile90Residual < 0.1f)
+    }
+
+    private fun residualDecision(median: Float, p90: Float):
+        com.joe6355.astrophoto.processing.jpeg.v2.registration.StellarCentroidRefinementDecision {
+        val good = FullResolutionTransformEvidence(8, 0.95f, 1f, 1f, median, 0f, 0f)
+        val worse = good.copy(centroidResidual = median + 2f)
+        return StellarCentroidRefinementPolicy().decide(
+            initialDx = 4f, initialDy = 2f, correctionDx = 0f, correctionDy = 0f,
+            acceptedMatchCount = 8, availableSectorCount = 3, acceptedSectorCount = 3,
+            medianResidual = median, percentile90Residual = p90, searchRadius = 4f,
+            znccTransformDifference = 0f,
+            verification = FullResolutionFrameVerificationResult(good, good, worse, worse, worse, 3, good)
+        )
+    }
+
     @Test fun completedFullResolutionVerificationRoundTripsWithAllEvidence() {
         val fixture = frameFixture(0.25f, -0.2f)
         val centroid = refine(fixture)
@@ -430,7 +525,7 @@ class JpegV2Stage12Test {
     private fun assertProductionOrder() {
         val source = jpegStackerSource()
         val profile = source.substring(source.indexOf("suspend fun profileStack("), source.indexOf("suspend fun loadResultPreview("))
-        val stage12 = profile.indexOf("prepareAndRefineFullResolutionFrames(")
+        val stage12 = profile.indexOf("prepareFullResolutionWithReferenceRecovery(")
         val weights = profile.indexOf("FrameWeightCalculator().calculate(")
         val integration = profile.indexOf("runAutomaticSensorMaskedIntegration(")
         assertTrue(stage12 in 0 until weights)

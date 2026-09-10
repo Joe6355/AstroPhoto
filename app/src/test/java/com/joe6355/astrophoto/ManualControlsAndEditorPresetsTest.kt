@@ -83,6 +83,11 @@ class ManualControlsAndEditorPresetsTest {
 
     @Test
     fun captureResultComparisonDetectsIgnoredIso() {
+        assertFalse(manualCaptureResultMatchesRequest(ManualCaptureResult(16_666_667L, 20_000_000L, 400, 400)))
+        assertFalse(manualCaptureResultMatchesRequest(ManualCaptureResult(20_000_000L, 16_666_667L, 400, 400)))
+        assertFalse(manualCaptureResultMatchesRequest(ManualCaptureResult(20_000_000L, null, 400, 400)))
+        assertFalse(manualCaptureResultMatchesRequest(ManualCaptureResult(20_000_000L, 0L, 400, 400)))
+        assertFalse(manualCaptureResultMatchesRequest(ManualCaptureResult(20_000_000L, 20_000_000L, 400, 0)))
         assertTrue(
             manualCaptureResultMatchesRequest(
                 ManualCaptureResult(10_000_000_000L, 9_900_000_000L, 800, 800)

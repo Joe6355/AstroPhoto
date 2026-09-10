@@ -46,7 +46,7 @@ class SeriesCaptureForegroundService : Service() {
         when (intent?.action) {
             ACTION_STOP -> requestStop()
             ACTION_START -> if (seriesJob?.isActive != true) {
-                readRequest(intent)?.let { startSeries(it, startId) }
+                readRequest(intent)?.let { startSeries(it) }
                     ?: finishWithError("Некорректные параметры фоновой серии")
             }
         }
@@ -63,7 +63,7 @@ class SeriesCaptureForegroundService : Service() {
         super.onDestroy()
     }
 
-    private fun startSeries(request: SeriesCaptureRequest, startId: Int) {
+    private fun startSeries(request: SeriesCaptureRequest) {
         stopRequested = false
         seriesJob = serviceScope.launch {
             var completed = 0
@@ -216,7 +216,9 @@ class SeriesCaptureForegroundService : Service() {
                     message = message
                 )
                 seriesJob = null
-                stopSelf(startId)
+                // STOP arrives with a newer startId. This service owns only one series;
+                // after its current frame is saved, finish the service including that STOP.
+                stopSelf()
             }
         }
     }

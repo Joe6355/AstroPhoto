@@ -74,22 +74,22 @@ import com.joe6355.astrophoto.processing.jpeg.v2.quality.LineArtifactDetector
 import com.joe6355.astrophoto.processing.jpeg.v2.quality.ReferenceStarRetentionValidator
 import com.joe6355.astrophoto.processing.jpeg.v2.quality.FileBackedResultQualityAnalyzer
 import com.joe6355.astrophoto.processing.jpeg.v2.quality.ResultSelectionPolicy
-import com.joe6355.astrophoto.processing.jpeg.v2.registration.OrderedRegistration
-import com.joe6355.astrophoto.processing.jpeg.v2.registration.ExpectedSequenceMotionModel
 import com.joe6355.astrophoto.processing.jpeg.v2.registration.ProfileRegistrationCheckpointStore
 import com.joe6355.astrophoto.processing.jpeg.v2.registration.SequenceAwareRegistrationDiagnostics
 import com.joe6355.astrophoto.processing.jpeg.v2.registration.SequenceAwareRegistrationEngine
 import com.joe6355.astrophoto.processing.jpeg.v2.registration.TemporalFeatureFrame
-import com.joe6355.astrophoto.processing.jpeg.v2.registration.TransformSequenceValidator
 import com.joe6355.astrophoto.processing.jpeg.v2.registration.VerificationMetricsAggregator
-import com.joe6355.astrophoto.processing.jpeg.v2.registration.scaledToFullResolution
 import com.joe6355.astrophoto.processing.jpeg.v2.registration.restoreOrComputeRegistration
 import com.joe6355.astrophoto.processing.jpeg.v2.registration.buildTemporalFeatureFrames
 import com.joe6355.astrophoto.processing.jpeg.v2.memory.ImageAllocationEstimate
 import com.joe6355.astrophoto.processing.jpeg.v2.memory.JpegMemoryBudget
 import com.joe6355.astrophoto.processing.jpeg.v2.memory.PipelineMemoryTracker
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.ResultCandidateStore
+import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedImage
+import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedImageReader
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.TemporaryPipelineFiles
+import com.joe6355.astrophoto.processing.jpeg.v2.output.LosslessProcessedImageWriter
+import com.joe6355.astrophoto.processing.jpeg.v2.output.requireValidPngDimensions
 
 enum class JpegProfileProcessingOutcome {
     PROCESSED,
@@ -258,272 +258,15 @@ class JpegStacker internal constructor(
         frames: List<SessionFrame>,
         alignFrames: Boolean = false,
         onProgress: suspend (current: Int, total: Int) -> Unit,
-        onAlignment: suspend (
-            current: Int,
-            total: Int,
-            message: String
-        ) -> Unit = { _, _, _ -> },
+        onAlignment: suspend (current: Int, total: Int, message: String) -> Unit = { _, _, _ -> },
         alignmentSafe: Boolean = true,
         autoStretch: Boolean = false,
         source: ManualStackingSource = ManualStackingSource.ORIGINAL
-    ): Result<JpegStackResult> = withContext(Dispatchers.IO) {
-        runManualStackingOperation(
-            onAlignmentFailure = { report ->
-                appendManualAlignmentFailureSessionInfo(
-                    session,
-                    ManualAlignedStackMode.AVERAGE,
-                    report
-                )
-            }
-        ) {
-            require(frames.size >= 2) {
-                "Недостаточно JPEG кадров для стеккинга"
-            }
-            require(frames.all {
-                it.category == SessionFrameCategory.LIGHTS_JPEG
-            }) {
-                "Для стеккинга можно использовать только Lights/JPEG"
-            }
-
-            val dimensions = frames.map { frame ->
-                readDimensions(frame)
-                    ?: error("Не удалось прочитать JPEG: ${frame.fileName}")
-            }
-            if (source == ManualStackingSource.CROPPED) {
-                require(dimensions.distinct().size == 1) {
-                    "Selected cropped frames have different dimensions"
-                }
-            }
-            val sourceWidth = dimensions.minOf { it.first }
-            val sourceHeight = dimensions.minOf { it.second }
-            require(sourceWidth > 0 && sourceHeight > 0) {
-                "Не удалось прочитать JPEG"
-            }
-            val sourcePixelCount = sourceWidth.toLong() * sourceHeight
-            val targetPixels = averageStackTargetPixels(sourcePixelCount, frames.size)
-            val scale = if (sourcePixelCount > targetPixels) {
-                sqrt(targetPixels.toDouble() / sourcePixelCount)
-            } else {
-                1.0
-            }
-            val targetWidth = (sourceWidth * scale).roundToInt().coerceAtLeast(1)
-            val targetHeight = (sourceHeight * scale).roundToInt().coerceAtLeast(1)
-            val downscaled = targetWidth < sourceWidth || targetHeight < sourceHeight
-
-            var average: Bitmap? = null
-            var averageAccumulator: ArgbAverageAccumulator? = null
-            var sensorDefectFallback: Bitmap? = null
-            val alignmentShifts = mutableListOf<AlignmentShift>()
-            try {
-                val alignmentSelection = if (alignFrames) {
-                    prepareManualSequenceAlignmentSelection(
-                        frames = frames,
-                        targetWidth = targetWidth,
-                        targetHeight = targetHeight,
-                        mode = ManualAlignedStackMode.AVERAGE,
-                        onProgress = onAlignment
-                    )
-                } else {
-                    null
-                }
-                val sequencePlan = alignmentSelection?.sequencePlan
-                val alignmentReference = if (alignFrames && sequencePlan == null) {
-                    try {
-                        createAlignmentReference(
-                            frames.first(),
-                            targetWidth,
-                            targetHeight
-                        )
-                    } catch (error: CancellationException) {
-                        throw error
-                    } catch (_: Exception) {
-                        withContext(Dispatchers.Main.immediate) {
-                            onAlignment(
-                                1,
-                                frames.size,
-                                "Не удалось подготовить выравнивание. " +
-                                    "Продолжаем без него."
-                            )
-                        }
-                        null
-                    }
-                } else {
-                    null
-                }
-                val frameWork = manualSequenceFrameWork(
-                    frames,
-                    sequencePlan,
-                    ManualAlignedStackMode.AVERAGE
-                )
-                val sensorDefectCoverage = manualSensorDefectCoveragePlan(
-                    sequencePlan,
-                    ManualAlignedStackMode.AVERAGE,
-                    targetWidth,
-                    targetHeight
-                )
-                val sampleFilteringApplied =
-                    sensorDefectCoverage?.report?.sampleLevelFilteringApplied == true
-                frameWork.forEach { work ->
-                    val index = work.originalFrameIndex
-                    val frame = work.value
-                    currentCoroutineContext().ensureActive()
-                    val decoded = decodeMedianFrame(frame, targetWidth, targetHeight)
-                        ?: error("Не удалось прочитать JPEG: ${frame.fileName}")
-                    try {
-                        val prepared = decoded
-                        val shift = if (sequencePlan != null) {
-                            reportManualSequenceShift(
-                                plan = sequencePlan,
-                                frameIndex = index,
-                                targetWidth = targetWidth,
-                                targetHeight = targetHeight,
-                                source = source,
-                                onAlignment = onAlignment
-                            )
-                        } else if (alignmentReference != null && index > 0) {
-                            findAlignmentOrZero(
-                                reference = alignmentReference,
-                                candidate = prepared,
-                                frameNumber = index + 1,
-                                totalFrames = frames.size,
-                                safeMode = alignmentSafe,
-                                source = source
-                            ) { current, total, message ->
-                                withContext(Dispatchers.Main.immediate) {
-                                    onAlignment(current, total, message)
-                                }
-                            }
-                        } else {
-                            AlignmentShift.Zero
-                        }
-                        alignmentShifts += shift
-
-                        if (sampleFilteringApplied) {
-                            if (average == null) {
-                                average = Bitmap.createBitmap(
-                                    targetWidth,
-                                    targetHeight,
-                                    Bitmap.Config.ARGB_8888
-                                )
-                                averageAccumulator = ArgbAverageAccumulator(
-                                    pixelCount = targetWidth * targetHeight,
-                                    maximumFrameCount = frameWork.size,
-                                    perPixelWeighting = true
-                                )
-                            }
-                            addToManualRunningAverage(
-                                accumulator = checkNotNull(averageAccumulator),
-                                average = checkNotNull(average),
-                                next = prepared,
-                                frameNumber = work.compactFrameNumber,
-                                dx = shift.dx,
-                                dy = shift.dy,
-                                sensorDefectCoverage = sensorDefectCoverage
-                            )
-                            if (
-                                sensorDefectCoverage.report.insufficientCoveragePixelCount > 0 &&
-                                index == sequencePlan?.referenceFrameIndex
-                            ) {
-                                sensorDefectFallback = createShiftedBitmapCopy(
-                                    prepared,
-                                    shift.dx,
-                                    shift.dy
-                                )
-                            }
-                        } else if (average == null) {
-                            average = createShiftedBitmapCopy(prepared, shift.dx, shift.dy)
-                            averageAccumulator = ArgbAverageAccumulator(
-                                pixelCount = targetWidth * targetHeight,
-                                maximumFrameCount = frameWork.size
-                            )
-                        } else {
-                            addToManualRunningAverage(
-                                accumulator = checkNotNull(averageAccumulator),
-                                average = checkNotNull(average),
-                                next = prepared,
-                                frameNumber = work.compactFrameNumber,
-                                dx = shift.dx,
-                                dy = shift.dy
-                            )
-                        }
-                    } finally {
-                        decoded.takeUnless { it === average || it.isRecycled }?.recycle()
-                    }
-                    withContext(Dispatchers.Main.immediate) {
-                        onProgress(index + 1, frames.size)
-                    }
-                }
-                if (sampleFilteringApplied) {
-                    applyManualAverageCoverageFallback(
-                        average = checkNotNull(average),
-                        accumulator = checkNotNull(averageAccumulator),
-                        fallback = sensorDefectFallback,
-                        coverage = checkNotNull(sensorDefectCoverage),
-                        minimumValidSamples = ManualAlignedStackMode.AVERAGE.minimumFrameCount
-                    )
-                }
-                var integrationReport = manualSequenceIntegrationReport(
-                    alignmentSelection = alignmentSelection,
-                    mode = ManualAlignedStackMode.AVERAGE,
-                    integratedOriginalFrameIndices = frameWork.map { it.originalFrameIndex },
-                    sensorDefectFiltering = sensorDefectCoverage?.report
-                )
-
-                if (alignFrames) {
-                    average = cropToCommonAlignedRegion(
-                        checkNotNull(average),
-                        alignmentShifts
-                    )
-                }
-                val output = checkNotNull(average)
-                if (autoStretch) {
-                    applyAstroStretchInPlace(output)
-                }
-                val now = System.currentTimeMillis()
-                val outputType = if (alignFrames) {
-                    ProcessedOutputType.AVERAGE_ALIGNED
-                } else {
-                    ProcessedOutputType.AVERAGE
-                }
-                val fileName = buildProcessedResultBaseName(outputType, now)
-                val saved = saveBitmap(session, output, fileName)
-                integrationReport = integrationReport?.publishedSuccessfully()
-                integrationReport?.let(::logManualSequenceIntegrationReport)
-                val infoUpdated = runCatching {
-                    appendSessionInfo(
-                        session = session,
-                        fileName = saved.fileName,
-                        frameCount = frameWork.size,
-                        alignmentEnabled = alignFrames,
-                        astroStretchApplied = autoStretch,
-                        source = source,
-                        manualSequenceReport = integrationReport,
-                        processedAtMillis = now
-                    )
-                }.isSuccess
-
-                JpegStackResult(
-                    fileName = saved.fileName,
-                    displayPath = saved.displayPath,
-                    contentUri = saved.contentUri,
-                    filePath = saved.filePath,
-                    frameCount = frameWork.size,
-                    sessionInfoUpdated = infoUpdated,
-                    alignmentEnabled = alignFrames,
-                    astroStretchApplied = autoStretch,
-                    downscaled = downscaled,
-                    manualAlignmentSummary = integrationReport?.let(::manualSequenceReportSummary)
-                )
-            } catch (error: OutOfMemoryError) {
-                throw IllegalStateException(
-                    "Недостаточно памяти для JPEG стеккинга этого размера",
-                    error
-                )
-            } finally {
-                average?.takeUnless(Bitmap::isRecycled)?.recycle()
-                sensorDefectFallback?.takeUnless(Bitmap::isRecycled)?.recycle()
-            }
-        }
+    ): Result<JpegStackResult> = runTiledManualStack(
+        session, frames, ManualAlignedStackMode.AVERAGE, alignFrames, alignmentSafe, autoStretch, source
+    ) { message, current, total ->
+        onProgress(current, total)
+        onAlignment(current, total, message)
     }
 
     suspend fun stackWithDarkFrames(
@@ -536,206 +279,12 @@ class JpegStacker internal constructor(
         autoStretch: Boolean = false,
         source: ManualStackingSource = ManualStackingSource.ORIGINAL,
         darkCrop: CropManifestEntry? = null,
-        onProgress: suspend (
-            message: String,
-            current: Int,
-            total: Int
-        ) -> Unit
-    ): Result<JpegStackResult> = withContext(Dispatchers.IO) {
-        runManualStackingOperation(
-            onAlignmentFailure = { report ->
-                appendManualAlignmentFailureSessionInfo(
-                    session,
-                    ManualAlignedStackMode.DARK_SUBTRACTED_AVERAGE,
-                    report
-                )
-            }
-        ) {
-            require(lightFrames.size >= 2) { "Недостаточно light frames" }
-            require(darkFrames.isNotEmpty()) { "Dark frames не найдены" }
-            require(shadowOffset in setOf(0, 8, 16, 32)) {
-                "Недопустимая компенсация тени"
-            }
-            require(lightFrames.all {
-                it.category == SessionFrameCategory.LIGHTS_JPEG
-            }) {
-                "Для стеккинга можно использовать только Lights/JPEG"
-            }
-            require(darkFrames.all {
-                it.category == SessionFrameCategory.DARKS_JPEG
-            }) {
-                "Для master dark можно использовать только Darks/JPEG"
-            }
-
-            val allFrames = lightFrames + darkFrames
-            val dimensions = allFrames.map { frame ->
-                readDimensions(frame)
-                    ?: error("Не удалось прочитать JPEG: ${frame.fileName}")
-            }
-            val lightShapes = dimensions.take(lightFrames.size).map { dimension ->
-                decodedPixelFrameShape(dimension.first, dimension.second)
-            }
-            val darkShapes = dimensions.drop(lightFrames.size).map { dimension ->
-                decodedPixelFrameShape(dimension.first, dimension.second)
-            }
-            if (darkCrop == null) {
-                when (val validation = validateDarkFrames(darkShapes, lightShapes)) {
-                    is DarkValidationResult.Valid -> Unit
-                    is DarkValidationResult.Invalid -> error(validation.message)
-                }
-            } else {
-                require(source == ManualStackingSource.CROPPED) {
-                    "Dark crop is only valid for cropped Light frames"
-                }
-                require(lightShapes.all {
-                    it.width == darkCrop.croppedWidth && it.height == darkCrop.croppedHeight
-                }) { "Cropped Light dimensions do not match crop metadata" }
-                require(darkShapes.all {
-                    it.width == darkCrop.originalWidth && it.height == darkCrop.originalHeight
-                }) { "Dark frame dimensions do not match original Light dimensions" }
-            }
-            val targetWidth = darkCrop?.croppedWidth ?: lightShapes.first().width
-            val targetHeight = darkCrop?.croppedHeight ?: lightShapes.first().height
-
-            var masterDark: Bitmap? = null
-            var croppedMasterDark: Bitmap? = null
-            var stacked: Bitmap? = null
-            var lightIntegrationReport: ManualSequenceIntegrationReport? = null
-            try {
-                masterDark = averageFrames(
-                    frames = darkFrames,
-                    targetWidth = darkCrop?.originalWidth ?: targetWidth,
-                    targetHeight = darkCrop?.originalHeight ?: targetHeight
-                ) { current, total ->
-                    withContext(Dispatchers.Main.immediate) {
-                        onProgress(
-                            "Создание master dark: $current из $total",
-                            current,
-                            total
-                        )
-                    }
-                }
-
-                if (darkCrop != null) {
-                    val rect = darkCrop.pixelRect
-                    require(rect.width == targetWidth && rect.height == targetHeight)
-                    croppedMasterDark = Bitmap.createBitmap(
-                        checkNotNull(masterDark),
-                        rect.left,
-                        rect.top,
-                        rect.width,
-                        rect.height
-                    )
-                }
-
-                val calibrated = calibrateAndAverageLights(
-                    lightFrames = lightFrames,
-                    masterDark = croppedMasterDark ?: checkNotNull(masterDark),
-                    targetWidth = targetWidth,
-                    targetHeight = targetHeight,
-                    shadowOffset = shadowOffset,
-                    alignFrames = alignFrames,
-                    alignmentSafe = alignmentSafe,
-                    source = source
-                ) { message, current, total ->
-                    withContext(Dispatchers.Main.immediate) {
-                        onProgress(
-                            message,
-                            current,
-                            total
-                        )
-                    }
-                }
-                stacked = calibrated.bitmap
-                lightIntegrationReport = calibrated.integrationReport
-
-                withContext(Dispatchers.Main.immediate) {
-                    onProgress("Сохранение результата...", 0, 1)
-                }
-                val now = System.currentTimeMillis()
-                val resultType = if (alignFrames) {
-                    ProcessedOutputType.AVERAGE_DARK_ALIGNED
-                } else {
-                    ProcessedOutputType.AVERAGE_DARK
-                }
-                val resultFileName = buildProcessedResultBaseName(resultType, now)
-                val masterDarkFileName = buildProcessedResultBaseName(
-                    ProcessedOutputType.MASTER_DARK,
-                    now
-                )
-                if (autoStretch) {
-                    applyAstroStretchInPlace(checkNotNull(stacked))
-                }
-                val savedResult = saveBitmap(
-                    session,
-                    checkNotNull(stacked),
-                    resultFileName
-                )
-                val savedMaster = try {
-                    saveBitmap(
-                        session,
-                        checkNotNull(masterDark),
-                        masterDarkFileName
-                    )
-                } catch (error: CancellationException) {
-                    deleteSavedJpeg(savedResult)
-                    throw error
-                } catch (_: Exception) {
-                    null
-                }
-                try {
-                    currentCoroutineContext().ensureActive()
-                } catch (error: CancellationException) {
-                    savedMaster?.let(::deleteSavedJpeg)
-                    deleteSavedJpeg(savedResult)
-                    throw error
-                }
-                lightIntegrationReport = lightIntegrationReport?.publishedSuccessfully()
-                lightIntegrationReport?.let(::logManualSequenceIntegrationReport)
-                val infoUpdated = runCatching {
-                    appendDarkStackSessionInfo(
-                        session = session,
-                        resultFileName = savedResult.fileName,
-                        masterDarkFileName = savedMaster?.fileName,
-                        lightFrameCount = calibrated.integratedFrameCount,
-                        darkFrameCount = darkFrames.size,
-                        shadowOffset = shadowOffset,
-                        alignmentEnabled = alignFrames,
-                        astroStretchApplied = autoStretch,
-                        source = source,
-                        manualSequenceReport = lightIntegrationReport,
-                        processedAtMillis = now
-                    )
-                }.isSuccess
-
-                JpegStackResult(
-                    fileName = savedResult.fileName,
-                    displayPath = savedResult.displayPath,
-                    contentUri = savedResult.contentUri,
-                    filePath = savedResult.filePath,
-                    frameCount = calibrated.integratedFrameCount,
-                    sessionInfoUpdated = infoUpdated,
-                    darkFrameCount = darkFrames.size,
-                    shadowOffset = shadowOffset,
-                    masterDarkFileName = savedMaster?.fileName,
-                    masterDarkDisplayPath = savedMaster?.displayPath,
-                    alignmentEnabled = alignFrames,
-                    astroStretchApplied = autoStretch,
-                    manualAlignmentSummary = lightIntegrationReport
-                        ?.let(::manualSequenceReportSummary)
-                )
-            } catch (error: OutOfMemoryError) {
-                throw IllegalStateException(
-                    "Недостаточно памяти для JPEG стеккинга этого размера",
-                    error
-                )
-            } finally {
-                stacked?.takeUnless(Bitmap::isRecycled)?.recycle()
-                croppedMasterDark?.takeUnless(Bitmap::isRecycled)?.recycle()
-                masterDark?.takeUnless(Bitmap::isRecycled)?.recycle()
-            }
-        }
-    }
+        onProgress: suspend (message: String, current: Int, total: Int) -> Unit
+    ): Result<JpegStackResult> = runTiledManualStack(
+        session, lightFrames, ManualAlignedStackMode.DARK_SUBTRACTED_AVERAGE, alignFrames,
+        alignmentSafe, autoStretch, source, darkFrames = darkFrames, shadowOffset = shadowOffset,
+        darkCrop = darkCrop, onProgress = onProgress
+    )
 
     suspend fun medianStack(
         session: SessionSummary,
@@ -744,256 +293,11 @@ class JpegStacker internal constructor(
         alignmentSafe: Boolean = true,
         autoStretch: Boolean = false,
         source: ManualStackingSource = ManualStackingSource.ORIGINAL,
-        onProgress: suspend (
-            message: String,
-            current: Int,
-            total: Int
-        ) -> Unit
-    ): Result<JpegStackResult> = withContext(Dispatchers.IO) {
-        runManualStackingOperation(
-            onAlignmentFailure = { report ->
-                appendManualAlignmentFailureSessionInfo(
-                    session,
-                    ManualAlignedStackMode.MEDIAN,
-                    report
-                )
-            }
-        ) {
-            require(frames.size >= 2) { "Недостаточно JPEG кадров" }
-            require(frames.all {
-                it.category == SessionFrameCategory.LIGHTS_JPEG
-            }) {
-                "Median поддерживает только Lights/JPEG"
-            }
-            val qualitySelection = JpegAutoSelector(context).selectForStacking(
-                frames = frames,
-                maxFrames = MAX_MEDIAN_FRAMES
-            ) { current, total ->
-                withContext(Dispatchers.Main.immediate) {
-                    onProgress("Оценка качества кадров $current из $total", current, total)
-                }
-            }
-            val selectedFrames = qualitySelection.frames
-            val dimensions = selectedFrames.map { frame ->
-                readDimensions(frame)
-                    ?: error("Не удалось прочитать кадр: ${frame.fileName}")
-            }
-            if (source == ManualStackingSource.CROPPED) {
-                require(dimensions.distinct().size == 1) {
-                    "Selected cropped frames have different dimensions"
-                }
-            }
-            val commonWidth = dimensions.minOf { it.first }
-            val commonHeight = dimensions.minOf { it.second }
-            require(commonWidth > 0 && commonHeight > 0) {
-                "Не удалось прочитать кадр"
-            }
-            val pixelCount = commonWidth.toLong() * commonHeight
-            val targetPixels = complexStackTargetPixels(
-                sourcePixels = pixelCount,
-                frameCount = selectedFrames.size,
-                maxPixels = MAX_MEDIAN_PIXELS
-            )
-            val scale = if (pixelCount > targetPixels) {
-                sqrt(targetPixels.toDouble() / pixelCount)
-            } else {
-                1.0
-            }
-            val targetWidth = (commonWidth * scale).roundToInt().coerceAtLeast(1)
-            val targetHeight = (commonHeight * scale).roundToInt().coerceAtLeast(1)
-            val downscaled = targetWidth < commonWidth || targetHeight < commonHeight
-            val preparedFrames = mutableListOf<MedianPreparedFrame>()
-            var output: Bitmap? = null
-
-            try {
-                val alignmentSelection = if (alignFrames) {
-                    prepareManualSequenceAlignmentSelection(
-                        frames = selectedFrames,
-                        targetWidth = targetWidth,
-                        targetHeight = targetHeight,
-                        mode = ManualAlignedStackMode.MEDIAN
-                    ) { current, total, message ->
-                        withContext(Dispatchers.Main.immediate) {
-                            onProgress(message, current, total)
-                        }
-                    }
-                } else {
-                    null
-                }
-                val sequencePlan = alignmentSelection?.sequencePlan
-                val frameWork = manualSequenceFrameWork(
-                    selectedFrames,
-                    sequencePlan,
-                    ManualAlignedStackMode.MEDIAN
-                )
-                val sensorDefectCoverage = manualSensorDefectCoveragePlan(
-                    sequencePlan,
-                    ManualAlignedStackMode.MEDIAN,
-                    targetWidth,
-                    targetHeight
-                )
-                var alignmentReference: ManualAlignmentReference? = null
-                frameWork.forEach { work ->
-                    val index = work.originalFrameIndex
-                    val frame = work.value
-                    currentCoroutineContext().ensureActive()
-                    withContext(Dispatchers.Main.immediate) {
-                        onProgress(
-                            "Подготовка кадра ${index + 1} из ${selectedFrames.size}",
-                            index + 1,
-                            selectedFrames.size
-                        )
-                    }
-                    val bitmap = decodeMedianFrame(
-                        frame,
-                        targetWidth,
-                        targetHeight
-                    ) ?: error("Не удалось прочитать кадр: ${frame.fileName}")
-                    val shift = if (sequencePlan != null) {
-                        reportManualSequenceShift(
-                            plan = sequencePlan,
-                            frameIndex = index,
-                            targetWidth = targetWidth,
-                            targetHeight = targetHeight,
-                            source = source
-                        ) { current, total, message ->
-                            withContext(Dispatchers.Main.immediate) {
-                                onProgress(message, current, total)
-                            }
-                        }
-                    } else if (alignFrames && index > 0) {
-                        val reference = alignmentReference
-                        if (reference == null) {
-                            AlignmentShift.Zero
-                        } else {
-                            findAlignmentOrZero(
-                                reference = reference,
-                                candidate = bitmap,
-                                frameNumber = index + 1,
-                                totalFrames = selectedFrames.size,
-                                safeMode = alignmentSafe,
-                                source = source
-                            ) { current, total, message ->
-                                withContext(Dispatchers.Main.immediate) {
-                                    onProgress(message, current, total)
-                                }
-                            }
-                        }
-                    } else {
-                        AlignmentShift.Zero
-                    }
-                    if (alignFrames && sequencePlan == null && index == 0) {
-                        alignmentReference = try {
-                            createManualAlignmentSample(bitmap)
-                        } catch (_: Exception) {
-                            withContext(Dispatchers.Main.immediate) {
-                                onProgress(
-                                    "Выравнивание недоступно, продолжаем без него",
-                                    1,
-                                    selectedFrames.size
-                                )
-                            }
-                            null
-                        }
-                    }
-                    preparedFrames += MedianPreparedFrame(
-                        bitmap = bitmap,
-                        shift = shift,
-                        originalFrameIndex = index
-                    )
-                }
-                var integrationReport = manualSequenceIntegrationReport(
-                    alignmentSelection = alignmentSelection,
-                    mode = ManualAlignedStackMode.MEDIAN,
-                    integratedOriginalFrameIndices = preparedFrames.map { it.originalFrameIndex },
-                    sensorDefectFiltering = sensorDefectCoverage?.report
-                )
-
-                withContext(Dispatchers.Main.immediate) {
-                    onProgress("Вычисление median...", 0, targetHeight)
-                }
-                output = calculateMedian(
-                    frames = preparedFrames,
-                    width = targetWidth,
-                    height = targetHeight,
-                    sensorDefectCoverage = sensorDefectCoverage,
-                    referenceOriginalFrameIndex = sequencePlan?.referenceFrameIndex
-                ) { completedRows ->
-                    if (
-                        completedRows == targetHeight ||
-                        completedRows % maxOf(1, targetHeight / 10) == 0
-                    ) {
-                        withContext(Dispatchers.Main.immediate) {
-                            onProgress(
-                                "Вычисление median...",
-                                completedRows,
-                                targetHeight
-                            )
-                        }
-                    }
-                }
-                if (alignFrames) {
-                    output = cropToCommonAlignedRegion(
-                        checkNotNull(output),
-                        preparedFrames.map { it.shift }
-                    )
-                }
-
-                withContext(Dispatchers.Main.immediate) {
-                    onProgress("Сохранение результата...", 0, 1)
-                }
-                val now = System.currentTimeMillis()
-                val outputType = if (alignFrames) {
-                    ProcessedOutputType.MEDIAN_ALIGNED
-                } else {
-                    ProcessedOutputType.MEDIAN
-                }
-                val fileName = buildProcessedResultBaseName(outputType, now)
-                if (autoStretch) {
-                    applyAstroStretchInPlace(checkNotNull(output))
-                }
-                val saved = saveBitmap(session, checkNotNull(output), fileName)
-                integrationReport = integrationReport?.publishedSuccessfully()
-                integrationReport?.let(::logManualSequenceIntegrationReport)
-                val infoUpdated = runCatching {
-                    appendMedianSessionInfo(
-                        session = session,
-                        fileName = saved.fileName,
-                        frameCount = preparedFrames.size,
-                        alignmentEnabled = alignFrames,
-                        downscaled = downscaled,
-                        astroStretchApplied = autoStretch,
-                        source = source,
-                        manualSequenceReport = integrationReport,
-                        processedAtMillis = now
-                    )
-                }.isSuccess
-                JpegStackResult(
-                    fileName = saved.fileName,
-                    displayPath = saved.displayPath,
-                    contentUri = saved.contentUri,
-                    filePath = saved.filePath,
-                    frameCount = preparedFrames.size,
-                    sessionInfoUpdated = infoUpdated,
-                    alignmentEnabled = alignFrames,
-                    astroStretchApplied = autoStretch,
-                    downscaled = downscaled,
-                    manualAlignmentSummary = integrationReport?.let(::manualSequenceReportSummary)
-                )
-            } catch (error: OutOfMemoryError) {
-                throw IllegalStateException(
-                    "Недостаточно памяти для median stacking. " +
-                        "Уменьшите количество кадров.",
-                    error
-                )
-            } finally {
-                output?.takeUnless(Bitmap::isRecycled)?.recycle()
-                preparedFrames.forEach {
-                    it.bitmap.takeUnless(Bitmap::isRecycled)?.recycle()
-                }
-            }
-        }
-    }
+        onProgress: suspend (message: String, current: Int, total: Int) -> Unit
+    ): Result<JpegStackResult> = runTiledManualStack(
+        session, frames, ManualAlignedStackMode.MEDIAN, alignFrames, alignmentSafe,
+        autoStretch, source, onProgress = onProgress
+    )
 
     suspend fun sigmaStack(
         session: SessionSummary,
@@ -1003,259 +307,188 @@ class JpegStacker internal constructor(
         alignmentSafe: Boolean = true,
         autoStretch: Boolean = false,
         source: ManualStackingSource = ManualStackingSource.ORIGINAL,
-        onProgress: suspend (
-            message: String,
-            current: Int,
-            total: Int
-        ) -> Unit
+        onProgress: suspend (message: String, current: Int, total: Int) -> Unit
+    ): Result<JpegStackResult> = runTiledManualStack(
+        session, frames, ManualAlignedStackMode.SIGMA, alignFrames, alignmentSafe,
+        autoStretch, source, sigma = sigma, onProgress = onProgress
+    )
+
+    private suspend fun runTiledManualStack(
+        session: SessionSummary,
+        frames: List<SessionFrame>,
+        mode: ManualAlignedStackMode,
+        alignFrames: Boolean,
+        alignmentSafe: Boolean,
+        autoStretch: Boolean,
+        source: ManualStackingSource,
+        sigma: Double = 2.0,
+        darkFrames: List<SessionFrame> = emptyList(),
+        shadowOffset: Int = 0,
+        darkCrop: CropManifestEntry? = null,
+        onProgress: suspend (String, Int, Int) -> Unit
     ): Result<JpegStackResult> = withContext(Dispatchers.IO) {
         runManualStackingOperation(
-            onAlignmentFailure = { report ->
-                appendManualAlignmentFailureSessionInfo(
-                    session,
-                    ManualAlignedStackMode.SIGMA,
-                    report
-                )
-            }
+            onAlignmentFailure = { appendManualAlignmentFailureSessionInfo(session, mode, it) }
         ) {
             require(frames.size >= 2) { "Недостаточно JPEG кадров" }
-            require(frames.all {
-                it.category == SessionFrameCategory.LIGHTS_JPEG
-            }) {
-                "Sigma clipping поддерживает только Lights/JPEG"
+            require(frames.all { it.category == SessionFrameCategory.LIGHTS_JPEG }) {
+                "Для стеккинга можно использовать только Lights/JPEG"
             }
-            require(sigma in SUPPORTED_SIGMA_VALUES) {
-                "Неподдерживаемое значение sigma"
+            require(mode != ManualAlignedStackMode.SIGMA || sigma in SUPPORTED_SIGMA_VALUES)
+            suspend fun progress(message: String, current: Int, total: Int) =
+                withContext(Dispatchers.Main.immediate) { onProgress(message, current, total) }
+            val robust = mode == ManualAlignedStackMode.MEDIAN || mode == ManualAlignedStackMode.SIGMA
+            val selected = if (robust) {
+                JpegAutoSelector(context).selectForStacking(frames, 30) { current, total ->
+                    progress("Звёздный отбор: $current из $total", current, total)
+                }.frames
+            } else frames
+            val dimensions = selected.map { readDimensions(it) ?: error("Не удалось прочитать JPEG: ${it.fileName}") }
+            dimensions.forEach { (width, height) -> requireValidPngDimensions(width, height) }
+            if (source == ManualStackingSource.CROPPED) require(dimensions.distinct().size == 1) {
+                "Selected cropped frames have different dimensions"
             }
-
-            val qualitySelection = JpegAutoSelector(context).selectForStacking(
-                frames = frames,
-                maxFrames = MAX_SIGMA_FRAMES
-            ) { current, total ->
-                withContext(Dispatchers.Main.immediate) {
-                    onProgress("Оценка качества кадров $current из $total", current, total)
-                }
-            }
-            val selectedFrames = qualitySelection.frames
-            val dimensions = selectedFrames.map { frame ->
-                readDimensions(frame)
-                    ?: error("Не удалось прочитать кадр: ${frame.fileName}")
-            }
-            if (source == ManualStackingSource.CROPPED) {
-                require(dimensions.distinct().size == 1) {
-                    "Selected cropped frames have different dimensions"
-                }
-            }
-            val commonWidth = dimensions.minOf { it.first }
-            val commonHeight = dimensions.minOf { it.second }
-            require(commonWidth > 0 && commonHeight > 0) {
-                "Не удалось прочитать кадр"
-            }
-            val pixelCount = commonWidth.toLong() * commonHeight
-            val targetPixels = complexStackTargetPixels(
-                sourcePixels = pixelCount,
-                frameCount = selectedFrames.size,
-                maxPixels = MAX_SIGMA_PIXELS
-            )
-            val scale = if (pixelCount > targetPixels) {
-                sqrt(targetPixels.toDouble() / pixelCount)
-            } else {
-                1.0
-            }
-            val targetWidth = (commonWidth * scale).roundToInt().coerceAtLeast(1)
-            val targetHeight = (commonHeight * scale).roundToInt().coerceAtLeast(1)
-            val downscaled = targetWidth < commonWidth || targetHeight < commonHeight
-            val preparedFrames = mutableListOf<MedianPreparedFrame>()
-            var output: Bitmap? = null
-
-            try {
-                val alignmentSelection = if (alignFrames) {
-                    prepareManualSequenceAlignmentSelection(
-                        frames = selectedFrames,
-                        targetWidth = targetWidth,
-                        targetHeight = targetHeight,
-                        mode = ManualAlignedStackMode.SIGMA
-                    ) { current, total, message ->
-                        withContext(Dispatchers.Main.immediate) {
-                            onProgress(message, current, total)
-                        }
+            val width = dimensions.minOf { it.first }
+            val height = dimensions.minOf { it.second }
+            val darkDimensions = darkFrames.map { readDimensions(it) ?: error("Не удалось прочитать dark: ${it.fileName}") }
+            darkDimensions.forEach { (width, height) -> requireValidPngDimensions(width, height) }
+            if (mode == ManualAlignedStackMode.DARK_SUBTRACTED_AVERAGE) {
+                require(darkFrames.isNotEmpty() && shadowOffset in setOf(0, 8, 16, 32))
+                require(darkFrames.all { it.category == SessionFrameCategory.DARKS_JPEG })
+                if (darkCrop == null) {
+                    when (val validation = validateDarkFrames(
+                        darkDimensions.map { decodedPixelFrameShape(it.first, it.second) },
+                        dimensions.map { decodedPixelFrameShape(it.first, it.second) }
+                    )) {
+                        is DarkValidationResult.Valid -> Unit
+                        is DarkValidationResult.Invalid -> error(validation.message)
                     }
                 } else {
-                    null
+                    require(source == ManualStackingSource.CROPPED)
+                    require(dimensions.all { it == darkCrop.croppedWidth to darkCrop.croppedHeight })
+                    require(darkDimensions.all { it == darkCrop.originalWidth to darkCrop.originalHeight })
                 }
-                val sequencePlan = alignmentSelection?.sequencePlan
-                val frameWork = manualSequenceFrameWork(
-                    selectedFrames,
-                    sequencePlan,
-                    ManualAlignedStackMode.SIGMA
-                )
-                val sensorDefectCoverage = manualSensorDefectCoveragePlan(
-                    sequencePlan,
-                    ManualAlignedStackMode.SIGMA,
-                    targetWidth,
-                    targetHeight
-                )
-                var alignmentReference: ManualAlignmentReference? = null
-                frameWork.forEach { work ->
-                    val index = work.originalFrameIndex
-                    val frame = work.value
+            }
+            val alignment = if (alignFrames) prepareManualSequenceAlignmentSelection(
+                selected, width, height, mode
+            ) { current, total, message -> progress(message, current, total) } else null
+            val sequencePlan = alignment?.sequencePlan
+            val frameWork = manualSequenceFrameWork(selected, sequencePlan, mode)
+            val coroutineContext = currentCoroutineContext()
+            val budget = JpegMemoryBudget.current()
+            budget.requireAllocation(ImageAllocationEstimate("manual-row-caches", maxOf(width,
+                darkDimensions.maxOfOrNull { it.first } ?: width) * 256L + 4L * 1024 * 1024))
+            val coverage = manualSensorDefectCoveragePlan(sequencePlan, mode, width, height) {
+                coroutineContext.ensureActive()
+            }
+            val legacyReference = if (alignFrames && sequencePlan == null) {
+                createAlignmentReference(selected.first(), width, height)
+            } else null
+            TemporaryPipelineFiles.create(context.cacheDir).use { temporary ->
+                val store = ResultCandidateStore(temporary)
+                suspend fun cache(frame: SessionFrame, label: String, targetWidth: Int, targetHeight: Int): FileBackedImage {
+                    val decoded = cacheOrientedJpeg({ openFrame(frame) }, temporary, label, JpegMemoryBudget.current()) { current, total ->
+                        progress("Декодирование ${frame.fileName}", current, total)
+                    }
+                    val prepared = TiledManualStacking.resize(decoded, targetWidth, targetHeight, store)
+                    if (prepared !== decoded) temporary.deleteFile(decoded)
+                    return prepared
+                }
+                val master = if (darkFrames.isNotEmpty()) {
+                    val dw = darkDimensions.first().first
+                    val dh = darkDimensions.first().second
+                    val cached = darkFrames.mapIndexed { index, frame ->
+                        progress("Подготовка dark ${index + 1}/${darkFrames.size}", index, darkFrames.size)
+                        TiledManualFrame(cache(frame, "manual-dark-$index", dw, dh), AlignmentShift.Zero, index)
+                    }
+                    TiledManualStacking.integrate(cached, ManualAlignedStackMode.AVERAGE, store, budget) { current, total ->
+                        progress("Создание master dark", current, total)
+                    }.also { cached.forEach { frame -> temporary.deleteFile(frame.image) } }
+                } else null
+                val cached = frameWork.map { work ->
                     currentCoroutineContext().ensureActive()
-                    withContext(Dispatchers.Main.immediate) {
-                        onProgress(
-                            "Подготовка кадра ${index + 1} из ${selectedFrames.size}",
-                            index + 1,
-                            selectedFrames.size
-                        )
-                    }
-                    val bitmap = decodeMedianFrame(
-                        frame,
-                        targetWidth,
-                        targetHeight
-                    ) ?: error("Не удалось прочитать кадр: ${frame.fileName}")
-                    val shift = if (sequencePlan != null) {
-                        reportManualSequenceShift(
-                            plan = sequencePlan,
-                            frameIndex = index,
-                            targetWidth = targetWidth,
-                            targetHeight = targetHeight,
-                            source = source
-                        ) { current, total, message ->
-                            withContext(Dispatchers.Main.immediate) {
-                                onProgress(message, current, total)
-                            }
-                        }
-                    } else if (alignFrames && index > 0) {
-                        val reference = alignmentReference
-                        if (reference == null) {
-                            AlignmentShift.Zero
-                        } else {
-                            findAlignmentOrZero(
-                                reference = reference,
-                                candidate = bitmap,
-                                frameNumber = index + 1,
-                                totalFrames = selectedFrames.size,
-                                safeMode = alignmentSafe,
-                                source = source
-                            ) { current, total, message ->
-                                withContext(Dispatchers.Main.immediate) {
-                                    onProgress(message, current, total)
-                                }
-                            }
-                        }
-                    } else {
-                        AlignmentShift.Zero
-                    }
-                    if (alignFrames && sequencePlan == null && index == 0) {
-                        alignmentReference = try {
-                            createManualAlignmentSample(bitmap)
-                        } catch (_: Exception) {
-                            withContext(Dispatchers.Main.immediate) {
-                                onProgress(
-                                    "Выравнивание недоступно, продолжаем без него",
-                                    1,
-                                    selectedFrames.size
-                                )
-                            }
-                            null
-                        }
-                    }
-                    preparedFrames += MedianPreparedFrame(
-                        bitmap = bitmap,
-                        shift = shift,
-                        originalFrameIndex = index
-                    )
+                    val index = work.originalFrameIndex
+                    val shift = if (sequencePlan != null) reportManualSequenceShift(
+                        sequencePlan, index, width, height, source
+                    ) { current, total, message -> progress(message, current, total) }
+                    else if (legacyReference != null && index > 0) {
+                        val sample = decodeMedianFrame(work.value, legacyReference.image.width, legacyReference.image.height)
+                            ?: error("Не удалось прочитать кадр выравнивания")
+                        try {
+                            findAlignmentOrZero(legacyReference, sample, index + 1, selected.size,
+                                alignmentSafe, source, outputWidth = width, outputHeight = height
+                            ) { current, total, message -> progress(message, current, total) }
+                        } finally { sample.recycle() }
+                    } else AlignmentShift.Zero
+                    progress("Подготовка JPEG ${work.compactFrameNumber}/${frameWork.size}", work.compactFrameNumber, frameWork.size)
+                    TiledManualFrame(cache(work.value, "manual-light-$index", width, height), shift, index)
                 }
-                var integrationReport = manualSequenceIntegrationReport(
-                    alignmentSelection = alignmentSelection,
-                    mode = ManualAlignedStackMode.SIGMA,
-                    integratedOriginalFrameIndices = preparedFrames.map { it.originalFrameIndex },
-                    sensorDefectFiltering = sensorDefectCoverage?.report
-                )
-
-                withContext(Dispatchers.Main.immediate) {
-                    onProgress("Расчёт sigma clipping...", 0, targetHeight)
-                }
-                output = calculateSigmaClipping(
-                    frames = preparedFrames,
-                    width = targetWidth,
-                    height = targetHeight,
-                    sigma = sigma,
-                    sensorDefectCoverage = sensorDefectCoverage,
-                    referenceOriginalFrameIndex = sequencePlan?.referenceFrameIndex
-                ) { completedRows ->
-                    if (
-                        completedRows == targetHeight ||
-                        completedRows % maxOf(1, targetHeight / 10) == 0
-                    ) {
-                        withContext(Dispatchers.Main.immediate) {
-                            onProgress(
-                                "Расчёт sigma clipping...",
-                                completedRows,
-                                targetHeight
-                            )
-                        }
-                    }
-                }
-                if (alignFrames) {
-                    output = cropToCommonAlignedRegion(
-                        checkNotNull(output),
-                        preparedFrames.map { it.shift }
-                    )
-                }
-
-                withContext(Dispatchers.Main.immediate) {
-                    onProgress("Сохранение результата...", 0, 1)
-                }
-                val now = System.currentTimeMillis()
-                val outputType = if (alignFrames) {
-                    ProcessedOutputType.SIGMA_ALIGNED
-                } else {
-                    ProcessedOutputType.SIGMA
-                }
-                val fileName = buildProcessedResultBaseName(outputType, now)
+                var output = TiledManualStacking.integrate(
+                    cached, mode, store, budget, coverage, sequencePlan?.referenceFrameIndex,
+                    sigma, master, darkCrop?.pixelRect, shadowOffset
+                ) { current, total -> progress("Тайловая интеграция: ${mode.reportName}", current, total) }
+                cached.forEach { temporary.deleteFile(it.image) }
                 if (autoStretch) {
-                    applyAstroStretchInPlace(checkNotNull(output))
+                    progress("Проявление стека", 0, 1)
+                    val stretched = TiledManualStacking.stretch(output, store)
+                    store.deleteTemporary(output)
+                    output = stretched
                 }
-                val saved = saveBitmap(session, checkNotNull(output), fileName)
-                integrationReport = integrationReport?.publishedSuccessfully()
-                integrationReport?.let(::logManualSequenceIntegrationReport)
+                var report = manualSequenceIntegrationReport(alignment, mode,
+                    frameWork.map { it.originalFrameIndex }, coverage?.report)
+                val now = System.currentTimeMillis()
+                val type = when (mode) {
+                    ManualAlignedStackMode.AVERAGE -> if (alignFrames) ProcessedOutputType.AVERAGE_ALIGNED else ProcessedOutputType.AVERAGE
+                    ManualAlignedStackMode.DARK_SUBTRACTED_AVERAGE -> if (alignFrames) ProcessedOutputType.AVERAGE_DARK_ALIGNED else ProcessedOutputType.AVERAGE_DARK
+                    ManualAlignedStackMode.MEDIAN -> if (alignFrames) ProcessedOutputType.MEDIAN_ALIGNED else ProcessedOutputType.MEDIAN
+                    ManualAlignedStackMode.SIGMA -> if (alignFrames) ProcessedOutputType.SIGMA_ALIGNED else ProcessedOutputType.SIGMA
+                }
+                suspend fun save(image: FileBackedImage, outputType: ProcessedOutputType): SavedProcessedImage =
+                    FileBackedImageReader(image).use { reader ->
+                        LosslessProcessedImageWriter(context)
+                            .write(session, reader, buildProcessedResultBaseName(outputType, now).substringBeforeLast('.') + ".png")
+                    }
+                progress("Сохранение PNG", 0, 1)
+                val saved = save(output, type)
+                var savedMaster: SavedProcessedImage? = null
+                try {
+                    if (master != null) {
+                        try { savedMaster = save(master, ProcessedOutputType.MASTER_DARK) }
+                        catch (error: CancellationException) { throw error }
+                        catch (error: Exception) { Log.w("AstroPhotoStack", "Master dark export failed", error) }
+                    }
+                    currentCoroutineContext().ensureActive()
+                } catch (error: CancellationException) {
+                    savedMaster?.let(::deleteSavedJpeg)
+                    deleteSavedJpeg(saved)
+                    throw error
+                }
+                report = report?.publishedSuccessfully()
+                report?.let(::logManualSequenceIntegrationReport)
                 val infoUpdated = runCatching {
-                    appendSigmaSessionInfo(
-                        session = session,
-                        fileName = saved.fileName,
-                        frameCount = preparedFrames.size,
-                        sigma = sigma,
-                        alignmentEnabled = alignFrames,
-                        downscaled = downscaled,
-                        astroStretchApplied = autoStretch,
-                        source = source,
-                        manualSequenceReport = integrationReport,
-                        processedAtMillis = now
-                    )
+                    when (mode) {
+                        ManualAlignedStackMode.AVERAGE -> appendSessionInfo(session, saved.fileName, cached.size,
+                            alignFrames, autoStretch, source, report, now)
+                        ManualAlignedStackMode.DARK_SUBTRACTED_AVERAGE -> appendDarkStackSessionInfo(session, saved.fileName,
+                            savedMaster?.fileName, cached.size, darkFrames.size, shadowOffset, alignFrames, autoStretch, source, report, now)
+                        ManualAlignedStackMode.MEDIAN -> appendMedianSessionInfo(session, saved.fileName, cached.size,
+                            alignFrames, false, autoStretch, source, report, now)
+                        ManualAlignedStackMode.SIGMA -> appendSigmaSessionInfo(session, saved.fileName, cached.size,
+                            sigma, alignFrames, false, autoStretch, source, report, now)
+                    }
                 }.isSuccess
-                JpegStackResult(
-                    fileName = saved.fileName,
-                    displayPath = saved.displayPath,
-                    contentUri = saved.contentUri,
-                    filePath = saved.filePath,
-                    frameCount = preparedFrames.size,
-                    sessionInfoUpdated = infoUpdated,
-                    alignmentEnabled = alignFrames,
-                    astroStretchApplied = autoStretch,
-                    downscaled = downscaled,
-                    manualAlignmentSummary = integrationReport?.let(::manualSequenceReportSummary)
-                )
-            } catch (error: OutOfMemoryError) {
-                throw IllegalStateException(
-                    "Недостаточно памяти для sigma clipping. " +
-                        "Уменьшите количество кадров.",
-                    error
-                )
-            } finally {
-                output?.takeUnless(Bitmap::isRecycled)?.recycle()
-                preparedFrames.forEach {
-                    it.bitmap.takeUnless(Bitmap::isRecycled)?.recycle()
+                val warnings = buildList {
+                    if (frames.size > selected.size) add("Звёздный отбор: выбрано ${selected.size}/${frames.size}")
+                    if (master != null && savedMaster == null) add("Стек сохранён; отдельный master dark сохранить не удалось")
                 }
+                JpegStackResult(
+                    saved.fileName, saved.displayPath, saved.contentUri, saved.filePath, cached.size, infoUpdated,
+                    darkFrameCount = darkFrames.size, shadowOffset = shadowOffset.takeIf { master != null },
+                    masterDarkFileName = savedMaster?.fileName, masterDarkDisplayPath = savedMaster?.displayPath,
+                    alignmentEnabled = alignFrames, astroStretchApplied = autoStretch,
+                    manualAlignmentSummary = report?.let(::manualSequenceReportSummary),
+                    warnings = warnings
+                )
             }
         }
     }
@@ -1378,7 +611,7 @@ class JpegStacker internal constructor(
                     "staticArtifactConfidence=${formatMetric(staticArtifactMask.confidence)}"
             )
             val referenceSelectionStarted = System.nanoTime()
-            val selection = ProfileFrameSelectionCoordinator.prepare(
+            val initialSelection = ProfileFrameSelectionCoordinator.prepare(
                 analyzedFrames = analyzedFrames,
                 analysisFrames = analysisFrames,
                 captureIndexByFrameKey = captureIndexByFrameKey,
@@ -1389,21 +622,43 @@ class JpegStacker internal constructor(
                 "reference_selection",
                 (System.nanoTime() - referenceSelectionStarted) / 1_000_000L
             )
-            val selectedReference = selection.selectedReference
-            val selectedFrames = selection.selectedFrames
-            val targetWidth = selection.targetWidth
-            val targetHeight = selection.targetHeight
-            val analysisByFrameKey = selection.analyzedByFrameKey
-            val frameAnalysesByKey = selection.analysesByFrameKey
+            // The checkpoint fingerprints the deterministic initial selection. Its diagnostics
+            // persist the actual reference, including recovery, and are promoted before full-res work.
             registrationCheckpointStore = ProfileRegistrationCheckpointStore.open(
                 context = context,
                 sessionFolder = session.folderName,
                 profile = profile,
                 frames = frames,
-                selectedFrameKeys = selectedFrames.map { it.key },
-                analysisWidth = selectedReference.analysis.width,
-                analysisHeight = selectedReference.analysis.height
+                selectedFrameKeys = initialSelection.selectedFrames.map { it.key },
+                analysisWidth = initialSelection.selectedReference.analysis.width,
+                analysisHeight = initialSelection.selectedReference.analysis.height
             )
+            currentStage = "Первичное выравнивание"
+            val registrationStarted = System.nanoTime()
+            withContext(Dispatchers.Main.immediate) {
+                onProgress("Выравнивание по звёздам", 0, initialSelection.selectedFrames.size)
+            }
+            var analysisRegistration = runProfileRegistrationWithCheckpoint(
+                store = checkNotNull(registrationCheckpointStore),
+                selectedFrames = initialSelection.selectedFrames,
+                analysesByFrameKey = initialSelection.analysesByFrameKey,
+                captureIndexByFrameKey = captureIndexByFrameKey,
+                referenceFrameId = initialSelection.selectedReference.frame.key,
+                imageWidth = initialSelection.selectedReference.analysis.width,
+                imageHeight = initialSelection.selectedReference.analysis.height,
+                minimumFrames = profile.minimumFrames,
+                onProgress = onProgress
+            )
+            val actualReferenceKey = initialSelection.selectedFrames.single {
+                captureIndexByFrameKey.getValue(it.key) == analysisRegistration.referenceCaptureIndex
+            }.key
+            var selection = ProfileFrameSelectionCoordinator.withReference(
+                initialSelection, actualReferenceKey, dimensionsByFrameKey
+            )
+            var selectedReference = selection.selectedReference
+            var selectedFrames = selection.selectedFrames
+            var targetWidth = selection.targetWidth
+            var targetHeight = selection.targetHeight
             Log.i(
                 PROFILE_REGISTRATION_TAG,
                 "selectedPreset=${profile.name} inputFrameCount=${frames.size} " +
@@ -1425,6 +680,13 @@ class JpegStacker internal constructor(
                     "confidence=1.0000 accepted=true rejectionReason=reference"
             )
             val warnings = mutableListOf<String>()
+            if (actualReferenceKey != initialSelection.selectedReference.frame.key) {
+                warnings += "Опорный кадр заменён после неудачного выравнивания: " +
+                    selectedReference.frame.fileName
+                Log.i(PROFILE_REGISTRATION_TAG,
+                    "referenceRecovery=${initialSelection.selectedReference.frame.fileName}->${selectedReference.frame.fileName} " +
+                        "provisionalAccepted=${analysisRegistration.registrations.values.count { it.isReliable }}")
+            }
             if (selection.droppedCount > 0) {
                 warnings += "Для полноразмерной обработки выбраны лучшие " +
                     "${selectedFrames.size} из ${frames.size} кадров"
@@ -1439,36 +701,104 @@ class JpegStacker internal constructor(
             var transformSequenceScore = 0f
             var sequenceSmoothnessScore = 0f
             var sequencePriorAgreementScore = 0f
-            var sequenceDiagnostics: SequenceAwareRegistrationDiagnostics? = null
+            var sequenceDiagnostics = analysisRegistration
             val registrationReports = mutableListOf<FrameRegistrationReport>()
 
             try {
-                currentStage = "Первичное выравнивание"
-                val registrationStarted = System.nanoTime()
-                withContext(Dispatchers.Main.immediate) {
-                    onProgress("Выравнивание по звёздам", 0, selectedFrames.size)
-                }
+                var provisionalRegistration = prepareProvisionalProfileRegistration(
+                    selection,
+                    analysisRegistration,
+                    captureIndexByFrameKey
+                )
+                var scaleX = provisionalRegistration.scaleX
+                var scaleY = provisionalRegistration.scaleY
+                var allRegistrationsByKey = provisionalRegistration.allRegistrationsByKey
+                    .toMutableMap()
+                val acceptedProfileFrames = provisionalRegistration.acceptedFrames.toMutableList()
+                transformSequenceScore = provisionalRegistration.sequenceScore
+                sequenceSmoothnessScore = provisionalRegistration.sequenceSmoothnessScore
+                sequencePriorAgreementScore = provisionalRegistration.sequencePriorAgreementScore
+                pipelineTiming.record(
+                    "registration",
+                    (System.nanoTime() - registrationStarted) / 1_000_000L
+                )
+                currentStage = "Уточнение выравнивания в полном разрешении"
+                val refinementStarted = System.nanoTime()
+                val fullResolutionReferencePreparation =
+                    prepareFullResolutionWithReferenceRecovery(
+                        checkpointStore = registrationCheckpointStore,
+                        initialSelection = initialSelection,
+                        startingSelection = selection,
+                        startingDiagnostics = analysisRegistration,
+                        startingProvisional = provisionalRegistration,
+                        dimensionsByFrameKey = dimensionsByFrameKey,
+                        captureIndexByFrameKey = captureIndexByFrameKey,
+                        profile = profile,
+                        userApprovedInsufficientFrames =
+                            userApprovedInsufficientProfileFrames.get(),
+                        temporaryFiles = temporaryFiles,
+                        memoryBudget = memoryBudget,
+                        memoryTracker = memoryTracker,
+                        onProgress = onProgress
+                    )
+                selection = fullResolutionReferencePreparation.selection
+                selectedReference = selection.selectedReference
+                selectedFrames = selection.selectedFrames
+                targetWidth = selection.targetWidth
+                targetHeight = selection.targetHeight
+                analysisRegistration = fullResolutionReferencePreparation.diagnostics
+                sequenceDiagnostics = analysisRegistration
+                provisionalRegistration = fullResolutionReferencePreparation.provisional
+                scaleX = provisionalRegistration.scaleX
+                scaleY = provisionalRegistration.scaleY
+                allRegistrationsByKey = provisionalRegistration.allRegistrationsByKey.toMutableMap()
+                acceptedProfileFrames.clear()
+                acceptedProfileFrames += provisionalRegistration.acceptedFrames
+                transformSequenceScore = provisionalRegistration.sequenceScore
+                sequenceSmoothnessScore = provisionalRegistration.sequenceSmoothnessScore
+                sequencePriorAgreementScore = provisionalRegistration.sequencePriorAgreementScore
+                val fullResolutionPreparation = fullResolutionReferencePreparation.fullResolution
+                warnings += fullResolutionReferencePreparation.warnings
                 referenceStars = selectedReference.analysis.reliableStarCount
                 if (referenceStars < 4) {
                     warnings += "Звёзд найдено мало: $referenceStars"
                 }
-                val analysisRegistration = runProfileRegistrationWithCheckpoint(
-                    store = checkNotNull(registrationCheckpointStore),
-                    selectedFrames = selectedFrames,
-                    analysesByFrameKey = frameAnalysesByKey,
-                    captureIndexByFrameKey = captureIndexByFrameKey,
-                    referenceFrameId = selectedReference.frame.key,
-                    imageWidth = selectedReference.analysis.width,
-                    imageHeight = selectedReference.analysis.height,
-                    onProgress = onProgress
-                )
-                sequenceDiagnostics = analysisRegistration
                 logSequenceIdentityVerification(analysisRegistration)
+                val provisionalAcceptedFrames = provisionalRegistration.acceptedFrames.size
+                val requiredCacheBytes = targetWidth.toLong() * targetHeight *
+                    Int.SIZE_BYTES * provisionalAcceptedFrames
+                val initialFullResolutionSkyMask = scaleSkyMask(
+                    selectedReference.skyMask.mask,
+                    targetWidth,
+                    targetHeight
+                )
+                registrationReports.clear()
+                selectedFrames.forEach { frame ->
+                    val registration = checkNotNull(allRegistrationsByKey[frame.key])
+                    registrationReports += registration.toReport(frame.fileName)
+                    logProfileRegistration(frame.fileName, registration)
+                    logAnalysisRegistration(
+                        frameName = frame.fileName,
+                        frameKey = frame.key,
+                        captureIndex = captureIndexByFrameKey.getValue(frame.key),
+                        registration = registration,
+                        diagnostics = analysisRegistration,
+                        scaleX = scaleX,
+                        scaleY = scaleY
+                    )
+                    if (!registration.isReliable) {
+                        warnings += "Кадр ${frame.fileName} отклонён: " +
+                            (registration.rejectionReason ?: "registration failed")
+                    }
+                }
+                Log.i(
+                    PROFILE_REGISTRATION_TAG,
+                    "selectedPreset=${profile.name} provisionalAccepted=$provisionalAcceptedFrames " +
+                        "provisionalRejected=${selectedFrames.size - provisionalAcceptedFrames}"
+                )
                 val sensorMaskConstructionStarted = System.nanoTime()
                 val automaticSensorMaskResult = buildAutomaticSensorDefectMask(
-                    observations = rawAnalyzedFrames.map {
-                        it.persistentSensorObservation
-                    },
+                    observations = rawAnalyzedFrames.map { it.persistentSensorObservation },
                     outputWidth = targetWidth,
                     outputHeight = targetHeight,
                     predictedTransform = { originalCaptureIndex ->
@@ -1489,126 +819,9 @@ class JpegStacker internal constructor(
                         "sensorDefectSourcePixels=${automaticSensorMask.maskedPixelCount} " +
                         "sensorDefectSourceFraction=" +
                         formatMetric(automaticSensorMask.maskedSourceFraction) +
-                        " sensorDefectMaskReason=" +
-                        automaticSensorMask.rejectionReason.orEmpty() +
+                        " sensorDefectMaskReason=" + automaticSensorMask.rejectionReason.orEmpty() +
                         " sensorDefectOriginalIndices=" +
                         automaticSensorMaskResult.originalFrameIndices.joinToString()
-                )
-                val scaleX = targetWidth.toFloat() /
-                    selectedReference.analysis.width.coerceAtLeast(1)
-                val scaleY = targetHeight.toFloat() /
-                    selectedReference.analysis.height.coerceAtLeast(1)
-                val allRegistrationsByKey = analysisRegistration.registrations
-                    .mapValuesTo(mutableMapOf()) { (_, registration) ->
-                        registration.scaledToFullResolution(scaleX, scaleY)
-                    }
-                val acceptedProfileFrames = selectedFrames.mapNotNull { frame ->
-                    val registration = checkNotNull(allRegistrationsByKey[frame.key])
-                    if (!registration.isReliable) return@mapNotNull null
-                    AcceptedProfileFrame(
-                        frame = frame,
-                        analysis = checkNotNull(analysisByFrameKey[frame.key]).analysis,
-                        registration = registration,
-                        captureIndex = captureIndexByFrameKey.getValue(frame.key)
-                    )
-                }.toMutableList()
-                val fullVelocityScale = (scaleX + scaleY) * 0.5f
-                val sequenceValidation = TransformSequenceValidator().validate(
-                    acceptedProfileFrames.map { accepted ->
-                        OrderedRegistration(
-                            frameId = accepted.frame.key,
-                            captureIndex = accepted.captureIndex,
-                            isReference = accepted.frame.key == selectedReference.frame.key,
-                            registration = accepted.registration
-                        )
-                    },
-                    expectedMotionModel = ExpectedSequenceMotionModel(
-                        velocityX = analysisRegistration.model.velocityX * scaleX,
-                        velocityY = analysisRegistration.model.velocityY * scaleY,
-                        referenceIndex = analysisRegistration.model.referenceIndex,
-                        residual = analysisRegistration.model.residual * fullVelocityScale,
-                        motionObservable = analysisRegistration.model.motionObservable,
-                        verificationScore = analysisRegistration.verification.selectedModel.score
-                    )
-                )
-                transformSequenceScore = sequenceValidation.score
-                sequenceSmoothnessScore = sequenceValidation.smoothnessScore
-                sequencePriorAgreementScore = sequenceValidation.motionModelAgreementScore
-                val validatedByKey = sequenceValidation.registrations.associate {
-                    it.frameId to it.registration
-                }
-                acceptedProfileFrames.replaceAll { accepted ->
-                    accepted.copy(
-                        registration = validatedByKey[accepted.frame.key] ?: accepted.registration
-                    )
-                }
-                acceptedProfileFrames.removeAll { !it.registration.isReliable }
-                validatedByKey.forEach { (key, registration) ->
-                    allRegistrationsByKey[key] = registration
-                }
-                registrationReports.clear()
-                selectedFrames.forEach { frame ->
-                    val registration = checkNotNull(allRegistrationsByKey[frame.key])
-                    registrationReports += registration.toReport(frame.fileName)
-                    logProfileRegistration(frame.fileName, registration)
-                    val captureIndex = captureIndexByFrameKey.getValue(frame.key)
-                    logAnalysisRegistration(
-                        frameName = frame.fileName,
-                        frameKey = frame.key,
-                        captureIndex = captureIndex,
-                        registration = registration,
-                        diagnostics = analysisRegistration,
-                        scaleX = scaleX,
-                        scaleY = scaleY
-                    )
-                    if (!registration.isReliable) {
-                        warnings += "Кадр ${frame.fileName} отклонён: " +
-                            (registration.rejectionReason ?: "registration failed")
-                    }
-                }
-                val provisionalAcceptedFrames = acceptedProfileFrames.size
-                Log.i(
-                    PROFILE_REGISTRATION_TAG,
-                    "selectedPreset=${profile.name} provisionalAccepted=$provisionalAcceptedFrames " +
-                        "provisionalRejected=${selectedFrames.size - provisionalAcceptedFrames}"
-                )
-                pipelineTiming.record(
-                    "registration",
-                    (System.nanoTime() - registrationStarted) / 1_000_000L
-                )
-                val pixelCount = targetWidth.toLong() * targetHeight
-                val requiredCacheBytes = pixelCount * Int.SIZE_BYTES * provisionalAcceptedFrames
-                val requiredTemporaryBytes = requiredCacheBytes + pixelCount * 28L
-                val allocatableTemporaryBytes = availableTemporaryBytes(
-                    temporaryFiles.directory
-                )
-                require(allocatableTemporaryBytes >=
-                    requiredTemporaryBytes + MIN_CACHE_FREE_SPACE_BYTES
-                ) {
-                    "Недостаточно временного места для полноразмерной JPEG-обработки"
-                }
-                val initialFullResolutionSkyMask = scaleSkyMask(
-                    selectedReference.skyMask.mask,
-                    targetWidth,
-                    targetHeight
-                )
-                currentStage = "Уточнение выравнивания в полном разрешении"
-                val refinementStarted = System.nanoTime()
-                val fullResolutionPreparation = prepareAndRefineFullResolutionFrames(
-                    checkpointStore = registrationCheckpointStore,
-                    provisionalFrames = acceptedProfileFrames,
-                    selectedReference = selectedReference,
-                    targetWidth = targetWidth,
-                    targetHeight = targetHeight,
-                    scaleX = scaleX,
-                    scaleY = scaleY,
-                    fullVelocityScale = fullVelocityScale,
-                    registrationDiagnostics = analysisRegistration,
-                    fullResolutionSkyMask = initialFullResolutionSkyMask,
-                    temporaryFiles = temporaryFiles,
-                    memoryBudget = memoryBudget,
-                    memoryTracker = memoryTracker,
-                    onProgress = onProgress
                 )
                 val refinementResultsByKey = fullResolutionPreparation.refinementResultsByKey
                 val centroidResultsByKey = fullResolutionPreparation.centroidResultsByKey
@@ -2403,7 +1616,7 @@ class JpegStacker internal constructor(
                         "peakObservedHeap=${memoryTracker.peakObservedHeapBytes} " +
                         "maxFullHeapImages=${memoryTracker.maximumSimultaneousFullResolutionHeapImages} " +
                         "retries=${memoryTracker.memoryPressureRetries} " +
-                        "candidateStorage=FILE_BACKED_ARGB_8888 finalBitmapBytes=0"
+                        "candidateStorage=FILE_BACKED_LINEAR_RGB_16 finalBitmapBytes=0"
                 )
                 Log.i(
                     "AstroPhotoJpegTiming",
@@ -2652,7 +1865,7 @@ class JpegStacker internal constructor(
         finalizedStackResult
     }
 
-    private fun registerProfileFramesWithWatchdog(
+    internal fun registerProfileFramesWithWatchdog(
         frames: List<TemporalFeatureFrame>,
         referenceFrameId: String,
         imageWidth: Int,
@@ -2690,6 +1903,7 @@ class JpegStacker internal constructor(
         referenceFrameId: String,
         imageWidth: Int,
         imageHeight: Int,
+        minimumFrames: Int,
         onProgress: suspend (message: String, current: Int, total: Int) -> Unit
     ): SequenceAwareRegistrationDiagnostics = restoreOrComputeRegistration(
         store = store,
@@ -2703,16 +1917,21 @@ class JpegStacker internal constructor(
             }
         }
     ) {
-        registerProfileFramesWithWatchdog(
-            frames = buildTemporalFeatureFrames(
-                selectedFrames,
-                analysesByFrameKey,
-                captureIndexByFrameKey
-            ),
+        val featureFrames = buildTemporalFeatureFrames(selectedFrames, analysesByFrameKey, captureIndexByFrameKey)
+        com.joe6355.astrophoto.processing.jpeg.v2.registration.registerWithReferenceRecovery(
+            selectedAnalyses = selectedFrames.map { analysesByFrameKey.getValue(it.key) },
+            captureIndexByFrameKey = captureIndexByFrameKey,
             referenceFrameId = referenceFrameId,
-            imageWidth = imageWidth,
-            imageHeight = imageHeight
-        )
+            minimumFrames = minimumFrames,
+            onAttempt = { index, total, key ->
+                withContext(Dispatchers.Main.immediate) {
+                    onProgress("Повторный выбор опорного кадра $index из $total", index, total)
+                }
+                Log.i(PROFILE_REGISTRATION_TAG, "referenceRecoveryAttempt=$index/$total frame=$key")
+            }
+        ) { candidateKey ->
+            registerProfileFramesWithWatchdog(featureFrames, candidateKey, imageWidth, imageHeight)
+        }
     }
 
     suspend fun loadResultPreview(
@@ -2738,27 +1957,12 @@ class JpegStacker internal constructor(
         return readOrientedJpegDimensions { openFrame(frame) }
     }
 
-    private fun decodeFrame(frame: SessionFrame): Bitmap? =
-        decodeOrientedJpeg(openStream = { openFrame(frame) })
-
     private fun openFrame(frame: SessionFrame): InputStream? =
         if (frame.contentUri != null) {
             context.contentResolver.openInputStream(Uri.parse(frame.contentUri))
         } else {
             frame.filePath?.let { File(it).inputStream() }
         }
-
-    private data class MedianPreparedFrame(
-        val bitmap: Bitmap,
-        val shift: AlignmentShift,
-        val originalFrameIndex: Int
-    )
-
-    private data class ManualCalibratedAverage(
-        val bitmap: Bitmap,
-        val integratedFrameCount: Int,
-        val integrationReport: ManualSequenceIntegrationReport?
-    )
 
     internal fun decodeMedianFrame(
         frame: SessionFrame,
@@ -2784,220 +1988,6 @@ class JpegStacker internal constructor(
         }
     }
 
-    private suspend fun calculateMedian(
-        frames: List<MedianPreparedFrame>,
-        width: Int,
-        height: Int,
-        sensorDefectCoverage: ManualSensorDefectCoveragePlan? = null,
-        referenceOriginalFrameIndex: Int? = null,
-        onRowCompleted: suspend (Int) -> Unit
-    ): Bitmap {
-        val output = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        try {
-            val sourceRows = Array(frames.size) { IntArray(width) }
-            val outputRow = IntArray(width)
-            val colors = IntArray(frames.size)
-            val validColors = IntArray(frames.size)
-            val validSamples = BooleanArray(frames.size)
-            val redValues = IntArray(frames.size)
-            val greenValues = IntArray(frames.size)
-            val blueValues = IntArray(frames.size)
-            val sampleFilteringApplied =
-                sensorDefectCoverage?.report?.sampleLevelFilteringApplied == true
-            val referenceCompactIndex = if (sampleFilteringApplied) {
-                frames.indexOfFirst { it.originalFrameIndex == referenceOriginalFrameIndex }
-                    .also { require(it >= 0) }
-            } else {
-                -1
-            }
-
-            for (y in 0 until height) {
-                currentCoroutineContext().ensureActive()
-                frames.forEachIndexed { index, frame ->
-                    readShiftedPixels(
-                        bitmap = frame.bitmap,
-                        destination = sourceRows[index],
-                        top = y,
-                        rows = 1,
-                        dx = frame.shift.dx,
-                        dy = frame.shift.dy,
-                        fillColor = 0xFF000000.toInt()
-                    )
-                }
-                for (x in 0 until width) {
-                    frames.indices.forEach { index ->
-                        colors[index] = sourceRows[index][x]
-                    }
-                    outputRow[x] = if (sampleFilteringApplied) {
-                        frames.indices.forEach { index ->
-                            val frame = frames[index]
-                            validSamples[index] = checkNotNull(sensorDefectCoverage)
-                                .sourceSampleIsValid(
-                                    outputX = x,
-                                    outputY = y,
-                                    shift = frame.shift,
-                                    sourceWidth = frame.bitmap.width,
-                                    sourceHeight = frame.bitmap.height
-                                )
-                        }
-                        val validCount = compactValidArgbSamples(
-                            colors,
-                            validSamples,
-                            validColors
-                        )
-                        if (validCount >= ManualAlignedStackMode.MEDIAN.minimumFrameCount) {
-                            medianArgbPixel(
-                                colors = validColors,
-                                redValues = redValues,
-                                greenValues = greenValues,
-                                blueValues = blueValues,
-                                count = validCount
-                            )
-                        } else {
-                            sourceRows[referenceCompactIndex][x]
-                        }
-                    } else {
-                        medianArgbPixel(
-                            colors = colors,
-                            redValues = redValues,
-                            greenValues = greenValues,
-                            blueValues = blueValues
-                        )
-                    }
-                }
-                output.setPixels(outputRow, 0, width, 0, y, width, 1)
-                onRowCompleted(y + 1)
-            }
-            return output
-        } catch (error: Throwable) {
-            output.recycle()
-            throw error
-        }
-    }
-
-    private suspend fun calculateSigmaClipping(
-        frames: List<MedianPreparedFrame>,
-        width: Int,
-        height: Int,
-        sigma: Double,
-        signalPreserving: Boolean = false,
-        sensorDefectCoverage: ManualSensorDefectCoveragePlan? = null,
-        referenceOriginalFrameIndex: Int? = null,
-        onRowCompleted: suspend (Int) -> Unit
-    ): Bitmap {
-        val output = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        try {
-            val sourceRows = Array(frames.size) { IntArray(width) }
-            val outputRow = IntArray(width)
-            val colors = IntArray(frames.size)
-            val validColors = IntArray(frames.size)
-            val validSamples = BooleanArray(frames.size)
-            val redValues = IntArray(frames.size)
-            val greenValues = IntArray(frames.size)
-            val blueValues = IntArray(frames.size)
-            val sortedScratch = IntArray(frames.size)
-            val sampleFilteringApplied =
-                sensorDefectCoverage?.report?.sampleLevelFilteringApplied == true
-            val referenceCompactIndex = if (sampleFilteringApplied) {
-                frames.indexOfFirst { it.originalFrameIndex == referenceOriginalFrameIndex }
-                    .also { require(it >= 0) }
-            } else {
-                -1
-            }
-
-            for (y in 0 until height) {
-                currentCoroutineContext().ensureActive()
-                frames.forEachIndexed { index, frame ->
-                    readShiftedPixels(
-                        bitmap = frame.bitmap,
-                        destination = sourceRows[index],
-                        top = y,
-                        rows = 1,
-                        dx = frame.shift.dx,
-                        dy = frame.shift.dy,
-                        fillColor = 0xFF000000.toInt()
-                    )
-                }
-                for (x in 0 until width) {
-                    frames.indices.forEach { index ->
-                        val color = sourceRows[index][x]
-                        colors[index] = color
-                    }
-                    val validCount = if (sampleFilteringApplied) {
-                        frames.indices.forEach { index ->
-                            val frame = frames[index]
-                            validSamples[index] = checkNotNull(sensorDefectCoverage)
-                                .sourceSampleIsValid(
-                                    outputX = x,
-                                    outputY = y,
-                                    shift = frame.shift,
-                                    sourceWidth = frame.bitmap.width,
-                                    sourceHeight = frame.bitmap.height
-                                )
-                        }
-                        compactValidArgbSamples(colors, validSamples, validColors)
-                    } else {
-                        colors.copyInto(validColors)
-                        colors.size
-                    }
-                    if (
-                        sampleFilteringApplied &&
-                        validCount < ManualAlignedStackMode.SIGMA.minimumFrameCount
-                    ) {
-                        outputRow[x] = sourceRows[referenceCompactIndex][x]
-                        continue
-                    }
-                    if (signalPreserving) {
-                        for (index in 0 until validCount) {
-                            val color = validColors[index]
-                            redValues[index] = color ushr 16 and 0xFF
-                            greenValues[index] = color ushr 8 and 0xFF
-                            blueValues[index] = color and 0xFF
-                        }
-                        val red = signalPreservingSigmaChannel(
-                            redValues,
-                            sigma,
-                            count = validCount,
-                            sortedScratch = sortedScratch
-                        )
-                        val green = signalPreservingSigmaChannel(
-                            greenValues,
-                            sigma,
-                            count = validCount,
-                            sortedScratch = sortedScratch
-                        )
-                        val blue = signalPreservingSigmaChannel(
-                            blueValues,
-                            sigma,
-                            count = validCount,
-                            sortedScratch = sortedScratch
-                        )
-                        outputRow[x] = 0xFF000000.toInt() or
-                            (red shl 16) or
-                            (green shl 8) or
-                            blue
-                    } else {
-                        outputRow[x] = sigmaClipArgbPixel(
-                            colors = validColors,
-                            sigmaThreshold = sigma,
-                            iterations = 1,
-                            redValues = redValues,
-                            greenValues = greenValues,
-                            blueValues = blueValues,
-                            count = validCount
-                        )
-                    }
-                }
-                output.setPixels(outputRow, 0, width, 0, y, width, 1)
-                onRowCompleted(y + 1)
-            }
-            return output
-        } catch (error: Throwable) {
-            output.recycle()
-            throw error
-        }
-    }
-
     private data class ManualAlignmentReference(
         val image: ArgbPixelImage,
         val scaleX: Float,
@@ -3009,10 +1999,14 @@ class JpegStacker internal constructor(
         targetWidth: Int,
         targetHeight: Int
     ): ManualAlignmentReference {
-        val bitmap = decodePreparedFrame(frame, targetWidth, targetHeight)
+        val scale = minOf(1f, 640f / maxOf(targetWidth, targetHeight))
+        val bitmap = decodeMedianFrame(frame, maxOf(1, (targetWidth * scale).roundToInt()),
+            maxOf(1, (targetHeight * scale).roundToInt()))
             ?: error("Не удалось подготовить опорный кадр")
         return try {
-            createManualAlignmentSample(bitmap)
+            createManualAlignmentSample(bitmap).let {
+                it.copy(scaleX = targetWidth.toFloat() / it.image.width, scaleY = targetHeight.toFloat() / it.image.height)
+            }
         } finally {
             bitmap.recycle()
         }
@@ -3174,6 +2168,8 @@ class JpegStacker internal constructor(
         totalFrames: Int,
         safeMode: Boolean,
         source: ManualStackingSource,
+        outputWidth: Int = candidate.width,
+        outputHeight: Int = candidate.height,
         onAlignment: suspend (
             current: Int,
             total: Int,
@@ -3190,8 +2186,8 @@ class JpegStacker internal constructor(
             val fullResolutionMaxShift = manualAlignmentShiftLimitPx(
                 frameNumber = frameNumber,
                 totalFrames = totalFrames,
-                imageWidth = candidate.width,
-                imageHeight = candidate.height
+                imageWidth = outputWidth,
+                imageHeight = outputHeight
             )
             val maxShift = maxOf(
                 ceil(fullResolutionMaxShift / reference.scaleX).toInt(),
@@ -3370,20 +2366,6 @@ class JpegStacker internal constructor(
         return ArgbPixelImage(bitmap.width, bitmap.height, pixels)
     }
 
-    private fun bitmapFromArgbImage(image: ArgbPixelImage): Bitmap =
-        Bitmap.createBitmap(image.width, image.height, Bitmap.Config.ARGB_8888).apply {
-            setPixels(image.pixels, 0, image.width, 0, 0, image.width, image.height)
-        }
-
-    private fun analyzeProfileBitmap(
-        bitmap: Bitmap,
-        recipe: AstroProfileRecipe
-    ): ProfileSanityMetrics = analyzeProfileImage(
-        bitmapToArgbImage(bitmap),
-        recipe.roi,
-        recipe.sensitivity
-    )
-
     private fun logProfileStage(
         profile: AstroProcessingProfile,
         source: ManualStackingSource,
@@ -3399,604 +2381,6 @@ class JpegStacker internal constructor(
                 "starContrast=${metrics.medianStarContrast} " +
                 "backgroundSpread=${metrics.backgroundSpread} " +
                 "banding=${metrics.largeScaleBanding}"
-        )
-    }
-
-    private suspend fun averageFrames(
-        frames: List<SessionFrame>,
-        targetWidth: Int,
-        targetHeight: Int,
-        onProgress: suspend (current: Int, total: Int) -> Unit
-    ): Bitmap {
-        var average: Bitmap? = null
-        var averageAccumulator: ArgbAverageAccumulator? = null
-        try {
-            frames.forEachIndexed { index, frame ->
-                currentCoroutineContext().ensureActive()
-                var prepared = decodeFrame(frame)
-                    ?: error("Не удалось прочитать JPEG: ${frame.fileName}")
-                try {
-                    val validation = validateDarkFrames(
-                        darkFrames = listOf(
-                            decodedPixelFrameShape(prepared.width, prepared.height)
-                        ),
-                        lightFrames = listOf(
-                            decodedPixelFrameShape(targetWidth, targetHeight)
-                        )
-                    )
-                    if (validation is DarkValidationResult.Invalid) {
-                        error("${validation.message}: ${frame.fileName}")
-                    }
-                    if (average == null) {
-                        average = prepared.copy(Bitmap.Config.ARGB_8888, true)
-                            ?: error("Не удалось подготовить JPEG")
-                        averageAccumulator = ArgbAverageAccumulator(
-                            pixelCount = targetWidth * targetHeight,
-                            maximumFrameCount = frames.size
-                        )
-                    } else {
-                        addToMasterDarkRunningAverage(
-                            accumulator = checkNotNull(averageAccumulator),
-                            average = checkNotNull(average),
-                            next = prepared,
-                            frameNumber = index + 1
-                        )
-                    }
-                } finally {
-                    prepared.takeUnless {
-                        it === average || it.isRecycled
-                    }?.recycle()
-                }
-                onProgress(index + 1, frames.size)
-            }
-            return checkNotNull(average)
-        } catch (error: Throwable) {
-            average?.takeUnless(Bitmap::isRecycled)?.recycle()
-            throw error
-        }
-    }
-
-    private suspend fun calibrateAndAverageLights(
-        lightFrames: List<SessionFrame>,
-        masterDark: Bitmap,
-        targetWidth: Int,
-        targetHeight: Int,
-        shadowOffset: Int,
-        alignFrames: Boolean,
-        alignmentSafe: Boolean,
-        source: ManualStackingSource,
-        onProgress: suspend (
-            message: String,
-            current: Int,
-            total: Int
-        ) -> Unit
-    ): ManualCalibratedAverage {
-        val output = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
-        val alignmentShifts = mutableListOf<AlignmentShift>()
-        var sensorDefectFallback: Bitmap? = null
-        try {
-            val alignmentSelection = if (alignFrames) {
-                prepareManualSequenceAlignmentSelection(
-                    frames = lightFrames,
-                    targetWidth = targetWidth,
-                    targetHeight = targetHeight,
-                    mode = ManualAlignedStackMode.DARK_SUBTRACTED_AVERAGE
-                ) { current, total, message ->
-                    onProgress(message, current, total)
-                }
-            } else {
-                null
-            }
-            val sequencePlan = alignmentSelection?.sequencePlan
-            val frameWork = manualSequenceFrameWork(
-                lightFrames,
-                sequencePlan,
-                ManualAlignedStackMode.DARK_SUBTRACTED_AVERAGE
-            )
-            val sensorDefectCoverage = manualSensorDefectCoveragePlan(
-                sequencePlan,
-                ManualAlignedStackMode.DARK_SUBTRACTED_AVERAGE,
-                targetWidth,
-                targetHeight
-            )
-            val sampleFilteringApplied =
-                sensorDefectCoverage?.report?.sampleLevelFilteringApplied == true
-            val averageAccumulator = ArgbAverageAccumulator(
-                pixelCount = targetWidth * targetHeight,
-                maximumFrameCount = frameWork.size,
-                perPixelWeighting = sampleFilteringApplied
-            )
-            val alignmentReference = if (alignFrames && sequencePlan == null) {
-                try {
-                    createAlignmentReference(
-                        lightFrames.first(),
-                        targetWidth,
-                        targetHeight
-                    )
-                } catch (error: CancellationException) {
-                    throw error
-                } catch (_: Exception) {
-                    onProgress(
-                        "Не удалось подготовить выравнивание. " +
-                            "Продолжаем без него.",
-                        1,
-                        lightFrames.size
-                    )
-                    null
-                }
-            } else {
-                null
-            }
-            frameWork.forEach { work ->
-                val index = work.originalFrameIndex
-                val frame = work.value
-                currentCoroutineContext().ensureActive()
-                val light = decodePreparedFrame(
-                    frame,
-                    targetWidth,
-                    targetHeight
-                ) ?: error("Не удалось прочитать JPEG: ${frame.fileName}")
-                try {
-                    val shift = if (sequencePlan != null) {
-                        reportManualSequenceShift(
-                            plan = sequencePlan,
-                            frameIndex = index,
-                            targetWidth = targetWidth,
-                            targetHeight = targetHeight,
-                            source = source
-                        ) { current, total, message ->
-                            onProgress(message, current, total)
-                        }
-                    } else if (alignmentReference != null && index > 0) {
-                        findAlignmentOrZero(
-                            reference = alignmentReference,
-                            candidate = light,
-                            frameNumber = index + 1,
-                            totalFrames = lightFrames.size,
-                            safeMode = alignmentSafe,
-                            source = source
-                        ) { current, total, message ->
-                            onProgress(message, current, total)
-                        }
-                    } else {
-                        AlignmentShift.Zero
-                    }
-                    alignmentShifts += shift
-                    val fallback = if (
-                        sampleFilteringApplied &&
-                        checkNotNull(sensorDefectCoverage).report
-                            .insufficientCoveragePixelCount > 0 &&
-                        index == sequencePlan?.referenceFrameIndex
-                    ) {
-                        Bitmap.createBitmap(
-                            targetWidth,
-                            targetHeight,
-                            Bitmap.Config.ARGB_8888
-                        ).also { sensorDefectFallback = it }
-                    } else {
-                        null
-                    }
-                    subtractDarkAndAverage(
-                        accumulator = averageAccumulator,
-                        average = output,
-                        light = light,
-                        masterDark = masterDark,
-                        frameNumber = work.compactFrameNumber,
-                        shadowOffset = shadowOffset,
-                        dx = shift.dx,
-                        dy = shift.dy,
-                        sensorDefectCoverage = sensorDefectCoverage,
-                        unfilteredFallback = fallback
-                    )
-                } finally {
-                    light.takeUnless(Bitmap::isRecycled)?.recycle()
-                }
-                onProgress(
-                    "Обработка кадра ${index + 1} из ${lightFrames.size}",
-                    index + 1,
-                    lightFrames.size
-                )
-            }
-            if (sampleFilteringApplied) {
-                applyManualAverageCoverageFallback(
-                    average = output,
-                    accumulator = averageAccumulator,
-                    fallback = sensorDefectFallback,
-                    coverage = checkNotNull(sensorDefectCoverage),
-                    minimumValidSamples =
-                        ManualAlignedStackMode.DARK_SUBTRACTED_AVERAGE.minimumFrameCount
-                )
-            }
-            val integrationReport = manualSequenceIntegrationReport(
-                alignmentSelection = alignmentSelection,
-                mode = ManualAlignedStackMode.DARK_SUBTRACTED_AVERAGE,
-                integratedOriginalFrameIndices = frameWork.map { it.originalFrameIndex },
-                sensorDefectFiltering = sensorDefectCoverage?.report
-            )
-            val result = if (alignFrames) {
-                cropToCommonAlignedRegion(output, alignmentShifts)
-            } else {
-                output
-            }
-            return ManualCalibratedAverage(
-                bitmap = result,
-                integratedFrameCount = frameWork.size,
-                integrationReport = integrationReport
-            )
-        } catch (error: Throwable) {
-            output.takeUnless(Bitmap::isRecycled)?.recycle()
-            throw error
-        } finally {
-            sensorDefectFallback?.takeUnless(Bitmap::isRecycled)?.recycle()
-        }
-    }
-
-    private fun decodePreparedFrame(
-        frame: SessionFrame,
-        targetWidth: Int,
-        targetHeight: Int
-    ): Bitmap? = decodeMedianFrame(frame, targetWidth, targetHeight)
-
-    private suspend fun subtractDarkAndAverage(
-        accumulator: ArgbAverageAccumulator,
-        average: Bitmap,
-        light: Bitmap,
-        masterDark: Bitmap,
-        frameNumber: Int,
-        shadowOffset: Int,
-        dx: Int,
-        dy: Int,
-        sensorDefectCoverage: ManualSensorDefectCoveragePlan? = null,
-        unfilteredFallback: Bitmap? = null
-    ) {
-        val width = average.width
-        val rowCount = 32
-        val averagePixels = IntArray(width * rowCount)
-        val lightPixels = IntArray(width * rowCount)
-        val darkPixels = IntArray(width * rowCount)
-        val calibratedPixels = IntArray(width * rowCount)
-        var top = 0
-
-        while (top < average.height) {
-            currentCoroutineContext().ensureActive()
-            val rows = minOf(rowCount, average.height - top)
-            val pixelCount = width * rows
-            if (frameNumber > 1) {
-                average.getPixels(
-                    averagePixels,
-                    0,
-                    width,
-                    0,
-                    top,
-                    width,
-                    rows
-                )
-            }
-            readShiftedPixels(
-                bitmap = light,
-                destination = lightPixels,
-                top = top,
-                rows = rows,
-                dx = dx,
-                dy = dy,
-                fillColor = 0
-            )
-            readShiftedPixels(
-                bitmap = masterDark,
-                destination = darkPixels,
-                top = top,
-                rows = rows,
-                dx = dx,
-                dy = dy,
-                fillColor = 0xFF000000.toInt()
-            )
-            subtractMasterDarkArgb(
-                lightPixels = lightPixels,
-                darkPixels = darkPixels,
-                outputPixels = calibratedPixels,
-                neutralOffset = shadowOffset,
-                pixelCount = pixelCount
-            )
-
-            for (pixelIndex in 0 until pixelCount) {
-                if (lightPixels[pixelIndex] ushr 24 == 0) {
-                    calibratedPixels[pixelIndex] = 0xFF000000.toInt()
-                }
-            }
-            val sampleFilteringApplied =
-                sensorDefectCoverage?.report?.sampleLevelFilteringApplied == true
-            if (unfilteredFallback != null) {
-                unfilteredFallback.setPixels(
-                    calibratedPixels,
-                    0,
-                    width,
-                    0,
-                    top,
-                    width,
-                    rows
-                )
-            }
-            if (sampleFilteringApplied) {
-                val validSamples = BooleanArray(pixelCount)
-                for (pixelIndex in 0 until pixelCount) {
-                    val outputX = pixelIndex % width
-                    val outputY = top + pixelIndex / width
-                    validSamples[pixelIndex] = checkNotNull(sensorDefectCoverage)
-                        .sourceSampleIsValid(
-                            outputX,
-                            outputY,
-                            AlignmentShift(dx, dy),
-                            light.width,
-                            light.height
-                        )
-                }
-                updateRunningAverageArgbValidSamples(
-                    accumulator = accumulator,
-                    averagePixels = averagePixels,
-                    nextPixels = calibratedPixels,
-                    validSamples = validSamples,
-                    pixelCount = pixelCount,
-                    accumulatorOffset = top * width
-                )
-            } else if (frameNumber == 1) {
-                calibratedPixels.copyInto(averagePixels, endIndex = pixelCount)
-            } else {
-                updateRunningAverageArgb(
-                    accumulator = accumulator,
-                    averagePixels = averagePixels,
-                    nextPixels = calibratedPixels,
-                    frameNumber = frameNumber,
-                    pixelCount = pixelCount,
-                    accumulatorOffset = top * width
-                )
-            }
-
-            average.setPixels(averagePixels, 0, width, 0, top, width, rows)
-            top += rows
-        }
-    }
-
-    private fun applyAstroStretchInPlace(bitmap: Bitmap) {
-        val width = bitmap.width
-        val row = IntArray(width)
-        val histogram = IntArray(256)
-        for (y in 0 until bitmap.height) {
-            bitmap.getPixels(row, 0, width, 0, y, width, 1)
-            row.forEach { color -> histogram[pixelLuminance(color)]++ }
-        }
-        val parameters = manualAstroStretchParameters(
-            histogram,
-            width.toLong() * bitmap.height.toLong()
-        )
-        for (y in 0 until bitmap.height) {
-            bitmap.getPixels(row, 0, width, 0, y, width, 1)
-            row.indices.forEach { x -> row[x] = stretchArgbColor(row[x], parameters) }
-            bitmap.setPixels(row, 0, width, 0, y, width, 1)
-        }
-    }
-
-    private suspend fun addToRunningAverage(
-        accumulator: ArgbAverageAccumulator,
-        average: Bitmap,
-        next: Bitmap,
-        frameNumber: Int,
-        dx: Int = 0,
-        dy: Int = 0
-    ) {
-        val width = average.width
-        val rowCount = 32
-        val averagePixels = IntArray(width * rowCount)
-        val nextPixels = IntArray(width * rowCount)
-        var top = 0
-
-        while (top < average.height) {
-            currentCoroutineContext().ensureActive()
-            val rows = minOf(rowCount, average.height - top)
-            val pixelCount = width * rows
-            average.getPixels(averagePixels, 0, width, 0, top, width, rows)
-            readShiftedPixels(
-                bitmap = next,
-                destination = nextPixels,
-                top = top,
-                rows = rows,
-                dx = dx,
-                dy = dy,
-                fillColor = 0xFF000000.toInt()
-            )
-
-            updateRunningAverageArgb(
-                accumulator = accumulator,
-                averagePixels = averagePixels,
-                nextPixels = nextPixels,
-                frameNumber = frameNumber,
-                pixelCount = pixelCount,
-                accumulatorOffset = top * width
-            )
-
-            average.setPixels(averagePixels, 0, width, 0, top, width, rows)
-            top += rows
-        }
-    }
-
-    private suspend fun addToMasterDarkRunningAverage(
-        accumulator: ArgbAverageAccumulator,
-        average: Bitmap,
-        next: Bitmap,
-        frameNumber: Int
-    ) {
-        val width = average.width
-        val rowCount = 32
-        val averagePixels = IntArray(width * rowCount)
-        val nextPixels = IntArray(width * rowCount)
-        var top = 0
-
-        while (top < average.height) {
-            currentCoroutineContext().ensureActive()
-            val rows = minOf(rowCount, average.height - top)
-            val pixelCount = width * rows
-            average.getPixels(averagePixels, 0, width, 0, top, width, rows)
-            next.getPixels(nextPixels, 0, width, 0, top, width, rows)
-            updateMasterDarkRunningAverageArgb(
-                accumulator = accumulator,
-                averagePixels = averagePixels,
-                nextPixels = nextPixels,
-                frameNumber = frameNumber,
-                pixelCount = pixelCount,
-                accumulatorOffset = top * width
-            )
-            average.setPixels(averagePixels, 0, width, 0, top, width, rows)
-            top += rows
-        }
-    }
-
-    private suspend fun addToManualRunningAverage(
-        accumulator: ArgbAverageAccumulator,
-        average: Bitmap,
-        next: Bitmap,
-        frameNumber: Int,
-        dx: Int,
-        dy: Int,
-        sensorDefectCoverage: ManualSensorDefectCoveragePlan? = null
-    ) {
-        val width = average.width
-        val rowCount = 32
-        val averagePixels = IntArray(width * rowCount)
-        val nextPixels = IntArray(width * rowCount)
-        val validSamples = BooleanArray(width * rowCount)
-        val sampleFilteringApplied =
-            sensorDefectCoverage?.report?.sampleLevelFilteringApplied == true
-        var top = 0
-
-        while (top < average.height) {
-            currentCoroutineContext().ensureActive()
-            val rows = minOf(rowCount, average.height - top)
-            val pixelCount = width * rows
-            average.getPixels(averagePixels, 0, width, 0, top, width, rows)
-            readShiftedPixels(
-                bitmap = next,
-                destination = nextPixels,
-                top = top,
-                rows = rows,
-                dx = dx,
-                dy = dy,
-                fillColor = 0xFF000000.toInt()
-            )
-            if (sampleFilteringApplied) {
-                for (pixelIndex in 0 until pixelCount) {
-                    validSamples[pixelIndex] = checkNotNull(sensorDefectCoverage)
-                        .sourceSampleIsValid(
-                            outputX = pixelIndex % width,
-                            outputY = top + pixelIndex / width,
-                            shift = AlignmentShift(dx, dy),
-                            sourceWidth = next.width,
-                            sourceHeight = next.height
-                        )
-                }
-                updateRunningAverageArgbValidSamples(
-                    accumulator = accumulator,
-                    averagePixels = averagePixels,
-                    nextPixels = nextPixels,
-                    validSamples = validSamples,
-                    pixelCount = pixelCount,
-                    accumulatorOffset = top * width
-                )
-            } else {
-                updateRunningAverageArgb(
-                    accumulator = accumulator,
-                    averagePixels = averagePixels,
-                    nextPixels = nextPixels,
-                    frameNumber = frameNumber,
-                    pixelCount = pixelCount,
-                    accumulatorOffset = top * width
-                )
-            }
-            average.setPixels(averagePixels, 0, width, 0, top, width, rows)
-            top += rows
-        }
-    }
-
-    private fun applyManualAverageCoverageFallback(
-        average: Bitmap,
-        accumulator: ArgbAverageAccumulator,
-        fallback: Bitmap?,
-        coverage: ManualSensorDefectCoveragePlan,
-        minimumValidSamples: Int
-    ) {
-        val insufficient = coverage.report.insufficientCoveragePixelCount
-        if (insufficient == 0) return
-        val source = requireNotNull(fallback) {
-            "Reference fallback is required for insufficient sample coverage"
-        }
-        val region = coverage.commonOutputRegion
-        val averageRow = IntArray(region.width)
-        val fallbackRow = IntArray(region.width)
-        var replaced = 0
-        for (y in region.top until region.bottom) {
-            average.getPixels(averageRow, 0, region.width, region.left, y, region.width, 1)
-            source.getPixels(fallbackRow, 0, region.width, region.left, y, region.width, 1)
-            for (localX in 0 until region.width) {
-                val pixelIndex = y * average.width + region.left + localX
-                if (accumulator.validSampleCountAt(pixelIndex) < minimumValidSamples) {
-                    averageRow[localX] = fallbackRow[localX]
-                    replaced++
-                }
-            }
-            average.setPixels(averageRow, 0, region.width, region.left, y, region.width, 1)
-        }
-        check(replaced == insufficient) {
-            "Coverage fallback count $replaced does not match report $insufficient"
-        }
-    }
-
-    private fun createShiftedBitmapCopy(source: Bitmap, dx: Int, dy: Int): Bitmap {
-        val output = Bitmap.createBitmap(
-            source.width,
-            source.height,
-            Bitmap.Config.ARGB_8888
-        )
-        val rowCount = 32
-        val pixels = IntArray(source.width * rowCount)
-        var top = 0
-        while (top < source.height) {
-            val rows = minOf(rowCount, source.height - top)
-            readShiftedPixels(
-                bitmap = source,
-                destination = pixels,
-                top = top,
-                rows = rows,
-                dx = dx,
-                dy = dy,
-                fillColor = 0xFF000000.toInt()
-            )
-            output.setPixels(pixels, 0, source.width, 0, top, source.width, rows)
-            top += rows
-        }
-        return output
-    }
-
-    private fun readShiftedPixels(
-        bitmap: Bitmap,
-        destination: IntArray,
-        top: Int,
-        rows: Int,
-        dx: Int,
-        dy: Int,
-        fillColor: Int
-    ) {
-        val width = bitmap.width
-        destination.fill(fillColor, 0, width * rows)
-
-        val region = shiftedCopyRegion(width, bitmap.height, top, rows, dx, dy)
-            ?: return
-
-        bitmap.getPixels(
-            destination,
-            (region.destinationY - top) * width + region.destinationX,
-            width,
-            region.sourceX,
-            region.sourceY,
-            region.width,
-            region.height
         )
     }
 
@@ -4511,63 +2895,13 @@ class JpegStacker internal constructor(
         }
     }
 
-    private fun appendMediaStoreSessionInfo(
-        session: SessionSummary,
-        block: String
-    ): Boolean {
-        val resolver = context.contentResolver
-        val collection = MediaStore.Files.getContentUri("external")
-        val relativePath =
-            "${Environment.DIRECTORY_PICTURES}/AstroPhoto/${session.folderName}/"
-        val existingUri = resolver.query(
-            collection,
-            arrayOf(MediaStore.Files.FileColumns._ID),
-            "${MediaStore.Files.FileColumns.DISPLAY_NAME}=? AND " +
-                "${MediaStore.Files.FileColumns.RELATIVE_PATH}=?",
-            arrayOf("session_info.txt", relativePath),
-            null
-        )?.use { cursor ->
-            if (cursor.moveToFirst()) {
-                ContentUris.withAppendedId(collection, cursor.getLong(0))
-            } else {
-                null
-            }
-        }
-
-        val existingContent = existingUri?.let { uri ->
-            resolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-        }.orEmpty()
-        // Scoped storage does not allow creating a generic text file below Pictures via
-        // MediaStore.Files. Imported sessions may legitimately have no session_info.txt;
-        // the processing report remains the authoritative metadata artifact in that case.
-        val uri = existingUri ?: return false
-        val base = existingContent.ifBlank {
-            "sessionName: ${session.sessionName}\n"
-        }
-        resolver.openOutputStream(uri, "wt")?.bufferedWriter()?.use { writer ->
-            writer.write(base.trimEnd())
-            writer.write(block)
-        } ?: error("Не удалось обновить session_info.txt")
+    private fun appendMediaStoreSessionInfo(session: SessionSummary, block: String): Boolean {
+        SessionInfoStore(context).append(session, block)
         return true
     }
 
-    @Suppress("DEPRECATION")
-    private fun appendLegacySessionInfo(
-        session: SessionSummary,
-        block: String
-    ) {
-        val pictures = Environment.getExternalStoragePublicDirectory(
-            Environment.DIRECTORY_PICTURES
-        )
-        val file = File(
-            pictures,
-            "AstroPhoto/${session.folderName}/session_info.txt"
-        )
-        file.parentFile?.mkdirs()
-        if (!file.exists()) {
-            file.writeText("sessionName: ${session.sessionName}\n")
-        }
-        file.appendText(block)
+    private fun appendLegacySessionInfo(session: SessionSummary, block: String) {
+        SessionInfoStore(context).append(session, block)
     }
 
     private fun decodeSampledFile(path: String, maxSize: Int): Bitmap? {
@@ -4587,22 +2921,6 @@ class JpegStacker internal constructor(
                 inPreferredConfig = Bitmap.Config.ARGB_8888
             }
         )
-    }
-
-    private fun complexStackTargetPixels(
-        sourcePixels: Long,
-        frameCount: Int,
-        maxPixels: Long
-    ): Long {
-        val seriesLimit = when {
-            frameCount <= 6 -> maxPixels
-            frameCount <= 15 -> MAX_COMPLEX_STACK_PIXELS_MEDIUM_SERIES
-            else -> MAX_COMPLEX_STACK_PIXELS_MANY_FRAMES
-        }
-        val bytesPerPixel = frameCount.toLong() * ARGB_BYTES_PER_PIXEL +
-            COMPLEX_STACK_OUTPUT_BYTES_PER_PIXEL
-        val heapLimit = processingMemoryBudgetBytes() / bytesPerPixel.coerceAtLeast(1L)
-        return minOf(sourcePixels, seriesLimit, heapLimit).coerceAtLeast(1L)
     }
 
     internal fun appendRawStackSessionInfo(
@@ -4636,49 +2954,7 @@ class JpegStacker internal constructor(
         }
     }
 
-    private fun averageStackTargetPixels(sourcePixels: Long, frameCount: Int): Long {
-        val accumulatorBytes = if (frameCount <= MAX_PACKED_AVERAGE_FRAMES) {
-            PACKED_AVERAGE_ACCUMULATOR_BYTES_PER_PIXEL
-        } else {
-            UNPACKED_AVERAGE_ACCUMULATOR_BYTES_PER_PIXEL
-        }
-        val bytesPerPixel = AVERAGE_BITMAP_BYTES_PER_PIXEL + accumulatorBytes
-        val heapLimit = processingMemoryBudgetBytes() / bytesPerPixel
-        return minOf(sourcePixels, MAX_AVERAGE_PIXELS, heapLimit).coerceAtLeast(1L)
-    }
-
-    private fun processingMemoryBudgetBytes(): Long =
-        (Runtime.getRuntime().maxMemory() / 2L)
-            .coerceIn(MIN_PROCESSING_MEMORY_BYTES, MAX_PROCESSING_MEMORY_BYTES)
-
-    private fun cropToCommonAlignedRegion(
-        bitmap: Bitmap,
-        shifts: List<AlignmentShift>
-    ): Bitmap {
-        val region = commonAlignedRegion(bitmap.width, bitmap.height, shifts)
-        if (
-            region.left == 0 && region.top == 0 &&
-            region.right == bitmap.width && region.bottom == bitmap.height
-        ) {
-            return bitmap
-        }
-        val cropped = Bitmap.createBitmap(
-            bitmap,
-            region.left,
-            region.top,
-            region.width,
-            region.height
-        )
-        bitmap.recycle()
-        return cropped
-    }
-
     companion object {
-        private const val MAX_AVERAGE_PIXELS = 24_000_000L
-        private const val MAX_MEDIAN_FRAMES = 30
-        private const val MAX_MEDIAN_PIXELS = 8_000_000L
-        private const val MAX_SIGMA_FRAMES = 30
-        private const val MAX_SIGMA_PIXELS = 8_000_000L
         private const val MAX_PROFILE_FRAMES = 30
         private const val PROFILE_REGISTRATION_STALL_TIMEOUT_MILLIS = 300_000L
         private const val PROFILE_ANALYSIS_MAX_DIMENSION = 960
@@ -4691,18 +2967,7 @@ class JpegStacker internal constructor(
         private const val MIN_SKY_ALPHA_FOR_ADAPTIVE_STATISTICS = 0.98f
         private const val MIN_PROFILE_WORKING_MEMORY_BYTES = 64L * 1024L * 1024L
         private const val MAX_PROFILE_WORKING_MEMORY_BYTES = 256L * 1024L * 1024L
-        private const val MIN_CACHE_FREE_SPACE_BYTES = 32L * 1024L * 1024L
         private const val FOREGROUND_SHARPNESS_TOLERANCE = 0.05f
-        private const val MAX_COMPLEX_STACK_PIXELS_MANY_FRAMES = 2_500_000L
-        private const val MAX_COMPLEX_STACK_PIXELS_MEDIUM_SERIES = 4_000_000L
-        private const val ARGB_BYTES_PER_PIXEL = 4L
-        private const val COMPLEX_STACK_OUTPUT_BYTES_PER_PIXEL = 8L
-        private const val AVERAGE_BITMAP_BYTES_PER_PIXEL = 12L
-        private const val PACKED_AVERAGE_ACCUMULATOR_BYTES_PER_PIXEL = 4L
-        private const val UNPACKED_AVERAGE_ACCUMULATOR_BYTES_PER_PIXEL = 12L
-        private const val MAX_PACKED_AVERAGE_FRAMES = 1024
-        private const val MIN_PROCESSING_MEMORY_BYTES = 16L * 1024L * 1024L
-        private const val MAX_PROCESSING_MEMORY_BYTES = 256L * 1024L * 1024L
         private val SUPPORTED_SIGMA_VALUES = setOf(1.5, 2.0, 2.5, 3.0)
     }
 }

@@ -5,6 +5,7 @@ import com.joe6355.astrophoto.processing.jpeg.v2.model.LinearRgb
 import com.joe6355.astrophoto.processing.jpeg.v2.model.SkyStatisticsResult
 import com.joe6355.astrophoto.processing.jpeg.v2.sampling.ArgbPixelSource
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.AlphaPixelSource
+import com.joe6355.astrophoto.processing.jpeg.v2.color.linearRgbAt
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.hypot
@@ -58,6 +59,19 @@ class FileBackedSkyStatistics {
         stars: List<DetectedStar> = emptyList()
     ): SkyStatisticsResult {
         require(image.width == effectiveSkyAlpha.width && image.height == effectiveSkyAlpha.height)
+        val legacyArgb = image !is com.joe6355.astrophoto.processing.jpeg.v2.color.LinearRgbPixelSource ||
+            (image is com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedImageReader &&
+                image.image.pixelFormat == com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedPixelFormat.ARGB_8888)
+        fun sample(x: Int, y: Int): Long = if (legacyArgb) image.argbAt(x, y).toLong() else image.linearRgbAt(x, y)
+        fun linearChannel(color: Long, shift: Int): Float = if (legacyArgb) {
+            com.joe6355.astrophoto.processing.jpeg.v2.color.SrgbTransfer.srgbToLinear((color.toInt() ushr shift and 255) / 255f)
+        } else when (shift) {
+            16 -> com.joe6355.astrophoto.processing.jpeg.v2.color.LinearRgb16.red(color)
+            8 -> com.joe6355.astrophoto.processing.jpeg.v2.color.LinearRgb16.green(color)
+            else -> com.joe6355.astrophoto.processing.jpeg.v2.color.LinearRgb16.blue(color)
+        }
+        fun linearLuminance(color: Long): Float = 0.2126f * linearChannel(color, 16) +
+            0.7152f * linearChannel(color, 8) + 0.0722f * linearChannel(color, 0)
         val starCores = StarCoreIndex.create(image.width, image.height, stars)
         val luminanceHistogram = IntArray(HISTOGRAM_BINS)
         val redHistogram = IntArray(HISTOGRAM_BINS)
@@ -75,7 +89,7 @@ class FileBackedSkyStatistics {
         for (y in 0 until image.height) for (x in 0 until image.width) {
             if (effectiveSkyAlpha.alphaAt(x, y) < STATISTICS_ALPHA_THRESHOLD) continue
             skyCount++
-            val color = image.argbAt(x, y)
+            val color = sample(x, y)
             val red = linearChannel(color, 16)
             val green = linearChannel(color, 8)
             val blue = linearChannel(color, 0)
@@ -95,7 +109,7 @@ class FileBackedSkyStatistics {
             if (x > 0 && effectiveSkyAlpha.alphaAt(x - 1, y) >= STATISTICS_ALPHA_THRESHOLD &&
                 !starCores.contains(x - 1, y)
             ) {
-                val neighbor = image.argbAt(x - 1, y)
+                val neighbor = sample(x - 1, y)
                 val nr = linearChannel(neighbor, 16)
                 val ng = linearChannel(neighbor, 8)
                 val nb = linearChannel(neighbor, 0)
@@ -123,7 +137,7 @@ class FileBackedSkyStatistics {
         val blueDeviation = IntArray(HISTOGRAM_BINS)
         for (y in 0 until image.height) for (x in 0 until image.width) {
             if (effectiveSkyAlpha.alphaAt(x, y) < STATISTICS_ALPHA_THRESHOLD || starCores.contains(x, y)) continue
-            val color = image.argbAt(x, y)
+            val color = sample(x, y)
             val red = linearChannel(color, 16)
             val green = linearChannel(color, 8)
             val blue = linearChannel(color, 0)
@@ -152,7 +166,7 @@ class FileBackedSkyStatistics {
         }
         val starBrightness = reliableStars.map { star ->
             linearLuminance(
-                image.argbAt(
+                sample(
                     star.x.roundToInt().coerceIn(0, image.width - 1),
                     star.y.roundToInt().coerceIn(0, image.height - 1)
                 )

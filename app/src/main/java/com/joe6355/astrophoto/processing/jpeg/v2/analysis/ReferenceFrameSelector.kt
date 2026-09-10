@@ -27,37 +27,40 @@ class ReferenceFrameSelector {
     fun scoreAll(analyses: List<FrameAnalysis>): List<ScoredFrameAnalysis> {
         if (analyses.isEmpty()) return emptyList()
         val valid = analyses.filter { it.hardInvalidReason == null }
-        fun normalized(value: Float, values: List<Float>): Float {
-            val finite = values.filter { it.isFinite() }
-            if (!value.isFinite() || finite.isEmpty()) return 0f
-            val minimum = finite.minOrNull() ?: return 0f
-            val maximum = finite.maxOrNull() ?: return 0f
-            return if (maximum - minimum < 0.0001f) 0.5f else ((value - minimum) / (maximum - minimum)).coerceIn(0f, 1f)
+        class Range(values: List<Float>) {
+            private val finite = values.filter { it.isFinite() }
+            private val minimum = finite.minOrNull()
+            private val maximum = finite.maxOrNull()
+            fun normalize(value: Float): Float {
+                if (!value.isFinite() || minimum == null || maximum == null) return 0f
+                return if (maximum - minimum < 0.0001f) 0.5f
+                else ((value - minimum) / (maximum - minimum)).coerceIn(0f, 1f)
+            }
         }
-        val counts = valid.map { it.reliableStarCount.toFloat() }
-        val contrasts = valid.map { it.medianStarContrast }
-        val sharpness = valid.map { if (it.medianStarWidth.isFinite()) 1f / it.medianStarWidth.coerceAtLeast(0.1f) else 0f }
-        val suitability = valid.map { it.alignmentSuitability }
-        val exposure = valid.map { it.exposureSuitability }
-        val trailQuality = valid.map { 1f - it.medianStarEllipticity.coerceIn(0f, 1f) }
-        val noiseQuality = valid.map { -it.backgroundNoise }
-        val clippingQuality = valid.map { -it.clippingPercent }
-        val signalToNoise = valid.map { it.medianStarSnr }
+        val counts = Range(valid.map { it.reliableStarCount.toFloat() })
+        val contrasts = Range(valid.map { it.medianStarContrast })
+        val sharpness = Range(valid.map { if (it.medianStarWidth.isFinite()) 1f / it.medianStarWidth.coerceAtLeast(0.1f) else 0f })
+        val suitability = Range(valid.map { it.alignmentSuitability })
+        val exposure = Range(valid.map { it.exposureSuitability })
+        val trailQuality = Range(valid.map { 1f - it.medianStarEllipticity.coerceIn(0f, 1f) })
+        val noiseQuality = Range(valid.map { -it.backgroundNoise })
+        val clippingQuality = Range(valid.map { -it.clippingPercent })
+        val signalToNoise = Range(valid.map { it.medianStarSnr })
         return analyses.map { analysis ->
             if (analysis.hardInvalidReason != null) {
                 return@map ScoredFrameAnalysis(analysis, Float.NEGATIVE_INFINITY)
             }
             val sharp = if (analysis.medianStarWidth.isFinite()) 1f / analysis.medianStarWidth.coerceAtLeast(0.1f) else 0f
             val score = (
-                normalized(analysis.reliableStarCount.toFloat(), counts) * 0.24f +
-                    normalized(analysis.medianStarContrast, contrasts) * 0.13f +
-                    normalized(analysis.medianStarSnr, signalToNoise) * 0.12f +
-                    normalized(sharp, sharpness) * 0.17f +
-                    normalized(analysis.alignmentSuitability, suitability) * 0.15f +
-                    normalized(analysis.exposureSuitability, exposure) * 0.08f +
-                    normalized(1f - analysis.medianStarEllipticity.coerceIn(0f, 1f), trailQuality) * 0.05f +
-                    normalized(-analysis.backgroundNoise, noiseQuality) * 0.03f +
-                    normalized(-analysis.clippingPercent, clippingQuality) * 0.02f
+                counts.normalize(analysis.reliableStarCount.toFloat()) * 0.24f +
+                    contrasts.normalize(analysis.medianStarContrast) * 0.13f +
+                    signalToNoise.normalize(analysis.medianStarSnr) * 0.12f +
+                    sharpness.normalize(sharp) * 0.17f +
+                    suitability.normalize(analysis.alignmentSuitability) * 0.15f +
+                    exposure.normalize(analysis.exposureSuitability) * 0.08f +
+                    trailQuality.normalize(1f - analysis.medianStarEllipticity.coerceIn(0f, 1f)) * 0.05f +
+                    noiseQuality.normalize(-analysis.backgroundNoise) * 0.03f +
+                    clippingQuality.normalize(-analysis.clippingPercent) * 0.02f
                 ).coerceIn(0f, 1f)
             ScoredFrameAnalysis(analysis, score)
         }

@@ -661,55 +661,9 @@ private class ProcessedResultsRepository(private val context: Context) {
         appendProcessedInfo(session, block)
     }
 
-    private fun appendProcessedInfo(
-        session: SessionSummary,
-        block: String
-    ) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val resolver = context.contentResolver
-            val collection = MediaStore.Files.getContentUri("external")
-            val path =
-                "${Environment.DIRECTORY_PICTURES}/AstroPhoto/" +
-                    "${session.folderName}/"
-            val uri = resolver.query(
-                collection,
-                arrayOf(MediaStore.Files.FileColumns._ID),
-                "${MediaStore.Files.FileColumns.DISPLAY_NAME}=? AND " +
-                    "${MediaStore.Files.FileColumns.RELATIVE_PATH}=?",
-                arrayOf("session_info.txt", path),
-                null
-            )?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    ContentUris.withAppendedId(collection, cursor.getLong(0))
-                } else {
-                    null
-                }
-            } ?: error("session_info.txt не найден")
-            val existing = resolver.openInputStream(uri)
-                ?.bufferedReader()
-                ?.use { it.readText() }
-                .orEmpty()
-            resolver.openOutputStream(uri, "wt")?.bufferedWriter()?.use {
-                it.write(existing.trimEnd())
-                it.write(block)
-            } ?: error("Не удалось обновить session_info.txt")
-        } else {
-            @Suppress("DEPRECATION")
-            val pictures = Environment.getExternalStoragePublicDirectory(
-                Environment.DIRECTORY_PICTURES
-            )
-            val info = File(
-                pictures,
-                "AstroPhoto/${session.folderName}/session_info.txt"
-            )
-            info.parentFile?.mkdirs()
-            if (!info.exists()) {
-                info.writeText("sessionName: ${session.sessionName}\n")
-            }
-            info.appendText(block)
-        }
+    private fun appendProcessedInfo(session: SessionSummary, block: String) {
+        SessionInfoStore(context).append(session, block)
     }
-
     private fun appendRenamedResultInfo(
         session: SessionSummary,
         oldName: String,

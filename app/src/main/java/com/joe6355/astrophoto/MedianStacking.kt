@@ -1,5 +1,8 @@
 package com.joe6355.astrophoto
 
+import com.joe6355.astrophoto.processing.jpeg.v2.color.LinearRgb16
+import com.joe6355.astrophoto.processing.jpeg.v2.color.SrgbTransfer
+
 fun medianArgbFrames(frames: List<AveragePixelFrame>): AveragePixelFrame {
     validateMedianFrames(frames)
     val first = frames.first()
@@ -55,12 +58,30 @@ internal fun medianArgbPixel(
 }
 
 private fun medianChannel(values: IntArray, count: Int): Int {
+    return medianChannelPrecise(values, count).toInt().coerceIn(0, 255)
+}
+
+private fun medianChannelPrecise(values: IntArray, count: Int): Float {
     val middle = count / 2
     return if (count % 2 == 1) {
-        values[middle]
+        values[middle].toFloat()
     } else {
-        (values[middle - 1] + values[middle]) / 2
-    }.coerceIn(0, 255)
+        (values[middle - 1] + values[middle]) / 2f
+    }
+}
+
+/** Same per-channel median, retaining the half-code value for even sample counts. */
+internal fun medianLinearRgbPixel(colors: IntArray, channels: Array<IntArray>, count: Int): Long {
+    require(count in 1..colors.size && channels.size == 3)
+    for (channel in 0..2) {
+        for (index in 0 until count) channels[channel][index] = colors[index] ushr ((2 - channel) * 8) and 255
+        java.util.Arrays.sort(channels[channel], 0, count)
+    }
+    return LinearRgb16.pack(
+        SrgbTransfer.srgbToLinear(medianChannelPrecise(channels[0], count) / 255f),
+        SrgbTransfer.srgbToLinear(medianChannelPrecise(channels[1], count) / 255f),
+        SrgbTransfer.srgbToLinear(medianChannelPrecise(channels[2], count) / 255f)
+    )
 }
 
 private fun validateMedianFrames(frames: List<AveragePixelFrame>) {

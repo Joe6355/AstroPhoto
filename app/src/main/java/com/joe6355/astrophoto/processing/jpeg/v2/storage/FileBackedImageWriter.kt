@@ -1,5 +1,6 @@
 package com.joe6355.astrophoto.processing.jpeg.v2.storage
 
+import com.joe6355.astrophoto.processing.jpeg.v2.color.LinearRgb16
 import java.io.File
 import java.io.RandomAccessFile
 
@@ -27,32 +28,50 @@ class FileBackedImageWriter(
         }
     }
 
-    fun writeRow(y: Int, pixels: IntArray, sourceOffset: Int = 0) {
-        check(!closed)
-        require(y in 0 until image.height && sourceOffset >= 0 && sourceOffset + image.width <= pixels.size)
-        for (x in 0 until image.width) encode(pixels[sourceOffset + x], x * Int.SIZE_BYTES)
-        output.seek(y.toLong() * image.rowStrideBytes)
-        output.write(encodedRow)
-    }
+    fun writeRow(y: Int, pixels: IntArray, sourceOffset: Int = 0) =
+        writeSpan(0, y, image.width, pixels.size, sourceOffset) { index ->
+            encodeArgb(pixels[index], (index - sourceOffset) * image.pixelFormat.bytesPerPixel)
+        }
+
+    fun writeLinearRow(y: Int, pixels: LongArray, sourceOffset: Int = 0) =
+        writeSpan(0, y, image.width, pixels.size, sourceOffset) { index ->
+            encodeLinear(pixels[index], (index - sourceOffset) * image.pixelFormat.bytesPerPixel)
+        }
 
     fun writeTile(left: Int, top: Int, tileWidth: Int, tileHeight: Int, pixels: IntArray) {
-        check(!closed)
-        require(left >= 0 && top >= 0 && tileWidth > 0 && tileHeight > 0)
-        require(left + tileWidth <= image.width && top + tileHeight <= image.height)
-        require(pixels.size >= tileWidth * tileHeight)
-        val encodedTileRow = ByteArray(tileWidth * Int.SIZE_BYTES)
+        validateTile(left, top, tileWidth, tileHeight, pixels.size)
         for (row in 0 until tileHeight) {
-            for (x in 0 until tileWidth) {
-                val color = pixels[row * tileWidth + x]
-                val offset = x * Int.SIZE_BYTES
-                encodedTileRow[offset] = (color ushr 24).toByte()
-                encodedTileRow[offset + 1] = (color ushr 16).toByte()
-                encodedTileRow[offset + 2] = (color ushr 8).toByte()
-                encodedTileRow[offset + 3] = color.toByte()
+            val start = row * tileWidth
+            writeSpan(left, top + row, tileWidth, pixels.size, start) { index ->
+                encodeArgb(pixels[index], (index - start) * image.pixelFormat.bytesPerPixel)
             }
-            output.seek((top + row).toLong() * image.rowStrideBytes + left.toLong() * Int.SIZE_BYTES)
-            output.write(encodedTileRow)
         }
+    }
+
+    fun writeLinearTile(left: Int, top: Int, tileWidth: Int, tileHeight: Int, pixels: LongArray) {
+        validateTile(left, top, tileWidth, tileHeight, pixels.size)
+        for (row in 0 until tileHeight) {
+            val start = row * tileWidth
+            writeSpan(left, top + row, tileWidth, pixels.size, start) { index ->
+                encodeLinear(pixels[index], (index - start) * image.pixelFormat.bytesPerPixel)
+            }
+        }
+    }
+
+    private fun validateTile(left: Int, top: Int, width: Int, height: Int, size: Int) {
+        check(!closed)
+        require(left >= 0 && top >= 0 && width > 0 && height > 0)
+        require(left + width <= image.width && top + height <= image.height)
+        require(width.toLong() * height <= size)
+    }
+
+    private inline fun writeSpan(x: Int, y: Int, count: Int, size: Int, start: Int, encode: (Int) -> Unit) {
+        check(!closed)
+        require(y in 0 until image.height && x >= 0 && x + count <= image.width)
+        require(start >= 0 && start.toLong() + count <= size)
+        for (index in start until start + count) encode(index)
+        output.seek(y.toLong() * image.rowStrideBytes + x.toLong() * image.pixelFormat.bytesPerPixel)
+        output.write(encodedRow, 0, count * image.pixelFormat.bytesPerPixel)
     }
 
     fun finish(): FileBackedImage {
@@ -63,16 +82,28 @@ class FileBackedImageWriter(
     override fun close() {
         if (!closed) {
             closed = true
-            output.fd.sync()
-            output.close()
+            try { output.fd.sync() } finally { output.close() }
         }
     }
 
-    private fun encode(color: Int, offset: Int) {
-        encodedRow[offset] = (color ushr 24).toByte()
-        encodedRow[offset + 1] = (color ushr 16).toByte()
-        encodedRow[offset + 2] = (color ushr 8).toByte()
-        encodedRow[offset + 3] = color.toByte()
+    private fun encodeArgb(color: Int, offset: Int) {
+        if (image.pixelFormat == FileBackedPixelFormat.LINEAR_RGB_16) {
+            encodeLinear(LinearRgb16.fromArgb(color), offset)
+        } else {
+            encodedRow[offset] = (color ushr 24).toByte()
+            encodedRow[offset + 1] = (color ushr 16).toByte()
+            encodedRow[offset + 2] = (color ushr 8).toByte()
+            encodedRow[offset + 3] = color.toByte()
+        }
+    }
+
+    private fun encodeLinear(color: Long, offset: Int) {
+        require(color ushr 48 == 0L) { "Linear RGB16 pixel exceeds 48 bits" }
+        if (image.pixelFormat == FileBackedPixelFormat.ARGB_8888) {
+            encodeArgb(LinearRgb16.toArgb(color), offset)
+        } else {
+            for (byte in 0 until 6) encodedRow[offset + byte] = (color ushr ((5 - byte) * 8)).toByte()
+        }
     }
 }
 
@@ -83,6 +114,7 @@ class FileBackedFloatPlaneWriter(
 ) : AutoCloseable {
     val plane = FileBackedFloatPlane(file, width, height)
     private val output: RandomAccessFile
+    private val encoded = ByteArray(plane.rowStrideBytes)
     private var closed = false
 
     init {
@@ -120,14 +152,13 @@ class FileBackedFloatPlaneWriter(
     override fun close() {
         if (!closed) {
             closed = true
-            output.fd.sync()
-            output.close()
+            try { output.fd.sync() } finally { output.close() }
         }
     }
 
     private fun writeSpan(x: Int, y: Int, count: Int, values: FloatArray, sourceOffset: Int) {
-        val encoded = ByteArray(count * Float.SIZE_BYTES)
         for (index in 0 until count) {
+            require(values[sourceOffset + index].isFinite()) { "Non-finite float plane value" }
             val bits = values[sourceOffset + index].coerceIn(0f, 1f).toBits()
             val offset = index * Float.SIZE_BYTES
             encoded[offset] = (bits ushr 24).toByte()
@@ -136,6 +167,6 @@ class FileBackedFloatPlaneWriter(
             encoded[offset + 3] = bits.toByte()
         }
         output.seek(y.toLong() * plane.rowStrideBytes + x.toLong() * Float.SIZE_BYTES)
-        output.write(encoded)
+        output.write(encoded, 0, count * Float.SIZE_BYTES)
     }
 }

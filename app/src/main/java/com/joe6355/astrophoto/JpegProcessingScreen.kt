@@ -371,8 +371,6 @@ fun JpegStackingBlock(
         progressCurrent = 0
         progressTotal = when {
             useDarkFrames -> usableDarkFrames.size
-            medianMode -> minOf(selectedFrames.size, MAX_MEDIAN_FRAMES_UI)
-            sigmaMode -> minOf(selectedFrames.size, MAX_SIGMA_FRAMES_UI)
             else -> selectedFrames.size
         }
         result = null
@@ -388,7 +386,7 @@ fun JpegStackingBlock(
                 val stackResult = when {
                     sigmaMode -> stacker.sigmaStack(
                         session = session,
-                        frames = selectedFrames.take(MAX_SIGMA_FRAMES_UI),
+                        frames = selectedFrames,
                         sigma = sigmaValue,
                         alignFrames = alignFrames,
                         alignmentSafe = alignmentSafe,
@@ -399,7 +397,7 @@ fun JpegStackingBlock(
                     }
                     medianMode -> stacker.medianStack(
                         session = session,
-                        frames = selectedFrames.take(MAX_MEDIAN_FRAMES_UI),
+                        frames = selectedFrames,
                         alignFrames = alignFrames,
                         alignmentSafe = alignmentSafe,
                         autoStretch = autoStretchAfterStacking,
@@ -444,6 +442,7 @@ fun JpegStackingBlock(
                         result = it
                         status = buildString {
                             append("Готово: ${it.fileName}")
+                            it.warnings.forEach { warning -> append("\n$warning") }
                             if (it.additionalFiles.isNotEmpty()) {
                                 append("\nДополнительные файлы: ${it.additionalFiles.joinToString()}")
                             }
@@ -1140,7 +1139,7 @@ fun JpegStackingBlock(
             if (medianMode && selectedFrames.size > MAX_MEDIAN_FRAMES_UI) {
                 Text(
                     text = "Медианная обработка может быть медленной. Будут использованы " +
-                        "первые $MAX_MEDIAN_FRAMES_UI кадров.",
+                        "до $MAX_MEDIAN_FRAMES_UI лучших кадров по качеству звёзд.",
                     color = AstroColors.Warning
                 )
             }
@@ -1188,7 +1187,7 @@ fun JpegStackingBlock(
                 if (selectedFrames.size > MAX_SIGMA_FRAMES_UI) {
                     Text(
                         text = "Сигма-клиппинг может быть медленным. Будут " +
-                            "использованы первые $MAX_SIGMA_FRAMES_UI кадров.",
+                            "выбраны до $MAX_SIGMA_FRAMES_UI лучших кадров по качеству звёзд.",
                         color = AstroColors.Warning
                     )
                 }

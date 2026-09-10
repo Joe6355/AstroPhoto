@@ -185,21 +185,21 @@ class FileBackedGlobalToneTransformer(
         gain: Double = GlobalToneTransform.APPROVED_GAIN
     ): EnhancedGlobalToneGeneration {
         require(writer.image.width == baseline.width && writer.image.height == baseline.height)
-        val sourceRow = IntArray(baseline.width)
-        val outputRow = IntArray(baseline.width)
+        val sourceRow = LongArray(baseline.width)
+        val outputRow = LongArray(baseline.width)
         var scaleLimitedPixelCount = 0
         var maximumLinearChannel = 0.0
         FileBackedImageReader(baseline).use { reader ->
             for (y in 0 until baseline.height) {
-                reader.readArgbRow(y, sourceRow)
-                val rowMetrics = transform.transformRow(
+                reader.readLinearRow(y, sourceRow)
+                val rowMetrics = transform.transformLinearRow(
                     source = sourceRow,
                     destination = outputRow,
                     anchors = anchors,
                     gain = gain,
                     pixelCount = baseline.width
                 )
-                writer.writeRow(y, outputRow)
+                writer.writeLinearRow(y, outputRow)
                 scaleLimitedPixelCount += rowMetrics.scaleLimitedPixelCount
                 maximumLinearChannel = max(
                     maximumLinearChannel,
@@ -262,7 +262,7 @@ class EnhancedGlobalToneProcessor(
         knownBaselineQuality: ResultQualityMetrics? = null
     ): EnhancedGlobalToneCandidate {
         val baselineHashBefore = fileBackedPixelHash(baseline)
-        val sky = FileBackedImageReader(baseline).use { image ->
+        val sky = preparedNoiseMap.baselineStatistics ?: FileBackedImageReader(baseline).use { image ->
             FileBackedFloatPlaneReader(effectiveSkyAlpha).use { alpha ->
                 skyStatistics.calculate(image, alpha, confirmedStars)
             }
@@ -301,9 +301,11 @@ class EnhancedGlobalToneProcessor(
                 prepared = preparedNoiseMap,
                 store = store
             )
-        } finally {
+        } catch (error: Throwable) {
             store.deleteTemporary(toneGeneration.image)
+            throw error
         }
+        if (denoised.image !== toneGeneration.image) store.deleteTemporary(toneGeneration.image)
         val starEnhanced = try {
             faintStarEnhancer.apply(
                 input = denoised.image,
@@ -311,9 +313,11 @@ class EnhancedGlobalToneProcessor(
                 confirmedStars = confirmedStars,
                 store = store
             )
-        } finally {
+        } catch (error: Throwable) {
             store.deleteTemporary(denoised.image)
+            throw error
         }
+        if (starEnhanced.image !== denoised.image) store.deleteTemporary(denoised.image)
         val generation = toneGeneration.copy(
             image = starEnhanced.image,
             luminanceDenoise = denoised.metrics,
@@ -1150,6 +1154,24 @@ internal suspend fun publishOptionalEnhanced(
     }
 }
 
+/** Canonical decoded ARGB8 pixels, matching the final PNG verification contract. */
+internal fun fileBackedDisplayPixelHash(image: FileBackedImage): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    val row = IntArray(image.width)
+    val encoded = ByteArray(image.width * 4)
+    FileBackedImageReader(image).use { reader ->
+        for (y in 0 until image.height) {
+            reader.readArgbRow(y, row)
+            for (x in row.indices) {
+                for (byte in 0 until 4) encoded[x * 4 + byte] = (row[x] ushr ((3 - byte) * 8)).toByte()
+            }
+            digest.update(encoded)
+        }
+    }
+    return digest.digest().joinToString("") { "%02x".format(it) }
+}
+
+/** Raw storage hash: detects even sub-8-bit changes to the protected baseline. */
 internal fun fileBackedPixelHash(image: FileBackedImage): String {
     image.validate()
     val digest = MessageDigest.getInstance("SHA-256")

@@ -48,14 +48,15 @@ class JpegMemoryBudget(
         halo: Int = 0,
         argbBuffers: Int,
         floatBuffers: Int,
-        maskBuffers: Int = 0
+        maskBuffers: Int = 0,
+        residentBytes: Long = 0L
     ): MemoryPressureDecision {
         require(outputWidth > 0 && outputHeight > 0 && minimumTileSize > 0)
         var width = preferredTileWidth.coerceIn(1, outputWidth)
         var height = preferredTileHeight.coerceIn(1, outputHeight)
         var reduced = false
         while (true) {
-            val estimate = ImageAllocationEstimate.tile(
+            val tileEstimate = ImageAllocationEstimate.tile(
                 width,
                 height,
                 argbBuffers,
@@ -64,6 +65,8 @@ class JpegMemoryBudget(
                 halo,
                 "jpeg-tile"
             )
+            require(residentBytes >= 0L)
+            val estimate = ImageAllocationEstimate(tileEstimate.label, Math.addExact(tileEstimate.bytes, residentBytes))
             if (permits(estimate)) {
                 return MemoryPressureDecision(
                     accepted = true,

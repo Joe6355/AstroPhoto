@@ -309,8 +309,11 @@ class JpegV2Stage8Test {
             source.indexOf("suspend fun profileStack("),
             source.indexOf("suspend fun loadResultPreview(")
         )
+        val registrationStage = Files.readString(
+            Path.of("src/main/java/com/joe6355/astrophoto/ProfileRegistrationStage.kt")
+        )
         assertTrue(profile.contains("SequenceAwareRegistrationEngine().register("))
-        assertTrue(profile.contains("expectedMotionModel = ExpectedSequenceMotionModel("))
+        assertTrue(registrationStage.contains("expectedMotionModel = ExpectedSequenceMotionModel("))
         assertFalse(profile.contains("registerAutomatic("))
         assertTrue(profile.contains("acceptedProfileFrames.mapIndexed"))
         assertTrue(source.contains("private suspend fun findAlignmentOrZero("))

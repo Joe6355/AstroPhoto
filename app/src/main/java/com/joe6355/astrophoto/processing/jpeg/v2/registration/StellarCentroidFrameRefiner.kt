@@ -1,6 +1,7 @@
 package com.joe6355.astrophoto.processing.jpeg.v2.registration
 
 import com.joe6355.astrophoto.processing.jpeg.v2.model.ReferenceToSourceTransform
+import com.joe6355.astrophoto.processing.jpeg.v2.model.DetectedStar
 import com.joe6355.astrophoto.processing.jpeg.v2.sampling.ArgbPixelSource
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -40,7 +41,8 @@ class StellarCentroidFrameRefiner(
     private val detector: FullResolutionStarCentroidDetector = FullResolutionStarCentroidDetector(),
     private val selector: FullResolutionStarPatchSelector = FullResolutionStarPatchSelector(),
     private val verifier: FullResolutionFrameVerification = FullResolutionFrameVerification(),
-    private val policy: StellarCentroidRefinementPolicy = StellarCentroidRefinementPolicy()
+    private val policy: StellarCentroidRefinementPolicy = StellarCentroidRefinementPolicy(),
+    private val rotationDiagnostic: (String) -> Unit = {}
 ) {
     fun refine(
         frameId: String,
@@ -96,11 +98,12 @@ class StellarCentroidFrameRefiner(
             val dx = initialTransform.dx + candidateCentroid.x - predicted.x
             val dy = initialTransform.dy + candidateCentroid.y - predicted.y
             val residualToPrediction = hypot(dx - initialTransform.dx, dy - initialTransform.dy)
+            val predictedMotion = hypot(predicted.x - referenceCentroid.x, predicted.y - referenceCentroid.y)
+            val measuredMotion = hypot(candidateCentroid.x - referenceCentroid.x, candidateCentroid.y - referenceCentroid.y)
             val reason = when {
                 abs(dx - initialTransform.dx) > searchRadius || abs(dy - initialTransform.dy) > searchRadius ->
                     "centroid_match_outside_prediction"
-                hypot(initialTransform.dx, initialTransform.dy) > 1.5f &&
-                    hypot(dx, dy) < maxOf(0.50f, hypot(initialTransform.dx, initialTransform.dy) * 0.35f) ->
+                predictedMotion > 1.5f && measuredMotion < maxOf(0.50f, predictedMotion * 0.35f) ->
                     "stationary_zero_motion_centroid"
                 candidateCentroid.ellipticity - referenceCentroid.ellipticity >
                     MAX_MATCH_ELLIPTICITY_GROWTH -> "centroid_match_ellipticity_growth"
@@ -134,7 +137,57 @@ class StellarCentroidFrameRefiner(
         }
         val evidenceMatches = preferStrongCentroidMatches(matches)
         val evidenceKeys = evidenceMatches.map { patchKey(it.patch) }.toSet()
-        val aggregation = aggregate(evidenceMatches)
+        val translationAggregation = aggregate(evidenceMatches)
+        val translationTransform = initialTransform.copy(
+            dx = translationAggregation.dx, dy = translationAggregation.dy
+        )
+        // Reuse the automatic registrar's fixed-scale rotation gates at full resolution.
+        // Fit before translation MAD rejection: real rotation produces spatially varying shifts.
+        val rigidRegistration = StarSimilarityRegistrar().registerAutomatic(
+            evidenceMatches.map { it.reference.asDetectedStar() },
+            evidenceMatches.map { it.candidate.asDetectedStar() },
+            reference.width, reference.height,
+            // Translation-only has no measured rotation prior; keep the registrar's normal
+            // physical angle limit instead of treating the missing estimate as an exact zero.
+            expectedRotationRadians = initialTransform.rotationRadians.takeIf { it != 0f }
+        )
+        val rigid = rigidRegistration.takeIf { it.isReliable && it.rotationAllowed }?.referenceToSourceTransform()
+        // Use the same robust consensus as the registrar, but verify the original matched pairs.
+        // Do not mix rejected correspondences back into the rigid P90 (translation also uses inliers).
+        val rigidMatches = rigid?.let { transform ->
+            val errors = residuals(evidenceMatches, transform)
+            evidenceMatches.filterIndexed { index, _ -> errors[index] <= StarSimilarityRegistrar.MAX_ROTATION_RESIDUAL }
+        }.orEmpty()
+        val rigidConsensusValid = rigidMatches.size >= StarSimilarityRegistrar.MIN_ROTATION_INLIERS &&
+            evidenceMatches.size >= StarSimilarityRegistrar.MIN_ROTATION_MATCHED_STARS &&
+            rigidMatches.size.toFloat() / evidenceMatches.size.coerceAtLeast(1) >=
+            StarSimilarityRegistrar.MIN_ROTATION_INLIER_RATIO &&
+            SpatialStarDistributionValidator().evaluate(rigidMatches.map { it.reference.asDetectedStar() },
+                reference.width, reference.height).rotationAllowed
+        val rigidResiduals = rigid?.let { transform -> residuals(rigidMatches, transform) }
+        val useRigid = rigidConsensusValid && rigidResiduals != null &&
+            median(rigidResiduals) <= StellarCentroidRefinementPolicy.TARGET_MEDIAN_RESIDUAL &&
+            percentile(rigidResiduals, 0.9f) <= StellarCentroidRefinementPolicy.TARGET_P90_RESIDUAL &&
+            median(rigidResiduals) < median(residuals(rigidMatches, translationTransform)) &&
+            decideTransform(
+                initialTransform, checkNotNull(rigid), znccTransform, rigidMatches,
+                selection.selected.map { it.sector }.distinct().size, searchRadius,
+                verifier.verifyCentroids(rigidMatches, initialTransform, znccTransform, rigid)
+            ).accepted
+        rotationDiagnostic("frame=$frameId fullResolutionRigid allowed=${rigidRegistration.rotationAllowed} " +
+            "reliable=${rigidRegistration.isReliable} reason=${rigidRegistration.rotationRejectionReason} " +
+            "angle=${rigidRegistration.rotationRadians} matches=${rigidRegistration.matchedStars} " +
+            "inliers=${rigidRegistration.inlierStars} measured=${evidenceMatches.size} verified=${rigidMatches.size} " +
+            "median=${rigidResiduals?.let(::median)} p90=${rigidResiduals?.let { percentile(it, 0.9f) }} " +
+            "gate=${rigid?.let { decideTransform(initialTransform, it, znccTransform, rigidMatches,
+                selection.selected.map { patch -> patch.sector }.distinct().size, searchRadius,
+                verifier.verifyCentroids(rigidMatches, initialTransform, znccTransform, it)).rejectionReason }} " +
+            "selected=$useRigid")
+        val aggregation = if (useRigid) translationAggregation.copy(
+            dx = checkNotNull(rigid).dx, dy = rigid.dy, inliers = rigidMatches,
+            medianResidual = median(checkNotNull(rigidResiduals)),
+            percentile90Residual = percentile(rigidResiduals, 0.9f)
+        ) else translationAggregation
         val inlierKeys = aggregation.inliers.map { patchKey(it.patch) }.toSet()
         diagnostics.indices.forEach { index ->
             val value = diagnostics[index]
@@ -143,13 +196,15 @@ class StellarCentroidFrameRefiner(
                     accepted = false,
                     rejectionReason = if (patchKey(value.x, value.y) !in evidenceKeys) {
                         "centroid_marginal_snr_not_needed"
+                    } else if (useRigid) {
+                        "centroid_rigid_outlier"
                     } else {
                         "centroid_mad_outlier"
                     }
                 )
             }
         }
-        val centroidTransform = initialTransform.copy(dx = aggregation.dx, dy = aggregation.dy)
+        val centroidTransform = if (useRigid) checkNotNull(rigid) else translationTransform
         val centroidVerification = verifier.verifyCentroids(
             aggregation.inliers,
             initialTransform,
@@ -173,27 +228,16 @@ class StellarCentroidFrameRefiner(
         )
         val availableSectors = selection.selected.map { it.sector }.distinct().size
         val acceptedSectors = aggregation.inliers.map { it.patch.sector }.distinct().size
-        val decision = policy.decide(
-            initialTransform.dx,
-            initialTransform.dy,
-            aggregation.dx - initialTransform.dx,
-            aggregation.dy - initialTransform.dy,
-            aggregation.inliers.size,
-            availableSectors,
-            acceptedSectors,
-            aggregation.medianResidual,
-            aggregation.percentile90Residual,
-            searchRadius,
-            hypot(refined.dx - znccTransform.dx, refined.dy - znccTransform.dy),
-            verification
-        )
+        val selectedResiduals = residuals(aggregation.inliers, refined)
+        val decision = decideTransform(initialTransform, refined, znccTransform,
+            aggregation.inliers, availableSectors, searchRadius, verification)
         return StellarCentroidRefinementResult(
             frameId = frameId,
             initialTransform = initialTransform,
             znccTransform = znccTransform,
             refinedTransform = refined,
-            correctionDx = aggregation.dx - initialTransform.dx,
-            correctionDy = aggregation.dy - initialTransform.dy,
+            correctionDx = refined.dx - initialTransform.dx,
+            correctionDy = refined.dy - initialTransform.dy,
             searchRadius = searchRadius,
             referenceCentroidCount = selection.selected.size,
             referenceCentroidAcceptedCount = referenceAccepted,
@@ -202,8 +246,8 @@ class StellarCentroidFrameRefiner(
             acceptedStarCount = aggregation.inliers.size,
             rejectedStarCount = diagnostics.count { !it.accepted },
             spatialSectorCount = acceptedSectors,
-            medianResidual = aggregation.medianResidual,
-            percentile90Residual = aggregation.percentile90Residual,
+            medianResidual = median(selectedResiduals),
+            percentile90Residual = percentile(selectedResiduals, 0.90f),
             medianSnr = median(aggregation.inliers.map { minOf(it.reference.snr, it.candidate.snr) }),
             medianFitResidual = median(aggregation.inliers.map {
                 maxOf(it.reference.fitResidual, it.candidate.fitResidual)
@@ -351,6 +395,46 @@ class StellarCentroidFrameRefiner(
         }
         return selector(sorted.last())
     }
+
+    private fun residuals(matches: List<StellarCentroidMatch>, transform: ReferenceToSourceTransform) =
+        matches.map { match ->
+            val predicted = transform.mapOutputToSource(match.reference.x, match.reference.y)
+            hypot(match.candidate.x - predicted.x, match.candidate.y - predicted.y)
+        }
+
+    private fun decideTransform(
+        initial: ReferenceToSourceTransform,
+        refined: ReferenceToSourceTransform,
+        zncc: ReferenceToSourceTransform,
+        matches: List<StellarCentroidMatch>,
+        availableSectors: Int,
+        searchRadius: Float,
+        verification: FullResolutionFrameVerificationResult
+    ): StellarCentroidRefinementDecision {
+        // A rigid transform's origin translation is not its displacement at the measured stars.
+        // Bound every observed correction, then apply the zero-motion guard at their centroid.
+        if (matches.any { match ->
+                val before = initial.mapOutputToSource(match.reference.x, match.reference.y)
+                val after = refined.mapOutputToSource(match.reference.x, match.reference.y)
+                abs(after.x - before.x) > searchRadius || abs(after.y - before.y) > searchRadius
+            }) return StellarCentroidRefinementDecision(false, "centroid_correction_out_of_bounds")
+        val x = matches.map { it.reference.x }.average().toFloat().takeIf { it.isFinite() } ?: 0f
+        val y = matches.map { it.reference.y }.average().toFloat().takeIf { it.isFinite() } ?: 0f
+        val before = initial.mapOutputToSource(x, y)
+        val after = refined.mapOutputToSource(x, y)
+        val alternative = zncc.mapOutputToSource(x, y)
+        val residuals = residuals(matches, refined)
+        return policy.decide(
+            before.x - x, before.y - y, after.x - before.x, after.y - before.y,
+            matches.size, availableSectors, matches.map { it.patch.sector }.distinct().size,
+            median(residuals), percentile(residuals, 0.9f), searchRadius,
+            hypot(after.x - alternative.x, after.y - alternative.y), verification
+        )
+    }
+
+    private fun StellarCentroidMeasurement.asDetectedStar() = DetectedStar(
+        x, y, flux, background, peak - background, (fwhmX + fwhmY) * 0.5f, ellipticity, confidence
+    )
 
     private fun matchWeight(
         patch: FullResolutionStarPatch,

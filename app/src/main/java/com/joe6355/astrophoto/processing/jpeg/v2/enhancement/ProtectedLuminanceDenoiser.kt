@@ -1,11 +1,12 @@
 package com.joe6355.astrophoto.processing.jpeg.v2.enhancement
 
 import com.joe6355.astrophoto.processing.jpeg.v2.model.DetectedStar
+import com.joe6355.astrophoto.processing.jpeg.v2.model.SkyStatisticsResult
 import com.joe6355.astrophoto.processing.jpeg.v2.postprocessing.FileBackedSkyStatistics
 import com.joe6355.astrophoto.processing.jpeg.v2.postprocessing.StarCoreIndex
 import com.joe6355.astrophoto.processing.jpeg.v2.postprocessing.linearChannel
 import com.joe6355.astrophoto.processing.jpeg.v2.postprocessing.linearLuminance
-import com.joe6355.astrophoto.processing.jpeg.v2.postprocessing.packLinear
+import com.joe6355.astrophoto.processing.jpeg.v2.color.LinearRgb16
 import com.joe6355.astrophoto.processing.jpeg.v2.postprocessing.smoothStep
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedFloatPlane
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedFloatPlaneReader
@@ -32,10 +33,12 @@ data class ProtectedLuminanceDenoiseMetrics(
 
 data class PreparedLuminanceNoiseMap(
     val plane: FileBackedFloatPlane,
-    val metrics: ProtectedLuminanceDenoiseMetrics
+    val metrics: ProtectedLuminanceDenoiseMetrics,
+    val baselineStatistics: SkyStatisticsResult? = null
 )
 
 data class ProtectedLuminanceDenoiseResult(
+    /** May be the input itself when no pixels qualify; callers must retain that file. */
     val image: FileBackedImage,
     val metrics: ProtectedLuminanceDenoiseMetrics
 )
@@ -76,13 +79,14 @@ class ProtectedLuminanceDenoiser(
             darkStart + MIN_DARK_FADE_RANGE,
             sky.starBrightnessMedian * STAR_BRIGHTNESS_PROTECTION_SCALE
         )
-        val writer = store.createFloatPlaneWriter("luminance-noise-map", baseline.width, baseline.height)
         val row = FloatArray(baseline.width)
         val histogram = LongArray(NOISE_HISTOGRAM_BINS)
+        val neighbors = FloatArray(8)
         var eligible = 0L
         var protected = 0L
         var weightSum = 0.0
         var maximum = 0f
+        val writer = store.createFloatPlaneWriter("luminance-noise-map", baseline.width, baseline.height)
         try {
             FileBackedImageReader(baseline, cachedRows = 5).use { image ->
                 FileBackedFloatPlaneReader(effectiveSkyAlpha, cachedRows = 5).use { alpha ->
@@ -97,17 +101,15 @@ class ProtectedLuminanceDenoiser(
                                 protected++
                                 continue
                             }
-                            val center = linearLuminance(image.argbAt(x, y))
-                            val neighbors = floatArrayOf(
-                                linearLuminance(image.argbAt(x - 1, y - 1)),
-                                linearLuminance(image.argbAt(x, y - 1)),
-                                linearLuminance(image.argbAt(x + 1, y - 1)),
-                                linearLuminance(image.argbAt(x - 1, y)),
-                                linearLuminance(image.argbAt(x + 1, y)),
-                                linearLuminance(image.argbAt(x - 1, y + 1)),
-                                linearLuminance(image.argbAt(x, y + 1)),
-                                linearLuminance(image.argbAt(x + 1, y + 1))
-                            )
+                            val center = linearLuminance(image.linearRgbAt(x, y))
+                            neighbors[0] = linearLuminance(image.linearRgbAt(x - 1, y - 1))
+                            neighbors[1] = linearLuminance(image.linearRgbAt(x, y - 1))
+                            neighbors[2] = linearLuminance(image.linearRgbAt(x + 1, y - 1))
+                            neighbors[3] = linearLuminance(image.linearRgbAt(x - 1, y))
+                            neighbors[4] = linearLuminance(image.linearRgbAt(x + 1, y))
+                            neighbors[5] = linearLuminance(image.linearRgbAt(x - 1, y + 1))
+                            neighbors[6] = linearLuminance(image.linearRgbAt(x, y + 1))
+                            neighbors[7] = linearLuminance(image.linearRgbAt(x + 1, y + 1))
                             val maximumNeighbor = neighbors.maxOrNull() ?: center
                             if (center > maximumNeighbor + peakLimit) {
                                 protected++
@@ -138,6 +140,7 @@ class ProtectedLuminanceDenoiser(
             val plane = writer.finish()
             return PreparedLuminanceNoiseMap(
                 plane = plane,
+                baselineStatistics = sky,
                 metrics = ProtectedLuminanceDenoiseMetrics(
                     appliedStrength = MAXIMUM_BLEND,
                     noiseMapMean = if (eligible > 0L) (weightSum / eligible).toFloat() else 0f,
@@ -165,21 +168,7 @@ class ProtectedLuminanceDenoiser(
         require(input.width == prepared.plane.width && input.height == prepared.plane.height)
         require(input.width == effectiveSkyAlpha.width && input.height == effectiveSkyAlpha.height)
         if (prepared.metrics.eligiblePixelCount == 0) {
-            val copyWriter = store.createTemporaryWriter("luminance-denoise-copy", input.width, input.height)
-            try {
-                FileBackedImageReader(input).use { image ->
-                    val row = IntArray(input.width)
-                    for (y in 0 until input.height) {
-                        image.readArgbRow(y, row)
-                        copyWriter.writeRow(y, row)
-                    }
-                }
-                return ProtectedLuminanceDenoiseResult(copyWriter.finish(), prepared.metrics)
-            } catch (error: Throwable) {
-                runCatching { copyWriter.close() }
-                runCatching { store.deleteTemporary(copyWriter.image) }
-                throw error
-            }
+            return ProtectedLuminanceDenoiseResult(input, prepared.metrics)
         }
         val sky = FileBackedImageReader(input).use { image ->
             FileBackedFloatPlaneReader(effectiveSkyAlpha).use { alpha ->
@@ -194,16 +183,16 @@ class ProtectedLuminanceDenoiser(
         )
         val edgeLimit = maxOf(MIN_APPLY_EDGE_LIMIT, sky.luminanceMad * APPLY_EDGE_MAD_SCALE)
         val maximumChange = maxOf(MINIMUM_MAXIMUM_CHANGE, sky.luminanceMad * MAXIMUM_CHANGE_MAD_SCALE)
-        val writer = store.createTemporaryWriter("luminance-denoised", input.width, input.height)
-        val outputRow = IntArray(input.width)
+        val outputRow = LongArray(input.width)
         var changed = 0L
+        val writer = store.createTemporaryWriter("luminance-denoised", input.width, input.height)
         try {
             FileBackedImageReader(input, cachedRows = 5).use { image ->
                 FileBackedFloatPlaneReader(effectiveSkyAlpha, cachedRows = 5).use { alpha ->
                     FileBackedFloatPlaneReader(prepared.plane, cachedRows = 5).use { noise ->
                         for (y in 0 until input.height) {
                             for (x in 0 until input.width) {
-                                val color = image.argbAt(x, y)
+                                val color = image.linearRgbAt(x, y)
                                 outputRow[x] = color
                                 if (
                                     x == 0 || y == 0 || x == input.width - 1 || y == input.height - 1 ||
@@ -217,7 +206,7 @@ class ProtectedLuminanceDenoiser(
                                 var totalWeight = CENTER_WEIGHT
                                 for (dy in -1..1) for (dx in -1..1) {
                                     if (dx == 0 && dy == 0) continue
-                                    val neighbor = linearLuminance(image.argbAt(x + dx, y + dy))
+                                    val neighbor = linearLuminance(image.linearRgbAt(x + dx, y + dy))
                                     val difference = abs(neighbor - center)
                                     if (difference > edgeLimit) continue
                                     val weight = 1f / (1f + difference / edgeLimit)
@@ -230,7 +219,7 @@ class ProtectedLuminanceDenoiser(
                                 val target = (center + requestedChange.coerceIn(-maximumChange, maximumChange))
                                     .coerceIn(MINIMUM_LUMINANCE, 1f)
                                 val scale = target / center
-                                val denoised = packLinear(
+                                val denoised = LinearRgb16.pack(
                                     linearChannel(color, 16) * scale,
                                     linearChannel(color, 8) * scale,
                                     linearChannel(color, 0) * scale
@@ -240,7 +229,7 @@ class ProtectedLuminanceDenoiser(
                                     changed++
                                 }
                             }
-                            writer.writeRow(y, outputRow)
+                            writer.writeLinearRow(y, outputRow)
                         }
                     }
                 }

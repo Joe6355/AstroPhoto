@@ -18,7 +18,7 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.junit4.StateRestorationTester
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
@@ -30,12 +30,19 @@ import com.joe6355.astrophoto.ui.AstroTestTags
 import com.joe6355.astrophoto.ui.theme.AstroPhotoTheme
 import androidx.test.espresso.Espresso.pressBack
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
 class CameraSettingsPanelTest {
-    @get:Rule
-    val composeRule = createComposeRule()
+    @get:Rule(order = 0)
+    val timeout = org.junit.rules.Timeout.seconds(60)
+
+    @get:Rule(order = 1)
+    val foregroundRule = AstroUiForegroundRule()
+
+    @get:Rule(order = 2)
+    val composeRule = createAndroidComposeRule<AstroUiTestActivity>()
 
     @Test
     fun handleTapExpandsPanel() {
@@ -77,6 +84,19 @@ class CameraSettingsPanelTest {
                     CameraPanelAnchor.EXPANDED.name
             }
         )
+    }
+
+    @Test
+    fun slowListDragCommitsCollapsedAnchorBeforeBackNavigation() {
+        var navigatedBack = false
+        setPanelContent(initial = CameraPanelAnchor.EXPANDED,
+            onNavigateBack = { navigatedBack = true })
+        composeRule.onNodeWithTag("camera-settings-list")
+            .performTouchInput { swipeDown(durationMillis = 1_800) }
+        composeRule.waitForIdle()
+        assertPanelState(CameraPanelAnchor.COLLAPSED)
+        pressBack()
+        composeRule.runOnIdle { assertTrue(navigatedBack) }
     }
 
     @Test

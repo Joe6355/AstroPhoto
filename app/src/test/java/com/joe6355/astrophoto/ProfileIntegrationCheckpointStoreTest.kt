@@ -11,6 +11,8 @@ import com.joe6355.astrophoto.processing.jpeg.v2.model.SensorDefectFilteringRepo
 import com.joe6355.astrophoto.processing.jpeg.v2.model.SkyMask
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedFloatPlane
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedImage
+import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedImageWriter
+import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedPixelFormat
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.TemporaryPipelineFiles
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -26,6 +28,29 @@ import org.junit.rules.TemporaryFolder
 class ProfileIntegrationCheckpointStoreTest {
     @get:Rule
     val temporaryFolder = TemporaryFolder()
+
+    @Test fun rgb16FormatAndSubByteDataSurviveCheckpointRestore() {
+        TemporaryPipelineFiles.create(temporaryFolder.newFolder("rgb16-source")).use { source ->
+            val precise = FileBackedImageWriter(source.file("precise.rgb16"), 2, 2,
+                FileBackedPixelFormat.LINEAR_RGB_16).use { writer ->
+                writer.writeLinearRow(0, longArrayOf(0x001100220033L, 0x001200230034L))
+                writer.writeLinearRow(1, longArrayOf(0x112233445566L, 0x112333455567L))
+                writer.finish()
+            }
+            val run = integrationRun(source, ByteArray(16), ByteArray(16)).copy(stackedSky = precise)
+            val store = openStore()
+            store.write(run)
+            store.writePostProcessing("rgb16-inputs", postProcessed(precise))
+            TemporaryPipelineFiles.create(temporaryFolder.newFolder("rgb16-restored")).use { files ->
+                val restored = requireNotNull(store.readInto(files))
+                assertEquals(FileBackedPixelFormat.LINEAR_RGB_16, restored.stackedSky.pixelFormat)
+                assertArrayEquals(precise.file.readBytes(), restored.stackedSky.file.readBytes())
+                val processed = requireNotNull(store.readPostProcessing("rgb16-inputs", files))
+                assertEquals(FileBackedPixelFormat.LINEAR_RGB_16, processed.image.pixelFormat)
+                assertArrayEquals(precise.file.readBytes(), processed.image.file.readBytes())
+            }
+        }
+    }
 
     @Test
     fun integrationOutputsSurviveReopenAndRestoreIntoNewRun() {

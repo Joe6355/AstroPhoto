@@ -3,7 +3,8 @@ package com.joe6355.astrophoto.processing.jpeg.v2.storage
 import java.io.File
 
 enum class FileBackedPixelFormat(val bytesPerPixel: Int) {
-    ARGB_8888(Int.SIZE_BYTES)
+    ARGB_8888(Int.SIZE_BYTES),
+    LINEAR_RGB_16(6)
 }
 
 data class FileBackedImage(
@@ -11,11 +12,11 @@ data class FileBackedImage(
     val width: Int,
     val height: Int,
     val pixelFormat: FileBackedPixelFormat = FileBackedPixelFormat.ARGB_8888,
-    val rowStrideBytes: Int = width * pixelFormat.bytesPerPixel
+    val rowStrideBytes: Int = Math.multiplyExact(width, pixelFormat.bytesPerPixel)
 ) {
     init {
         require(width > 0 && height > 0)
-        require(rowStrideBytes >= width * pixelFormat.bytesPerPixel)
+        require(rowStrideBytes.toLong() >= width.toLong() * pixelFormat.bytesPerPixel)
     }
 
     val expectedBytes: Long get() = rowStrideBytes.toLong() * height
@@ -32,10 +33,10 @@ data class FileBackedFloatPlane(
     val file: File,
     val width: Int,
     val height: Int,
-    val rowStrideBytes: Int = width * Float.SIZE_BYTES
+    val rowStrideBytes: Int = Math.multiplyExact(width, Float.SIZE_BYTES)
 ) {
     init {
-        require(width > 0 && height > 0 && rowStrideBytes >= width * Float.SIZE_BYTES)
+        require(width > 0 && height > 0 && rowStrideBytes.toLong() >= width.toLong() * Float.SIZE_BYTES)
     }
 
     val expectedBytes: Long get() = rowStrideBytes.toLong() * height

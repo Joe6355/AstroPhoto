@@ -5,11 +5,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.unit.dp
 import com.joe6355.astrophoto.ui.AstroTestTags
 import com.joe6355.astrophoto.ui.theme.AstroPhotoTheme
@@ -19,8 +20,14 @@ import org.junit.Rule
 import org.junit.Test
 
 class HomeScreenTest {
-    @get:Rule
-    val composeRule = createComposeRule()
+    @get:Rule(order = 0)
+    val timeout = org.junit.rules.Timeout.seconds(60)
+
+    @get:Rule(order = 1)
+    val foregroundRule = AstroUiForegroundRule()
+
+    @get:Rule(order = 2)
+    val composeRule = createAndroidComposeRule<AstroUiTestActivity>()
 
     @Test
     fun primaryActionOpensCameraOnce() {
@@ -67,9 +74,9 @@ class HomeScreenTest {
         composeRule.runOnIdle { assertEquals("settings", destination) }
         composeRule.onNodeWithText("Помощь").performClick()
         composeRule.runOnIdle { assertEquals("help", destination) }
-        composeRule.onNodeWithTag(AstroTestTags.HomeFooter)
-            .performScrollTo()
-            .assertIsDisplayed()
+        composeRule.onNodeWithTag(AstroTestTags.HomeScreen)
+            .performScrollToNode(hasTestTag(AstroTestTags.HomeFooter))
+        composeRule.onNodeWithTag(AstroTestTags.HomeFooter).assertIsDisplayed()
         composeRule.onNodeWithText("О приложении").performClick()
         composeRule.runOnIdle { assertEquals("about", destination) }
         composeRule.onNodeWithText("Самопроверка").performClick()
@@ -110,8 +117,8 @@ class HomeScreenTest {
             }
         }
 
-        composeRule.onNodeWithTag(AstroTestTags.HomeFooter)
-            .performScrollTo()
-            .assertIsDisplayed()
+        composeRule.onNodeWithTag(AstroTestTags.HomeScreen)
+            .performScrollToNode(hasTestTag(AstroTestTags.HomeFooter))
+        composeRule.onNodeWithTag(AstroTestTags.HomeFooter).assertIsDisplayed()
     }
 }

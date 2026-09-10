@@ -1,8 +1,8 @@
 package com.joe6355.astrophoto.processing.jpeg.v2.composition
 
+import com.joe6355.astrophoto.processing.jpeg.v2.color.LinearRgb16
 import com.joe6355.astrophoto.pixelLuminance
 import com.joe6355.astrophoto.processing.jpeg.v2.artifacts.SensorDefectMask
-import com.joe6355.astrophoto.processing.jpeg.v2.color.SrgbTransfer
 import com.joe6355.astrophoto.processing.jpeg.v2.memory.JpegMemoryBudget
 import com.joe6355.astrophoto.processing.jpeg.v2.memory.PipelineMemoryTracker
 import com.joe6355.astrophoto.processing.jpeg.v2.model.AlphaMask
@@ -15,7 +15,6 @@ import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedImage
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedImageReader
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedImageWriter
 import kotlin.math.abs
-import kotlin.math.roundToInt
 
 class AlphaMaskPixelSource(private val mask: AlphaMask) : AlphaPixelSource {
     override val width: Int get() = mask.width
@@ -45,152 +44,171 @@ class FileBackedSkyForegroundComposer {
         sensorDefectAffectedOutput: AlphaPixelSource? = null,
         sensorDefectMask: SensorDefectMask? = null
     ): FileBackedCompositeResult {
-        require(stackedSky.width == reference.width && stackedSky.height == reference.height)
-        require(featheredSkyMask.width == reference.width && featheredSkyMask.height == reference.height)
-        require(validCoverage.width == reference.width && validCoverage.height == reference.height)
-        require(output.image.width == reference.width && output.image.height == reference.height)
-        require(effectiveAlphaOutput.plane.width == reference.width && effectiveAlphaOutput.plane.height == reference.height)
-        require(
-            precomputedEffectiveSkyAlpha == null ||
-                (precomputedEffectiveSkyAlpha.width == reference.width &&
-                    precomputedEffectiveSkyAlpha.height == reference.height)
-        )
-        require((sensorDefectAffectedOutput == null) == (sensorDefectMask == null))
-        require(
-            sensorDefectAffectedOutput == null ||
-                (sensorDefectAffectedOutput.width == reference.width &&
-                    sensorDefectAffectedOutput.height == reference.height)
-        )
-        require(
-            sensorDefectMask == null ||
-                (sensorDefectMask.width == reference.width &&
-                    sensorDefectMask.height == reference.height)
-        )
-        val started = System.nanoTime()
-        val tile = memoryBudget.chooseTile(
-            outputWidth = reference.width,
-            outputHeight = reference.height,
-            preferredTileWidth = minOf(reference.width, PREFERRED_TILE_SIZE),
-            preferredTileHeight = minOf(reference.height, PREFERRED_TILE_SIZE),
-            argbBuffers = 3,
-            floatBuffers = 3
-        )
-        require(tile.accepted) { "Insufficient safe memory for tiled sky composition" }
-        if (tile.retryRequired) memoryTracker?.recordRetry()
-        memoryTracker?.recordTile("composition", tile.tileWidth, tile.tileHeight)
-        memoryTracker?.recordBoundary("composition", tile.estimatedBytes, 0)
-
-        var skyCoverageSum = 0.0
-        var skyMaskWeight = 0L
-        var fallbackSum = 0.0
-        var maximumForegroundDifference = 0
-        var maskedReferenceSamplesSkipped = 0L
-        var protectedOutputPixels = 0L
-        var originalProtectedAlphaSum = 0.0
-        FileBackedImageReader(stackedSky, cachedRows = 2).use { stacked ->
-            FileBackedImageReader(reference, cachedRows = 2).use { referenceReader ->
-                var top = 0
-                while (top < reference.height) {
-                    val tileHeight = minOf(tile.tileHeight, reference.height - top)
-                    var left = 0
-                    while (left < reference.width) {
-                        val tileWidth = minOf(tile.tileWidth, reference.width - left)
-                        val pixelCount = tileWidth * tileHeight
-                        val stackedPixels = IntArray(pixelCount)
-                        val referencePixels = IntArray(pixelCount)
-                        val resultPixels = IntArray(pixelCount)
-                        val effectiveValues = FloatArray(pixelCount)
-                        stacked.readTile(left, top, tileWidth, tileHeight, stackedPixels)
-                        referenceReader.readTile(left, top, tileWidth, tileHeight, referencePixels)
-                        for (row in 0 until tileHeight) for (column in 0 until tileWidth) {
-                            val index = row * tileWidth + column
-                            val x = left + column
-                            val y = top + row
-                            val maskAlpha = featheredSkyMask.alphaAt(x, y)
-                            val coverage = validCoverage.alphaAt(x, y)
-                            val originalEffectiveAlpha =
-                                precomputedEffectiveSkyAlpha?.alphaAt(x, y)
-                                ?: (maskAlpha * coverage).coerceIn(0f, 1f)
-                            val protectFromReference =
-                                sensorDefectAffectedOutput?.alphaAt(x, y)?.let { it > 0f } ==
-                                    true &&
-                                    checkNotNull(sensorDefectMask).contains(x, y) &&
-                                    originalEffectiveAlpha < 1f - EXACT_ALPHA_EPSILON
-                            val effectiveAlpha = if (protectFromReference) {
-                                1f
-                            } else {
-                                originalEffectiveAlpha
-                            }
-                            if (protectFromReference) {
-                                maskedReferenceSamplesSkipped++
-                                protectedOutputPixels++
-                                originalProtectedAlphaSum += originalEffectiveAlpha
-                            }
-                            effectiveValues[index] = effectiveAlpha
-                            if (maskAlpha > 0f) {
-                                skyCoverageSum += coverage
-                                skyMaskWeight++
-                            }
-                            fallbackSum += 1f - effectiveAlpha
-                            val referenceColor = referencePixels[index]
-                            val resultColor = when {
-                                effectiveAlpha <= EXACT_ALPHA_EPSILON -> referenceColor
-                                effectiveAlpha >= 1f - EXACT_ALPHA_EPSILON -> stackedPixels[index]
-                                else -> linearBlend(stackedPixels[index], referenceColor, effectiveAlpha)
-                            } or OPAQUE_ALPHA
-                            resultPixels[index] = resultColor
-                            if (maskAlpha <= EXACT_ALPHA_EPSILON && !protectFromReference) {
-                                maximumForegroundDifference = maxOf(
-                                    maximumForegroundDifference,
-                                    maximumChannelDifference(referenceColor, resultColor)
-                                )
-                            }
-                        }
-                        output.writeTile(left, top, tileWidth, tileHeight, resultPixels)
-                        effectiveAlphaOutput.writeTile(left, top, tileWidth, tileHeight, effectiveValues)
-                        left += tileWidth
-                    }
-                    top += tileHeight
-                }
-            }
-        }
-        val outputImage = output.finish()
-        val effectivePlane = effectiveAlphaOutput.finish()
-        val sharpness = foregroundSharpness(reference, outputImage, effectivePlane)
-        return FileBackedCompositeResult(
-            image = outputImage,
-            effectiveSkyAlpha = effectivePlane,
-            diagnostics = CompositeDiagnostics(
-                validSkyCoverageRatio = if (skyMaskWeight > 0L) {
-                    (skyCoverageSum / skyMaskWeight).toFloat()
-                } else {
-                    0f
-                },
-                referenceFallbackRatio = (fallbackSum / (reference.width.toLong() * reference.height)).toFloat(),
-                foregroundSharpnessBefore = sharpness.first,
-                foregroundSharpnessAfter = sharpness.second,
-                maximumForegroundChannelDifference = maximumForegroundDifference,
+        try {
+            val legacyArgb = stackedSky.pixelFormat == com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedPixelFormat.ARGB_8888 &&
+                reference.pixelFormat == stackedSky.pixelFormat && output.image.pixelFormat == stackedSky.pixelFormat
+            val legacyComposer = if (legacyArgb) SkyForegroundComposer() else null
+            require(stackedSky.width == reference.width && stackedSky.height == reference.height)
+            require(featheredSkyMask.width == reference.width && featheredSkyMask.height == reference.height)
+            require(validCoverage.width == reference.width && validCoverage.height == reference.height)
+            require(output.image.width == reference.width && output.image.height == reference.height)
+            require(effectiveAlphaOutput.plane.width == reference.width && effectiveAlphaOutput.plane.height == reference.height)
+            require(
+                precomputedEffectiveSkyAlpha == null ||
+                    (precomputedEffectiveSkyAlpha.width == reference.width &&
+                        precomputedEffectiveSkyAlpha.height == reference.height)
+            )
+            require((sensorDefectAffectedOutput == null) == (sensorDefectMask == null))
+            require(
+                sensorDefectAffectedOutput == null ||
+                    (sensorDefectAffectedOutput.width == reference.width &&
+                        sensorDefectAffectedOutput.height == reference.height)
+            )
+            require(
+                sensorDefectMask == null ||
+                    (sensorDefectMask.width == reference.width &&
+                        sensorDefectMask.height == reference.height)
+            )
+            val started = System.nanoTime()
+            val tile = memoryBudget.chooseTile(
                 outputWidth = reference.width,
                 outputHeight = reference.height,
-                cropApplied = false,
-                compositionDurationMillis = (System.nanoTime() - started) / 1_000_000L,
-                maskedReferenceSamplesSkipped = maskedReferenceSamplesSkipped,
-                sensorDefectAffectedOutputPixels =
-                    protectedOutputPixels.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
-                meanOriginalAlphaAtProtectedPixels = if (protectedOutputPixels > 0L) {
-                    (originalProtectedAlphaSum / protectedOutputPixels).toFloat()
-                } else {
-                    0f
-                },
-                sensorDefectProtectionReason = if (protectedOutputPixels > 0L) {
-                    SENSOR_DEFECT_PROTECTION_REASON
-                } else {
-                    null
+                preferredTileWidth = reference.width,
+                preferredTileHeight = minOf(reference.height, 32),
+                argbBuffers = 6,
+                floatBuffers = 3,
+                residentBytes = reference.width.toLong() * 128L
+            )
+            require(tile.accepted) { "Insufficient safe memory for tiled sky composition" }
+            if (tile.retryRequired) memoryTracker?.recordRetry()
+            memoryTracker?.recordTile("composition", tile.tileWidth, tile.tileHeight)
+            memoryTracker?.recordBoundary("composition", tile.estimatedBytes, 0)
+
+            var skyCoverageSum = 0.0
+            var skyMaskWeight = 0L
+            var fallbackSum = 0.0
+            var maximumForegroundDifference = 0
+            var maskedReferenceSamplesSkipped = 0L
+            var protectedOutputPixels = 0L
+            var originalProtectedAlphaSum = 0.0
+            FileBackedImageReader(stackedSky, cachedRows = 2).use { stacked ->
+                FileBackedImageReader(reference, cachedRows = 2).use { referenceReader ->
+                    var top = 0
+                    while (top < reference.height) {
+                        val tileHeight = minOf(tile.tileHeight, reference.height - top)
+                        var left = 0
+                        while (left < reference.width) {
+                            val tileWidth = minOf(tile.tileWidth, reference.width - left)
+                            val pixelCount = tileWidth * tileHeight
+                            val stackedPixels = LongArray(pixelCount)
+                            val referencePixels = LongArray(pixelCount)
+                            val resultPixels = LongArray(pixelCount)
+                            val effectiveValues = FloatArray(pixelCount)
+                            stacked.readLinearTile(left, top, tileWidth, tileHeight, stackedPixels)
+                            referenceReader.readLinearTile(left, top, tileWidth, tileHeight, referencePixels)
+                            for (row in 0 until tileHeight) for (column in 0 until tileWidth) {
+                                val index = row * tileWidth + column
+                                val x = left + column
+                                val y = top + row
+                                val maskAlpha = featheredSkyMask.alphaAt(x, y)
+                                val coverage = validCoverage.alphaAt(x, y)
+                                val originalEffectiveAlpha =
+                                    precomputedEffectiveSkyAlpha?.alphaAt(x, y)
+                                    ?: (maskAlpha * coverage).coerceIn(0f, 1f)
+                                val protectFromReference =
+                                    sensorDefectAffectedOutput?.alphaAt(x, y)?.let { it > 0f } ==
+                                        true &&
+                                        checkNotNull(sensorDefectMask).contains(x, y) &&
+                                        originalEffectiveAlpha < 1f - EXACT_ALPHA_EPSILON
+                                val effectiveAlpha = if (protectFromReference) {
+                                    1f
+                                } else {
+                                    originalEffectiveAlpha
+                                }
+                                if (protectFromReference) {
+                                    maskedReferenceSamplesSkipped++
+                                    protectedOutputPixels++
+                                    originalProtectedAlphaSum += originalEffectiveAlpha
+                                }
+                                effectiveValues[index] = effectiveAlpha
+                                if (maskAlpha > 0f) {
+                                    skyCoverageSum += coverage
+                                    skyMaskWeight++
+                                }
+                                fallbackSum += 1f - effectiveAlpha
+                                val referenceColor = referencePixels[index]
+                                val resultColor = when {
+                                    effectiveAlpha <= EXACT_ALPHA_EPSILON -> referenceColor
+                                    effectiveAlpha >= 1f - EXACT_ALPHA_EPSILON -> stackedPixels[index]
+                                    else -> LinearRgb16.blend(referenceColor, stackedPixels[index], effectiveAlpha)
+                                }
+                                resultPixels[index] = if (legacyArgb) {
+                                    when {
+                                        effectiveAlpha <= EXACT_ALPHA_EPSILON -> LinearRgb16.toArgb(referenceColor)
+                                        effectiveAlpha >= 1f - EXACT_ALPHA_EPSILON -> LinearRgb16.toArgb(stackedPixels[index])
+                                        else -> checkNotNull(legacyComposer).linearBlend(
+                                            LinearRgb16.toArgb(stackedPixels[index]), LinearRgb16.toArgb(referenceColor), effectiveAlpha)
+                                    }.toLong()
+                                } else resultColor
+                                if (maskAlpha <= EXACT_ALPHA_EPSILON && !protectFromReference) {
+                                    maximumForegroundDifference = maxOf(
+                                        maximumForegroundDifference,
+                                        maximumChannelDifference(LinearRgb16.toArgb(referenceColor), LinearRgb16.toArgb(resultColor))
+                                    )
+                                }
+                            }
+                            if (legacyArgb) output.writeTile(left, top, tileWidth, tileHeight,
+                                IntArray(pixelCount) { resultPixels[it].toInt() })
+                            else output.writeLinearTile(left, top, tileWidth, tileHeight, resultPixels)
+                            effectiveAlphaOutput.writeTile(left, top, tileWidth, tileHeight, effectiveValues)
+                            left += tileWidth
+                        }
+                        top += tileHeight
+                    }
                 }
-            ),
-            tileWidth = tile.tileWidth,
-            tileHeight = tile.tileHeight
-        )
+            }
+            val outputImage = output.finish()
+            val effectivePlane = effectiveAlphaOutput.finish()
+            val sharpness = foregroundSharpness(reference, outputImage, effectivePlane)
+            return FileBackedCompositeResult(
+                image = outputImage,
+                effectiveSkyAlpha = effectivePlane,
+                diagnostics = CompositeDiagnostics(
+                    validSkyCoverageRatio = if (skyMaskWeight > 0L) {
+                        (skyCoverageSum / skyMaskWeight).toFloat()
+                    } else {
+                        0f
+                    },
+                    referenceFallbackRatio = (fallbackSum / (reference.width.toLong() * reference.height)).toFloat(),
+                    foregroundSharpnessBefore = sharpness.first,
+                    foregroundSharpnessAfter = sharpness.second,
+                    maximumForegroundChannelDifference = maximumForegroundDifference,
+                    outputWidth = reference.width,
+                    outputHeight = reference.height,
+                    cropApplied = false,
+                    compositionDurationMillis = (System.nanoTime() - started) / 1_000_000L,
+                    maskedReferenceSamplesSkipped = maskedReferenceSamplesSkipped,
+                    sensorDefectAffectedOutputPixels =
+                        protectedOutputPixels.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+                    meanOriginalAlphaAtProtectedPixels = if (protectedOutputPixels > 0L) {
+                        (originalProtectedAlphaSum / protectedOutputPixels).toFloat()
+                    } else {
+                        0f
+                    },
+                    sensorDefectProtectionReason = if (protectedOutputPixels > 0L) {
+                        SENSOR_DEFECT_PROTECTION_REASON
+                    } else {
+                        null
+                    }
+                ),
+                tileWidth = tile.tileWidth,
+                tileHeight = tile.tileHeight
+            )
+        } catch (error: Throwable) {
+            runCatching { output.close() }
+            runCatching { effectiveAlphaOutput.close() }
+            throw error
+        }
     }
 
     private fun foregroundSharpness(
@@ -230,17 +248,6 @@ class FileBackedSkyForegroundComposer {
             outputSum.toFloat() / count.coerceAtLeast(1L)
     }
 
-    private fun linearBlend(stacked: Int, reference: Int, alpha: Float): Int {
-        fun blendChannel(shift: Int): Int {
-            val stackedSrgb = (stacked ushr shift and 0xFF) / 255f
-            val referenceSrgb = (reference ushr shift and 0xFF) / 255f
-            val linear = SrgbTransfer.srgbToLinear(stackedSrgb) * alpha +
-                SrgbTransfer.srgbToLinear(referenceSrgb) * (1f - alpha)
-            return (SrgbTransfer.linearToSrgb(linear) * 255f).roundToInt().coerceIn(0, 255)
-        }
-        return OPAQUE_ALPHA or (blendChannel(16) shl 16) or (blendChannel(8) shl 8) or blendChannel(0)
-    }
-
     private fun maximumChannelDifference(first: Int, second: Int): Int = maxOf(
         abs((first ushr 16 and 0xFF) - (second ushr 16 and 0xFF)),
         abs((first ushr 8 and 0xFF) - (second ushr 8 and 0xFF)),
@@ -248,10 +255,8 @@ class FileBackedSkyForegroundComposer {
     )
 
     companion object {
-        private const val PREFERRED_TILE_SIZE = 256
         private const val EXACT_ALPHA_EPSILON = 0.0001f
         private const val FOREGROUND_ALPHA_LIMIT = 0.001f
-        private const val OPAQUE_ALPHA = 0xFF000000.toInt()
         private const val SENSOR_DEFECT_PROTECTION_REASON =
             "filtered_output_and_confirmed_reference_defect"
     }

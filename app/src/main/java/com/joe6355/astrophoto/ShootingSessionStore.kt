@@ -1,14 +1,8 @@
 package com.joe6355.astrophoto
 
-import android.content.ContentUris
-import android.content.ContentValues
 import android.content.Context
 import androidx.core.content.edit
 import android.os.Build
-import android.os.Environment
-import android.provider.MediaStore
-import java.io.File
-import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -108,6 +102,7 @@ class ShootingSessionStore(private val context: Context) {
     ): Result<Unit> = runCatching {
         val content = buildString {
             appendLine("sessionName: ${session.sessionName}")
+            appendLine("createdAtMillis: ${session.createdAtMillis}")
             appendLine(
                 "createdAt: ${
                     SimpleDateFormat(
@@ -141,81 +136,14 @@ class ShootingSessionStore(private val context: Context) {
             appendLine("note: ${session.note.replace("\n", " ")}")
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            writeInfoWithMediaStore(session, content)
-        } else {
-            writeLegacyInfo(session, content)
+        SessionInfoStore(context).update(session.folderName) { existing ->
+            // Capture counters refresh, while processing/export history is retained.
+            val keys = content.lineSequence().map { it.substringBefore(':') }.toSet()
+            content + existing.lineSequence()
+                .filter { it.isNotBlank() && it.substringBefore(':') !in keys }
+                .joinToString("\n").let { if (it.isEmpty()) "" else "$it\n" }
         }
     }
-
-    private fun writeInfoWithMediaStore(session: ShootingSession, content: String) {
-        val resolver = context.contentResolver
-        val collection = MediaStore.Files.getContentUri("external")
-        val relativePath =
-            "${Environment.DIRECTORY_PICTURES}/AstroPhoto/${session.folderName}/"
-        val existingUri = resolver.query(
-            collection,
-            arrayOf(MediaStore.Files.FileColumns._ID),
-            "${MediaStore.Files.FileColumns.DISPLAY_NAME}=? AND " +
-                "${MediaStore.Files.FileColumns.RELATIVE_PATH}=?",
-            arrayOf("session_info.txt", relativePath),
-            null
-        )?.use { cursor ->
-            if (cursor.moveToFirst()) {
-                ContentUris.withAppendedId(collection, cursor.getLong(0))
-            } else {
-                null
-            }
-        }
-
-        var inserted = false
-        val fileUri = existingUri ?: resolver.insert(
-            collection,
-            ContentValues().apply {
-                put(MediaStore.Files.FileColumns.DISPLAY_NAME, "session_info.txt")
-                put(MediaStore.Files.FileColumns.MIME_TYPE, "text/plain")
-                put(MediaStore.Files.FileColumns.RELATIVE_PATH, relativePath)
-                put(MediaStore.Files.FileColumns.IS_PENDING, 1)
-            }
-        )?.also { inserted = true } ?: error("Не удалось создать session_info.txt")
-
-        try {
-            resolver.openOutputStream(fileUri, "wt")?.bufferedWriter()?.use { writer ->
-                writer.write(content)
-            } ?: error("Не удалось открыть session_info.txt")
-            if (inserted) {
-                resolver.update(
-                    fileUri,
-                    ContentValues().apply {
-                        put(MediaStore.Files.FileColumns.IS_PENDING, 0)
-                    },
-                    null,
-                    null
-                )
-            }
-        } catch (exception: Exception) {
-            if (inserted) resolver.delete(fileUri, null, null)
-            throw exception
-        }
-    }
-
-    @Suppress("DEPRECATION")
-    private fun writeLegacyInfo(session: ShootingSession, content: String) {
-        val pictures = Environment.getExternalStoragePublicDirectory(
-            Environment.DIRECTORY_PICTURES
-        )
-        val sessionDirectory = File(
-            pictures,
-            "AstroPhoto/${session.folderName}"
-        )
-        if (!sessionDirectory.exists() && !sessionDirectory.mkdirs()) {
-            error("Не удалось создать папку сессии")
-        }
-        FileOutputStream(File(sessionDirectory, "session_info.txt")).bufferedWriter().use {
-            it.write(content)
-        }
-    }
-
     private fun sanitizeName(value: String): String =
         value.trim()
             .replace(Regex("\\s+"), "_")

@@ -1370,6 +1370,11 @@ class CameraPreviewView @JvmOverloads constructor(
 
         val requestedExposure = request.get(CaptureRequest.SENSOR_EXPOSURE_TIME)
         val actualExposure = result.get(CaptureResult.SENSOR_EXPOSURE_TIME)
+        Log.i("AstroPhotoCapture", "camera=${capabilities.cameraId} frame=${result.frameNumber} " +
+            "requestedExposureNs=$requestedExposure actualExposureNs=$actualExposure " +
+            "requestedSensorIso=${request.get(CaptureRequest.SENSOR_SENSITIVITY)} " +
+            "actualSensorIso=${result.get(CaptureResult.SENSOR_SENSITIVITY)} " +
+            "sensorTimestampNs=${result.get(CaptureResult.SENSOR_TIMESTAMP)}")
         val exposureLimit = if (
             requestedExposure != null &&
             actualExposure != null &&
@@ -1544,6 +1549,13 @@ class CameraPreviewView @JvmOverloads constructor(
                 ?: error("Камера вернула пустой JPEG")
             val jpegBytes = ByteArray(buffer.remaining())
             buffer.get(jpegBytes)
+            // Correlate JPEG EXIF and Camera2 values by the sensor/image timestamp.
+            runCatching {
+                val exif = androidx.exifinterface.media.ExifInterface(java.io.ByteArrayInputStream(jpegBytes))
+                Log.i("AstroPhotoCapture", "jpegTimestampNs=${image.timestamp} " +
+                    "exifExposureSeconds=${exif.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_EXPOSURE_TIME)} " +
+                    "exifIso=${exif.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY)}")
+            }
             if (captureType == CaptureType.TEST_JPEG) {
                 notifyCaptureStage(CameraCaptureStage.SAVING)
                 reportStatus("test JPEG captured")

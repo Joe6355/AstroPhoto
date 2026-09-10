@@ -72,16 +72,16 @@ class ReferenceStarSignalPreserver {
             stackedSky.width,
             stackedSky.height
         )
-        val stackedRow = IntArray(stackedSky.width)
-        val referenceRow = IntArray(stackedSky.width)
+        val stackedRow = LongArray(stackedSky.width)
+        val referenceRow = LongArray(stackedSky.width)
         var skipped = 0L
         val affected = hashSetOf<Int>()
         try {
             FileBackedImageReader(stackedSky).use { stackedReader ->
                 FileBackedImageReader(reference).use { referenceReader ->
                     for (y in 0 until stackedSky.height) {
-                        stackedReader.readArgbRow(y, stackedRow)
-                        referenceReader.readArgbRow(y, referenceRow)
+                        stackedReader.readLinearRow(y, stackedRow)
+                        referenceReader.readLinearRow(y, referenceRow)
                         forEachStarPixelInRow(y, stackedSky.width, stars) { starIndex, x ->
                             if (
                                 isReferenceSampleBlocked(
@@ -98,7 +98,7 @@ class ReferenceStarSignalPreserver {
                                 stackedRow[x] = referenceRow[x]
                             }
                         }
-                        writer.writeRow(y, stackedRow)
+                        writer.writeLinearRow(y, stackedRow)
                     }
                 }
             }

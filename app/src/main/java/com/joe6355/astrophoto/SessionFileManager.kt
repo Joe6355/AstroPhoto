@@ -47,23 +47,33 @@ class SessionFileManager(private val context: Context) {
                 "Новое имя совпадает с текущим"
             }
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                renameMediaStoreFolder(session.folderName, newFolderName)
-            } else {
-                renameLegacyFolder(session.folderName, newFolderName)
+            val infoStore = SessionInfoStore(context)
+            infoStore.prepareRename(session.folderName, newFolderName, session.infoContent) {
+                renamedMetadata(it, session.sessionName, safeName)
             }
-            AstroRawSidecarStore(context).renameSession(
-                session.folderName,
-                newFolderName
-            )
-
-            val metadataUpdated = runCatching {
-                updateRenameMetadata(
-                    folderName = newFolderName,
-                    oldName = session.sessionName,
-                    newName = safeName
-                )
-            }.isSuccess
+            var publicMoved = false
+            if (session.folderName != newFolderName) {
+                try {
+                    renamePublicFolder(session.folderName, newFolderName)
+                    publicMoved = true
+                    // One atomic directory rename; failure does not partially move RAW sidecars.
+                    AstroRawSidecarStore(context).renameSession(session.folderName, newFolderName)
+                } catch (error: Exception) {
+                    val rolledBack = if (publicMoved) {
+                        runCatching { renamePublicFolder(newFolderName, session.folderName) }.isSuccess
+                    } else {
+                        (error as? SessionMoveFailure)?.rollbackComplete != false
+                    }
+                    // Preserve both copies when media could not be moved back completely.
+                    if (rolledBack) infoStore.delete(newFolderName)
+                    throw IllegalStateException(if (rolledBack) {
+                        "Не удалось переименовать сессию. Кадры остались в прежней папке."
+                    } else {
+                        "Переименование завершено не полностью. Часть кадров осталась в другой папке; сведения сохранены."
+                    }, error)
+                }
+            }
+            val metadataUpdated = session.folderName == newFolderName || infoStore.delete(session.folderName)
             val active = sessionStore.load()
             if (active?.folderName == session.folderName) {
                 sessionStore.save(
@@ -95,16 +105,25 @@ class SessionFileManager(private val context: Context) {
                 .deleteSession(session.folderName)
             val counts = publicCounts.first + privateCounts.first to
                 publicCounts.second + privateCounts.second
+            val infoDeleted = if (counts.second == 0) SessionInfoStore(context).delete(session.folderName) else true
             val active = sessionStore.load()
             val activeCleared = active?.folderName == session.folderName
             if (activeCleared) sessionStore.clear()
             SessionDeleteResult(
                 deletedFiles = counts.first,
-                failedFiles = counts.second,
+                failedFiles = counts.second + if (infoDeleted) 0 else 1,
                 activeSessionCleared = activeCleared
             )
         }
     }
+
+    private fun renamePublicFolder(oldFolder: String, newFolder: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) renameMediaStoreFolder(oldFolder, newFolder)
+        else renameLegacyFolder(oldFolder, newFolder)
+    }
+
+    private class SessionMoveFailure(val rollbackComplete: Boolean, cause: Exception) :
+        IllegalStateException("Не удалось переместить файлы сессии", cause)
 
     private fun renameMediaStoreFolder(oldFolder: String, newFolder: String) {
         val resolver = context.contentResolver
@@ -114,12 +133,13 @@ class SessionFileManager(private val context: Context) {
         require(!mediaStoreFolderExists(collection, newBase)) {
             "Сессия с таким именем папки уже существует"
         }
-        val entries = mutableListOf<Pair<Long, String>>()
+        val entries = mutableListOf<Pair<android.net.Uri, String>>()
         resolver.query(
             collection,
             arrayOf(
                 MediaStore.Files.FileColumns._ID,
-                MediaStore.Files.FileColumns.RELATIVE_PATH
+                MediaStore.Files.FileColumns.RELATIVE_PATH,
+                MediaStore.Files.FileColumns.MEDIA_TYPE
             ),
             "${MediaStore.Files.FileColumns.RELATIVE_PATH} LIKE ?",
             arrayOf("$oldBase%"),
@@ -129,16 +149,26 @@ class SessionFileManager(private val context: Context) {
             val pathIndex = cursor.getColumnIndexOrThrow(
                 MediaStore.Files.FileColumns.RELATIVE_PATH
             )
+            val mediaTypeIndex = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.MEDIA_TYPE)
             while (cursor.moveToNext()) {
-                entries += cursor.getLong(idIndex) to cursor.getString(pathIndex).orEmpty()
+                val path = cursor.getString(pathIndex).orEmpty()
+                // SQL LIKE treats '_' in session names as a wildcard; never move a neighbouring session.
+                if (path.startsWith(oldBase)) {
+                    // Updating an image via Files/<id> makes Android reject the Pictures directory.
+                    val itemCollection = when (cursor.getInt(mediaTypeIndex)) {
+                        MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                        MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                        else -> collection
+                    }
+                    entries += ContentUris.withAppendedId(itemCollection, cursor.getLong(idIndex)) to path
+                }
             }
         }
 
-        val moved = mutableListOf<Pair<Long, String>>()
+        val moved = mutableListOf<Pair<android.net.Uri, String>>()
         try {
-            entries.forEach { (id, oldPath) ->
+            entries.forEach { (uri, oldPath) ->
                 val newPath = newBase + oldPath.removePrefix(oldBase)
-                val uri = ContentUris.withAppendedId(collection, id)
                 val updated = resolver.update(
                     uri,
                     ContentValues().apply {
@@ -148,25 +178,24 @@ class SessionFileManager(private val context: Context) {
                     null
                 )
                 if (updated != 1) error("Не удалось переместить один из файлов сессии")
-                moved += id to oldPath
+                moved += uri to oldPath
             }
         } catch (error: Exception) {
-            moved.asReversed().forEach { (id, oldPath) ->
-                runCatching {
+            var rollbackComplete = true
+            moved.asReversed().forEach { (uri, oldPath) ->
+                val restored = runCatching {
                     resolver.update(
-                        ContentUris.withAppendedId(collection, id),
+                        uri,
                         ContentValues().apply {
                             put(MediaStore.Files.FileColumns.RELATIVE_PATH, oldPath)
                         },
                         null,
                         null
-                    )
-                }
+                    ) == 1
+                }.getOrDefault(false)
+                if (!restored) rollbackComplete = false
             }
-            throw IllegalStateException(
-                "Не удалось переименовать папку сессии. Изменения отменены.",
-                error
-            )
+            throw SessionMoveFailure(rollbackComplete, error)
         }
     }
 
@@ -175,11 +204,16 @@ class SessionFileManager(private val context: Context) {
         basePath: String
     ): Boolean = context.contentResolver.query(
         collection,
-        arrayOf(MediaStore.Files.FileColumns._ID),
+        arrayOf(MediaStore.Files.FileColumns.RELATIVE_PATH),
         "${MediaStore.Files.FileColumns.RELATIVE_PATH} LIKE ?",
         arrayOf("$basePath%"),
         null
-    )?.use { it.moveToFirst() } == true
+    )?.use { cursor ->
+        while (cursor.moveToNext()) {
+            if (cursor.getString(0).orEmpty().startsWith(basePath)) return@use true
+        }
+        false
+    } == true
 
     @Suppress("DEPRECATION")
     private fun renameLegacyFolder(oldFolder: String, newFolder: String) {
@@ -212,12 +246,14 @@ class SessionFileManager(private val context: Context) {
         val ids = mutableListOf<Long>()
         resolver.query(
             collection,
-            arrayOf(MediaStore.Files.FileColumns._ID),
+            arrayOf(MediaStore.Files.FileColumns._ID, MediaStore.Files.FileColumns.RELATIVE_PATH),
             "${MediaStore.Files.FileColumns.RELATIVE_PATH} LIKE ?",
             arrayOf("$basePath%"),
             null
         )?.use { cursor ->
-            while (cursor.moveToNext()) ids += cursor.getLong(0)
+            while (cursor.moveToNext()) {
+                if (cursor.getString(1).orEmpty().startsWith(basePath)) ids += cursor.getLong(0)
+            }
         }
         var deleted = 0
         var failed = 0
@@ -266,11 +302,11 @@ class SessionFileManager(private val context: Context) {
         return deleted to failed
     }
 
-    private fun updateRenameMetadata(
-        folderName: String,
+    private fun renamedMetadata(
+        content: String,
         oldName: String,
         newName: String
-    ) {
+    ): String {
         val renamedAt = SimpleDateFormat(
             "yyyy-MM-dd HH:mm:ss",
             Locale.getDefault()
@@ -281,87 +317,8 @@ class SessionFileManager(private val context: Context) {
             appendLine("newName: $newName")
             appendLine("renamedAt: $renamedAt")
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            updateMediaStoreInfo(folderName, newName, block)
-        } else {
-            updateLegacyInfo(folderName, newName, block)
-        }
+        return replaceSessionName(content, newName) + block
     }
-
-    private fun updateMediaStoreInfo(
-        folderName: String,
-        sessionName: String,
-        block: String
-    ) {
-        val resolver = context.contentResolver
-        val collection = MediaStore.Files.getContentUri("external")
-        val path =
-            "${Environment.DIRECTORY_PICTURES}/AstroPhoto/$folderName/"
-        val existingUri = resolver.query(
-            collection,
-            arrayOf(MediaStore.Files.FileColumns._ID),
-            "${MediaStore.Files.FileColumns.DISPLAY_NAME}=? AND " +
-                "${MediaStore.Files.FileColumns.RELATIVE_PATH}=?",
-            arrayOf("session_info.txt", path),
-            null
-        )?.use { cursor ->
-            if (cursor.moveToFirst()) {
-                ContentUris.withAppendedId(collection, cursor.getLong(0))
-            } else {
-                null
-            }
-        }
-        val existing = existingUri?.let {
-            resolver.openInputStream(it)?.bufferedReader()?.use { reader ->
-                reader.readText()
-            }
-        }.orEmpty()
-        val updatedContent = replaceSessionName(existing, sessionName) + block
-        var inserted = false
-        val uri = existingUri ?: resolver.insert(
-            collection,
-            ContentValues().apply {
-                put(MediaStore.Files.FileColumns.DISPLAY_NAME, "session_info.txt")
-                put(MediaStore.Files.FileColumns.MIME_TYPE, "text/plain")
-                put(MediaStore.Files.FileColumns.RELATIVE_PATH, path)
-                put(MediaStore.Files.FileColumns.IS_PENDING, 1)
-            }
-        )?.also { inserted = true } ?: error("Не удалось обновить session_info.txt")
-        try {
-            resolver.openOutputStream(uri, "wt")?.bufferedWriter()?.use {
-                it.write(updatedContent)
-            } ?: error("Не удалось обновить session_info.txt")
-            if (inserted) {
-                resolver.update(
-                    uri,
-                    ContentValues().apply {
-                        put(MediaStore.Files.FileColumns.IS_PENDING, 0)
-                    },
-                    null,
-                    null
-                )
-            }
-        } catch (error: Exception) {
-            if (inserted) resolver.delete(uri, null, null)
-            throw error
-        }
-    }
-
-    @Suppress("DEPRECATION")
-    private fun updateLegacyInfo(
-        folderName: String,
-        sessionName: String,
-        block: String
-    ) {
-        val pictures = Environment.getExternalStoragePublicDirectory(
-            Environment.DIRECTORY_PICTURES
-        )
-        val file = File(pictures, "AstroPhoto/$folderName/session_info.txt")
-        file.parentFile?.mkdirs()
-        val existing = if (file.exists()) file.readText() else ""
-        file.writeText(replaceSessionName(existing, sessionName) + block)
-    }
-
     private fun replaceSessionName(content: String, sessionName: String): String {
         val lines = content.lineSequence().toMutableList()
         val index = lines.indexOfFirst { it.startsWith("sessionName:") }

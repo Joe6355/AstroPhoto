@@ -54,6 +54,9 @@ class StellarCentroidRefinementPolicy {
         if (!medianResidual.isFinite() || !percentile90Residual.isFinite()) {
             return reject("centroid_residual_not_finite")
         }
+        // Relative improvement cannot make an absolutely misaligned solution safe to stack.
+        if (medianResidual > TARGET_MEDIAN_RESIDUAL) return reject("centroid_median_residual_high")
+        if (percentile90Residual > TARGET_P90_RESIDUAL) return reject("centroid_p90_residual_high")
         val refined = verification.refined
         if (refined.validPatchCount < MIN_ACCEPTED_MATCHES) return reject("insufficient_centroid_verification_matches")
         if (refined.retention < MIN_RETENTION) return reject("centroid_retention_low")

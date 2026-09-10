@@ -132,7 +132,7 @@ class SkyForegroundComposer {
         )
     }
 
-    private fun linearBlend(stacked: Int, reference: Int, alpha: Float): Int {
+    internal fun linearBlend(stacked: Int, reference: Int, alpha: Float): Int {
         fun blendChannel(shift: Int): Int {
             val stackedSrgb = (stacked ushr shift and 0xFF) / 255f
             val referenceSrgb = (reference ushr shift and 0xFF) / 255f

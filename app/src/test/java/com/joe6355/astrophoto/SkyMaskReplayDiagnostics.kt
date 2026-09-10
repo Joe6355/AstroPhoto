@@ -48,8 +48,10 @@ import com.joe6355.astrophoto.processing.jpeg.v2.quality.ResultSelectionPolicy
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedFloatPlane
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedImage
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedImageReader
+import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedPixelFormat
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.ResultCandidateStore
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.TemporaryPipelineFiles
+import com.joe6355.astrophoto.processing.jpeg.v2.enhancement.fileBackedPixelHash
 import java.nio.file.Files
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -187,14 +189,17 @@ internal class SkyMaskReplayDiagnosticRunner {
             currentAlpha,
             profile,
             acceptedIndices.size,
-            stars
+            stars,
+            pixelFormat = FileBackedPixelFormat.ARGB_8888
         )
         val activeDifference = pixelDifference(
             currentProcessed.composed,
             activeFileBackedCurrent
         )
         require(activeDifference.maximumChannelDifference <= 2) {
-            "Active file-backed Stage 4 differs from component replay by more than 2 levels"
+            "Legacy ARGB8 file-backed Stage 4 differs from ARGB8 component replay by more than 2 levels: " +
+                "maximum=${activeDifference.maximumChannelDifference}, " +
+                "differentPixels=${activeDifference.differentPixelCount}"
         }
 
         val variants = buildVariants(
@@ -590,18 +595,24 @@ internal class SkyMaskReplayDiagnosticRunner {
         sensorDefectAffectedOutput: AlphaMask? = null,
         experimentalStrengthVariant: ExperimentalStarStrengthVariant =
             ExperimentalStarStrengthVariant.PRODUCTION_SELECTED,
-        onStarDiagnostics: (StarEnhancementDiagnostics) -> Unit = {}
+        onStarDiagnostics: (StarEnhancementDiagnostics) -> Unit = {},
+        onPixelHash: (String) -> Unit = {},
+        onTileSizes: (Map<String, String>) -> Unit = {},
+        pixelFormat: FileBackedPixelFormat = FileBackedPixelFormat.LINEAR_RGB_16,
+        memoryBudget: JpegMemoryBudget = JpegMemoryBudget(
+            RuntimeHeapSnapshot(512L * MIB, 128L * MIB, 96L * MIB), reserveBytes = 64L * MIB)
     ): ArgbPixelImage {
         val cacheRoot = Files.createTempDirectory("sky-mask-file-backed").toFile()
         val files = TemporaryPipelineFiles.create(cacheRoot)
         try {
-            val store = ResultCandidateStore(files)
+            val store = ResultCandidateStore(files, pixelFormat)
             val stackedHandle = writeTemporary(store, "replay-sky", stackedSky)
             val referenceHandle = writeCandidate(store, ResultCandidateType.REFERENCE, reference)
             val alphaHandle = writePlane(store, "replay-alpha", alpha)
             val defectHandle = sensorDefectAffectedOutput?.let {
                 writePlane(store, "replay-sensor-defect-affected", it)
             }
+            val memoryTracker = PipelineMemoryTracker()
             val result = FileBackedAdaptivePresetProcessor(
                 experimentalStrengthVariant = experimentalStrengthVariant
             ).process(
@@ -612,14 +623,13 @@ internal class SkyMaskReplayDiagnosticRunner {
                 frameCount = frameCount,
                 alignedStackStars = stars,
                 store = store,
-                memoryBudget = JpegMemoryBudget(
-                    RuntimeHeapSnapshot(512L * MIB, 128L * MIB, 96L * MIB),
-                    reserveBytes = 64L * MIB
-                ),
-                memoryTracker = PipelineMemoryTracker(),
+                memoryBudget = memoryBudget,
+                memoryTracker = memoryTracker,
                 sensorDefectAffectedOutput = defectHandle
             )
             onStarDiagnostics(result.diagnostics.starEnhancement)
+            onPixelHash(fileBackedPixelHash(result.image))
+            onTileSizes(memoryTracker.tileSizes())
             return ArgbPixelImage(result.image.width, result.image.height, readAll(result.image))
         } finally {
             files.close()
