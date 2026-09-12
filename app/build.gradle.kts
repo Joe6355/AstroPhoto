@@ -26,7 +26,9 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.joe6355.astrophoto"
+        // Allows an in-place update of the earlier phone build without changing the published ID.
+        applicationId = providers.gradleProperty("astrophoto.installApplicationId")
+            .getOrElse("com.joe6355.astrophoto")
         minSdk = 26
         targetSdk = 36
         versionCode = 3

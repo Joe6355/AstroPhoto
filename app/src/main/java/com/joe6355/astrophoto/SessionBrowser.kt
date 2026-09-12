@@ -22,6 +22,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -49,6 +51,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -432,14 +435,14 @@ fun SessionsScreen(
         loading = false
     }
 
-    AstroScaffold(title = "Сессии", onBack = onBack) {
+    AstroScaffold(title = "Ваши съёмки", onBack = onBack) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = AstroSpacing.Lg)
         ) {
         AstroPrimaryButton(
-            text = "Новая сессия",
+            text = "Новая съёмка",
             onClick = {
                 sessionName = ""
                 sessionNote = ""
@@ -491,8 +494,8 @@ fun SessionsScreen(
 
             sessions.isEmpty() -> {
                 AstroEmptyState(
-                    title = "Сессий пока нет",
-                    message = "Создайте сессию перед съёмкой серии кадров",
+                    title = "Съёмок пока нет",
+                    message = "Создайте съёмку, чтобы собрать кадры и результаты в одном месте",
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -560,6 +563,8 @@ internal fun SessionSummaryCard(
         )
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            SessionCover(session, Modifier.size(64.dp, 76.dp).clip(MaterialTheme.shapes.small), maxSize = 192)
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
                     text = session.sessionName,
@@ -571,12 +576,14 @@ internal fun SessionSummaryCard(
                 if (active) {
                     Text("Активная", color = AstroColors.Success)
                 }
-            }
             Text(
                 text = formatSessionDate(session.createdAtMillis),
                 modifier = Modifier.padding(top = 4.dp),
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            }
+            }
             Text(
                 text = "Основные: ${session.lightFrames}  ·  Тёмные: ${session.darkFrames}",
                 modifier = Modifier.padding(top = 8.dp)

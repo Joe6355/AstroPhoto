@@ -126,9 +126,9 @@ fun AstroPrimaryButton(
     Button(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier.heightIn(min = 52.dp),
+        modifier = modifier.heightIn(min = 54.dp),
         shape = MaterialTheme.shapes.small,
-        contentPadding = PaddingValues(horizontal = AstroSpacing.Xl, vertical = AstroSpacing.Md)
+        contentPadding = PaddingValues(horizontal = AstroSpacing.Xl, vertical = 12.dp)
     ) {
         Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
@@ -146,7 +146,7 @@ fun AstroSecondaryButton(
         enabled = enabled,
         modifier = modifier.heightIn(min = 48.dp),
         shape = MaterialTheme.shapes.small,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         contentPadding = PaddingValues(horizontal = AstroSpacing.Lg, vertical = AstroSpacing.Sm)
     ) {
         Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis)

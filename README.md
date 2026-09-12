@@ -12,6 +12,11 @@ Android-приложение для ручной астрофотографии,
 ```
 
 CI выполняет тот же gate для pull request и push в ветки `main` и `beta`.
+
+Для обновления прежней установки `com.example.astrophoto` без потери данных
+собирайте APK с `-Pastrophoto.installApplicationId=com.example.astrophoto`.
+Подпись должна совпадать с установленным APK; установка выполняется через `adb install -r`.
+Без параметра сохраняется основной ID `com.joe6355.astrophoto`.
 Release собирается с R8 и сокращением ресурсов. Правила для сериализуемых
 checkpoint-моделей: `app/src/main/keepRules/checkpoints.keep`.
 Используется [DSL optimization для AGP 9.3+](https://developer.android.com/topic/performance/app-optimization/enable-app-optimization).

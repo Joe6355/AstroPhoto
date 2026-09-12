@@ -51,6 +51,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.joe6355.astrophoto.ui.theme.AstroPhotoTheme
 import com.joe6355.astrophoto.ui.theme.AstroColors
+import com.joe6355.astrophoto.ui.OrbitDestination
+import com.joe6355.astrophoto.ui.OrbitNavigationBar
 import com.joe6355.astrophoto.processing.jpeg.v2.diagnostics.ProcessingFailureSummary
 import com.joe6355.astrophoto.processing.jpeg.v2.diagnostics.PreviousProcessingFailureDetector
 import com.joe6355.astrophoto.processing.jpeg.v2.diagnostics.PreviousRunClassification
@@ -120,6 +122,17 @@ private fun AstroPhotoApp(
     var aboutReturnScreen by remember { mutableStateOf(AppScreen.Diagnostics) }
     var selfCheckReturnScreen by remember { mutableStateOf(AppScreen.Diagnostics) }
     var selectedSession by remember { mutableStateOf<SessionSummary?>(null) }
+    var recentSession by remember { mutableStateOf<SessionSummary?>(null) }
+    var cameraNavigationEnabled by remember { mutableStateOf(true) }
+    LaunchedEffect(currentScreen) {
+        if (currentScreen == AppScreen.Diagnostics) {
+            recentSession = try {
+                SessionBrowserRepository(context.applicationContext).loadSessions().maxByOrNull { it.createdAtMillis }
+            } catch (_: SecurityException) {
+                null
+            }
+        }
+    }
     var sessionManagerMessage by remember { mutableStateOf<String?>(null) }
     var cameraPermissionGranted by remember {
         mutableStateOf(context.hasCameraPermission())
@@ -177,7 +190,10 @@ private fun AstroPhotoApp(
         color = MaterialTheme.colorScheme.background,
         contentColor = MaterialTheme.colorScheme.onBackground
     ) {
+        Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+        Box(Modifier.weight(1f).fillMaxWidth()) {
         val screenAvailableWithoutCamera = currentScreen == AppScreen.Diagnostics ||
+            currentScreen == AppScreen.Sessions || currentScreen == AppScreen.SessionDetails ||
             currentScreen == AppScreen.DiagnosticsDetails ||
             currentScreen == AppScreen.About ||
             currentScreen == AppScreen.Settings ||
@@ -205,6 +221,13 @@ private fun AstroPhotoApp(
                     onOpenSelfCheck = {
                         selfCheckReturnScreen = AppScreen.Diagnostics
                         navigateTo(AppScreen.SelfCheck)
+                    },
+                    recentSession = recentSession,
+                    onOpenRecentSession = {
+                        recentSession?.let { session ->
+                            selectedSession = session
+                            navigateTo(AppScreen.SessionDetails)
+                        }
                     }
                 )
                 AppScreen.DiagnosticsDetails -> CameraDiagnosticsScreen(
@@ -212,6 +235,8 @@ private fun AstroPhotoApp(
                 )
                 AppScreen.Camera -> CameraScreen(
                     onBackToDiagnostics = { navigateBack() },
+                    onNavigationAvailabilityChanged = { cameraNavigationEnabled = it },
+                    onOpenSessions = { navigation.navigateTopLevel(AppScreen.Sessions) },
                     onOpenHelp = { topic ->
                         helpReturnScreen = AppScreen.Camera
                         helpInitialTopic = topic
@@ -331,6 +356,25 @@ private fun AstroPhotoApp(
                     navigateTo(AppScreen.About)
                 }
             )
+        }
+        }
+        if (currentScreen in listOf(AppScreen.Diagnostics, AppScreen.Camera, AppScreen.Sessions, AppScreen.SessionDetails)) {
+            OrbitNavigationBar(
+                selected = when (currentScreen) {
+                    AppScreen.Diagnostics -> OrbitDestination.HOME
+                    AppScreen.Camera -> OrbitDestination.CAMERA
+                    else -> OrbitDestination.SESSIONS
+                },
+                enabled = currentScreen != AppScreen.Camera || cameraNavigationEnabled,
+                onSelected = { destination ->
+                    navigation.navigateTopLevel(when (destination) {
+                        OrbitDestination.HOME -> AppScreen.Diagnostics
+                        OrbitDestination.CAMERA -> AppScreen.Camera
+                        OrbitDestination.SESSIONS -> AppScreen.Sessions
+                    })
+                }
+            )
+        }
         }
     }
     if (showOnboarding) {

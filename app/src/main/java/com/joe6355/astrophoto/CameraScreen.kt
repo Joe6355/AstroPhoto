@@ -93,7 +93,9 @@ import kotlin.math.roundToLong
 @Composable
 internal fun CameraScreen(
     onBackToDiagnostics: () -> Unit,
-    onOpenHelp: (HelpTopic) -> Unit
+    onOpenHelp: (HelpTopic) -> Unit,
+    onNavigationAvailabilityChanged: (Boolean) -> Unit = {},
+    onOpenSessions: () -> Unit = {}
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -124,6 +126,7 @@ internal fun CameraScreen(
     var pendingSeriesStart by remember { mutableStateOf(false) }
     var pendingDarkFramesStart by remember { mutableStateOf(false) }
     var exposureWarning by remember { mutableStateOf<String?>(null) }
+    var quickParameter by remember { mutableStateOf<String?>(null) }
     var isCapturing by remember { mutableStateOf(false) }
     val controls = remember { CameraControlsState(savedSettings) }
     var capabilities by controls.capabilities
@@ -992,6 +995,12 @@ internal fun CameraScreen(
 
     BackHandler(onBack = ::handleBack)
 
+    val captureBusy = seriesRunning || darkFramesRunning || isCapturing || testShotRunning
+    LaunchedEffect(captureBusy) {
+        onNavigationAvailabilityChanged(!captureBusy)
+        if (captureBusy) quickParameter = null
+    }
+
     DisposableEffect(context) {
         val activity = context.findComponentActivity()
         activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -1137,14 +1146,14 @@ internal fun CameraScreen(
                 .fillMaxWidth()
                 .safeDrawingPadding()
                 .padding(start = 12.dp, top = 12.dp, end = 12.dp),
-            color = Color.Black.copy(alpha = 0.62f),
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
             contentColor = MaterialTheme.colorScheme.onSurface,
-            shape = MaterialTheme.shapes.medium
+            shape = MaterialTheme.shapes.small
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 56.dp)
+                    .heightIn(min = 48.dp)
                     .padding(end = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -1153,7 +1162,7 @@ internal fun CameraScreen(
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Серия",
+                        text = "Съёмка",
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -1219,6 +1228,28 @@ internal fun CameraScreen(
             summary = panelSummary,
             modifier = Modifier.fillMaxSize(),
             collapsedContent = {
+                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf("ISO" to "$iso", "Выдержка" to formatExposure(exposureTimeNs),
+                        "Фокус" to formatFocusMode(focusMode, focusDistance), "Кадры" to "$seriesFrameCount")
+                        .forEach { (label, value) ->
+                            Card(onClick = { quickParameter = label }, enabled = !captureBusy,
+                                modifier = Modifier.weight(1f), shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                    contentColor = MaterialTheme.colorScheme.onSurface)) {
+                                Column(Modifier.padding(horizontal = 8.dp, vertical = 10.dp)) {
+                                    Text(label, style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(value, style = MaterialTheme.typography.labelLarge,
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                        }
+                }
                 CompactCapturePanel(
                     capabilities = capabilities,
                     isCapturing = isCapturing,
@@ -1241,8 +1272,11 @@ internal fun CameraScreen(
                     onSeriesStart = ::requestSeriesStart,
                     onSeriesStop = ::requestSeriesStop,
                     onDarkFramesStop = ::requestDarkFramesStop,
-                    modifier = Modifier.fillMaxSize()
+                    onTestShot = ::requestTestShot,
+                    onOpenResults = onOpenSessions,
+                    modifier = Modifier.fillMaxWidth()
                 )
+                }
             },
             expandedContent = { panelScrollState ->
                 ManualControlsPanel(
@@ -1392,6 +1426,56 @@ internal fun CameraScreen(
                 )
             }
         )
+
+        quickParameter?.let { parameter ->
+            AlertDialog(
+                onDismissRequest = { quickParameter = null },
+                title = { Text(parameter) },
+                text = {
+                    Column {
+                        when (parameter) {
+                            "ISO" -> capabilities?.isoRange?.takeIf { capabilities?.supportsManualSensor == true }?.let { range ->
+                                Text("ISO $iso")
+                                Slider(value = isoSliderFraction(iso, range), onValueChange = { iso = isoFromSliderFraction(it, range) })
+                            } ?: Text("Ручной ISO недоступен на этой камере.")
+                            "Выдержка" -> capabilities?.exposureRangeNs?.takeIf { capabilities?.supportsManualSensor == true }?.let { range ->
+                                Text(formatExposure(exposureTimeNs))
+                                Slider(value = exposureSliderFraction(exposureTimeNs, range), onValueChange = {
+                                    exposureWarning = null
+                                    exposureTimeNs = exposureFromSliderFraction(it, range)
+                                })
+                            } ?: Text("Ручная выдержка недоступна на этой камере.")
+                            "Кадры" -> {
+                                Text("Кадров в серии: $seriesFrameCount")
+                                Slider(value = seriesFrameCount.toFloat().coerceIn(1f, 500f), valueRange = 1f..500f,
+                                    onValueChange = { seriesFrameCount = it.roundToInt() })
+                            }
+                            else -> {
+                                Text("Текущий фокус: ${formatFocusMode(focusMode, focusDistance)}")
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    listOf(CameraFocusMode.AF to "AF", CameraFocusMode.MF to "MF", CameraFocusMode.INFINITY to "∞")
+                                        .forEach { (mode, label) ->
+                                            FilterChip(selected = focusMode == mode,
+                                                onClick = {
+                                                    focusMode = mode
+                                                    if (mode == CameraFocusMode.INFINITY) focusDistance = 0f
+                                                },
+                                                enabled = mode == CameraFocusMode.AF || capabilities?.supportsManualFocus == true,
+                                                label = { Text(label) })
+                                        }
+                                }
+                                val maximum = capabilities?.minimumFocusDistance ?: 0f
+                                if (focusMode == CameraFocusMode.MF && maximum > 0f) {
+                                    Slider(value = focusDistance.coerceIn(0f, maximum), valueRange = 0f..maximum,
+                                        onValueChange = { focusDistance = it })
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { quickParameter = null }) { Text("Готово") } }
+            )
+        }
 
         selectedPreset?.let { preset ->
             PresetDialog(
@@ -2524,13 +2608,15 @@ internal fun CompactCapturePanel(
     onSeriesStart: () -> Unit,
     onSeriesStop: () -> Unit,
     onDarkFramesStop: () -> Unit,
+    onTestShot: () -> Unit = {},
+    onOpenResults: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val formatAvailable = capabilities?.supportsJpegCapture == true
 
     Column(
         modifier = modifier
-            .padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+            .padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
@@ -2634,6 +2720,12 @@ internal fun CompactCapturePanel(
                 }
 
                 else -> {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        TextButton(onClick = onTestShot, enabled = formatAvailable) { Text("Пробный кадр") }
+                        if (seriesCompletedFrames > 0 || darkFramesCompleted > 0) {
+                            TextButton(onClick = onOpenResults) { Text("К обработке →") }
+                        }
+                    }
                     Button(
                         onClick = onSeriesStart,
                         enabled = formatAvailable,
@@ -2642,7 +2734,7 @@ internal fun CompactCapturePanel(
                             .heightIn(min = 56.dp)
                             .testTag(com.joe6355.astrophoto.ui.AstroTestTags.CameraCapture)
                     ) {
-                        Text("Старт серии")
+                        Text("Начать серию")
                     }
                     val status = darkFramesMessage ?: seriesMessage
                     status?.let {

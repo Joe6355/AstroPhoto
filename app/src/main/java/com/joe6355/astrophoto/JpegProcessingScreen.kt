@@ -737,7 +737,7 @@ fun JpegStackingBlock(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "JPEG стеккинг",
+                    text = "Одна серия. Один снимок.",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
                 )
@@ -803,7 +803,7 @@ fun JpegStackingBlock(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                 Text(
-                    text = "Автоматическая обработка",
+                    text = "Обработка JPEG",
                     style = MaterialTheme.typography.titleMedium
                 )
                 USER_VISIBLE_PROCESSING_PROFILES

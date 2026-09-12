@@ -147,7 +147,7 @@ fun CameraSettingsPanel(
         val density = LocalDensity.current
         val landscape = maxWidth > maxHeight
         val maximumHeight = maxHeight * if (landscape) 0.94f else 0.82f
-        val collapsedHeight = if (landscape) 184.dp else 208.dp
+        val collapsedHeight = if (landscape) 224.dp else 252.dp
         val maximumHeightPx = with(density) { maximumHeight.toPx() }
         val collapsedHeightPx = with(density) {
             collapsedHeight.coerceAtMost(maximumHeight).toPx()
@@ -237,7 +237,7 @@ fun CameraSettingsPanel(
                 .testTag(AstroTestTags.CameraSettingsPanel)
                 .semantics { stateDescription = currentAnchor.value.name }
                 .nestedScroll(nestedScrollConnection),
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+            color = MaterialTheme.colorScheme.surface,
             contentColor = MaterialTheme.colorScheme.onSurface,
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
         ) {
@@ -280,23 +280,23 @@ private fun CameraPanelHeader(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = 76.dp)
+            .heightIn(min = 56.dp)
+            .testTag(AstroTestTags.CameraSettingsHandle)
+            .clickable(role = Role.Button, onClick = onToggle)
             .padding(horizontal = AstroSpacing.Md, vertical = AstroSpacing.Xs),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
             modifier = Modifier
-                .size(width = 64.dp, height = 48.dp)
-                .testTag(AstroTestTags.CameraSettingsHandle)
-                .clickable(role = Role.Button, onClick = onToggle),
+                .size(width = 48.dp, height = 48.dp),
             contentAlignment = Alignment.Center
         ) {
             AstroPanelHandle()
         }
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = if (expanded) "Настройки камеры" else "Параметры съёмки",
-                style = MaterialTheme.typography.titleMedium
+                text = if (expanded) "Все настройки" else "Настройки камеры ↑",
+                style = MaterialTheme.typography.titleSmall
             )
             Text(
                 text = summary,

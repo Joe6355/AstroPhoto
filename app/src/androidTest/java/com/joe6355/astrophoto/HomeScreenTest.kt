@@ -3,6 +3,9 @@ package com.joe6355.astrophoto
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasTestTag
@@ -72,7 +75,7 @@ class HomeScreenTest {
             .assertIsDisplayed()
         composeRule.onNodeWithText("Настройки").performClick()
         composeRule.runOnIdle { assertEquals("settings", destination) }
-        composeRule.onNodeWithText("Помощь").performClick()
+        composeRule.onNodeWithText("Подготовка").performClick()
         composeRule.runOnIdle { assertEquals("help", destination) }
         composeRule.onNodeWithTag(AstroTestTags.HomeScreen)
             .performScrollToNode(hasTestTag(AstroTestTags.HomeFooter))
@@ -120,5 +123,18 @@ class HomeScreenTest {
         composeRule.onNodeWithTag(AstroTestTags.HomeScreen)
             .performScrollToNode(hasTestTag(AstroTestTags.HomeFooter))
         composeRule.onNodeWithTag(AstroTestTags.HomeFooter).assertIsDisplayed()
+    }
+
+    @Test
+    fun largeTextKeepsPrimaryActionReachable() {
+        composeRule.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale = 1.6f)) {
+                AstroPhotoTheme { AstroHomeScreen({}, {}, {}, {}, {}, {}) }
+            }
+        }
+        composeRule.onNodeWithTag(AstroTestTags.HomeScreen)
+            .performScrollToNode(hasTestTag(AstroTestTags.HomePrimaryAction))
+        composeRule.onNodeWithTag(AstroTestTags.HomePrimaryAction).assertIsDisplayed()
     }
 }

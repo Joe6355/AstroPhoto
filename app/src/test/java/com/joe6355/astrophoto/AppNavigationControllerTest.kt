@@ -6,6 +6,19 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AppNavigationControllerTest {
+    @Test fun rootTabsReturnHomeWithoutReplayingOldTabs() {
+        val navigation = AppNavigationController()
+        navigation.navigateTopLevel(AppScreen.Camera)
+        navigation.navigateTopLevel(AppScreen.Sessions)
+        navigation.navigateTo(AppScreen.SessionDetails)
+        navigation.navigateTopLevel(AppScreen.Camera)
+        navigation.navigateBack()
+        assertEquals(AppScreen.Diagnostics, navigation.currentScreen.value)
+        assertFalse(navigation.showExitDialog.value)
+        navigation.navigateBack()
+        assertTrue(navigation.showExitDialog.value)
+    }
+
     @Test fun duplicateNavigationDoesNotDuplicateBackStack() {
         val navigation = AppNavigationController()
         navigation.navigateTo(AppScreen.Camera)

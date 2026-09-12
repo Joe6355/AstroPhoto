@@ -419,6 +419,30 @@ class FrameMarksStore(private val context: Context) {
     }
 }
 
+/** The bounded preview loader is shared by home and session cards. */
+@Composable
+internal fun SessionCover(session: SessionSummary, modifier: Modifier = Modifier, maxSize: Int = 640) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val repository = remember(context) { SessionFramesRepository(context.applicationContext) }
+    var thumbnail by remember(session.folderName, session.lightsJpeg) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(session.folderName, session.lightsJpeg) {
+        if (session.lightsJpeg > 0) {
+            val frame = repository.loadFrames(session).firstOrNull { it.category == SessionFrameCategory.LIGHTS_JPEG }
+            thumbnail = frame?.let { repository.loadPreview(it, maxSize) }
+        }
+    }
+    Box(modifier.background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+        val bitmap = thumbnail
+        if (bitmap != null) {
+            Image(bitmap.asImageBitmap(), contentDescription = "Кадр съёмки ${session.sessionName}",
+                modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        } else {
+            Text(if (session.lightsRaw > 0 && session.lightsJpeg == 0) "RAW" else "JPEG",
+                style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
 @Composable
 fun SessionFramesScreen(
     session: SessionSummary,

@@ -33,4 +33,14 @@ internal class AppNavigationController {
         backStack += AppScreen.Diagnostics
         currentScreen.value = AppScreen.Sessions
     }
+
+    /** Root tabs must not accumulate a history of repeated tab selections. */
+    fun navigateTopLevel(screen: AppScreen) {
+        require(screen == AppScreen.Diagnostics || screen == AppScreen.Camera || screen == AppScreen.Sessions)
+        if (currentScreen.value == screen) return
+        backStack.clear()
+        if (screen != AppScreen.Diagnostics) backStack += AppScreen.Diagnostics
+        showExitDialog.value = false
+        currentScreen.value = screen
+    }
 }
