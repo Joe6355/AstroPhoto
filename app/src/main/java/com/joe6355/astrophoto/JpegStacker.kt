@@ -842,6 +842,12 @@ class JpegStacker internal constructor(
                 selectedFrames.forEach { frame ->
                     registrationReports += allRegistrationsByKey.getValue(frame.key).toReport(frame.fileName)
                 }
+                // Do not blame full-resolution refinement when the preliminary registration
+                // already had too few frames. Keep both counts visible in the failure message.
+                if (acceptedFrames < profile.minimumFrames) {
+                    currentStage = "Выравнивание по звёздам: предварительно $provisionalAcceptedFrames/" +
+                        "${selectedFrames.size}, подтверждено в полном разрешении $acceptedFrames/${selectedFrames.size}"
+                }
                 requireMinimumRegisteredFrames(
                     acceptedFrames,
                     selectedFrames.size,
@@ -1119,10 +1125,16 @@ class JpegStacker internal constructor(
                     validCoverage,
                     effectiveSkyAlpha
                 )
+                val artifactCheckContext = currentCoroutineContext()
                 val lineArtifactValidation = LineArtifactDetector().compare(
                     maskStage.referenceCandidate,
                     cleanStackHandle,
                     effectiveSkyAlpha
+                ).combinedWith(
+                    LineArtifactDetector().compareStarNeighborhoods(
+                        maskStage.referenceCandidate, cleanStackHandle, fullResolutionStars,
+                        cancellationCheck = { artifactCheckContext.ensureActive() }
+                    )
                 )
                 val cleanStackEvidence = CleanStackValidationEvidence(
                     referenceStarRetention = retentionValidation,
@@ -1190,13 +1202,16 @@ class JpegStacker internal constructor(
                             effectiveSkyAlpha
                         )
                     )
-                    processedDecision = qualityGate.evaluateProcessed(
+                    processedDecision = LineArtifactDetector().compareStarNeighborhoods(
+                        maskStage.referenceCandidate, adaptiveResult.image, fullResolutionStars,
+                        cancellationCheck = { artifactCheckContext.ensureActive() }
+                    ).constrain(qualityGate.evaluateProcessed(
                         referenceCandidate,
                         cleanStackCandidate,
                         processedCandidate,
                         profile,
                         acceptedFrames
-                    )
+                    ))
                     Log.i(
                         ADAPTIVE_PROCESSING_TAG,
                         "preset=${profile.name} fileBacked=true " +
@@ -1233,7 +1248,7 @@ class JpegStacker internal constructor(
                         cleanStackDecision
                     ),
                     cleanStackCandidate,
-                    userApprovedInsufficientProfileFrames.get()
+                    userApprovedInsufficientProfileFrames.get() && lineArtifactValidation.accepted
                 )
                 val finalizedSensorDefectFilteringReport = candidateMaskLineage(
                     filtering = sensorDefectFilteringReport,
@@ -1561,6 +1576,7 @@ class JpegStacker internal constructor(
                 currentStage = "Сохранение PNG без потерь"
                 val savedArtifacts = savePrimaryAndAncillaryEnhanced(
                     selected = finalSelection.selected,
+                    referenceImage = maskStage.referenceCandidate,
                     requestedFileName = requestedFileName,
                     effectiveSkyAlpha = effectiveSkyAlpha,
                     confirmedStars = fullResolutionStars,

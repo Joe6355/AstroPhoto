@@ -3,6 +3,8 @@ package com.joe6355.astrophoto.processing.jpeg.v2.quality
 import com.joe6355.astrophoto.ArgbPixelImage
 import com.joe6355.astrophoto.pixelLuminance
 import com.joe6355.astrophoto.processing.jpeg.v2.model.AlphaMask
+import com.joe6355.astrophoto.processing.jpeg.v2.model.DetectedStar
+import com.joe6355.astrophoto.processing.jpeg.v2.model.QualityGateDecision
 import com.joe6355.astrophoto.processing.jpeg.v2.sampling.ArgbPixelSource
 import com.joe6355.astrophoto.processing.jpeg.v2.sampling.IntArrayPixelSource
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.AlphaPixelSource
@@ -29,9 +31,136 @@ data class LineArtifactResult(
     val metrics: LineArtifactMetrics,
     val hardFailureReasons: List<String>,
     val warningReasons: List<String>
-)
+) {
+    fun combinedWith(other: LineArtifactResult) = LineArtifactResult(
+        accepted && other.accepted,
+        LineArtifactMetrics(maxOf(metrics.newLongLineComponents, other.metrics.newLongLineComponents),
+            maxOf(metrics.newLinePixelRatio, other.metrics.newLinePixelRatio),
+            maxOf(metrics.directionalConcentration, other.metrics.directionalConcentration),
+            maxOf(metrics.fanPatternScore, other.metrics.fanPatternScore),
+            maxOf(metrics.lineArtifactScore, other.metrics.lineArtifactScore)),
+        (hardFailureReasons + other.hardFailureReasons).distinct(),
+        (warningReasons + other.warningReasons).distinct()
+    )
 
-class LineArtifactDetector {
+    fun constrain(decision: QualityGateDecision) = decision.copy(
+        accepted = decision.accepted && accepted,
+        hardFailureReasons = (decision.hardFailureReasons + hardFailureReasons).distinct(),
+        warningReasons = (decision.warningReasons + warningReasons).distinct()
+    )
+}
+
+class LineArtifactDetector(private val diagnostic: (String) -> Unit = {}) {
+    /** Independent full-resolution image evidence: does not consume registration/retention scores. */
+    fun compareStarNeighborhoods(
+        reference: FileBackedImage,
+        candidate: FileBackedImage,
+        stars: List<DetectedStar>,
+        cancellationCheck: () -> Unit = {}
+    ): LineArtifactResult = FileBackedImageReader(reference, cachedRows = 2).use { first ->
+        FileBackedImageReader(candidate, cachedRows = 2).use { second ->
+            compareStarNeighborhoods(first, second, stars, cancellationCheck)
+        }
+    }
+
+    fun compareStarNeighborhoods(
+        reference: ArgbPixelSource,
+        candidate: ArgbPixelSource,
+        stars: List<DetectedStar>,
+        cancellationCheck: () -> Unit = {}
+    ): LineArtifactResult {
+        if (reference.width != candidate.width || reference.height != candidate.height) {
+            return failed("star_neighborhood_dimensions_changed")
+        }
+        val radius = 32
+        val side = radius * 2 + 1
+        var evaluated = 0
+        var affected = 0
+        var lineCount = 0
+        var linePixels = 0
+        val ghostDirections = IntArray(DIRECTION_BINS)
+        val observed = mutableListOf<Pair<Float, Float>>()
+        for (star in stars.distinctBy { it.x.toInt() to it.y.toInt() }
+            .sortedWith(compareBy<DetectedStar> { it.y }.thenBy { it.x }).take(256)) {
+            cancellationCheck()
+            val cx = star.x.toInt()
+            val cy = star.y.toInt()
+            if (cx < radius + 1 || cy < radius + 1 || cx + radius + 1 >= reference.width ||
+                cy + radius + 1 >= reference.height) continue
+            val before = FloatArray(side * side)
+            val after = FloatArray(side * side)
+            for (y in 0 until side) for (x in 0 until side) {
+                before[y * side + x] = pixelLuminance(reference.argbAt(cx + x - radius, cy + y - radius)).toFloat()
+                after[y * side + x] = pixelLuminance(candidate.argbAt(cx + x - radius, cy + y - radius)).toFloat()
+            }
+            fun median(values: FloatArray): Float = values.sortedArray()[values.size / 2]
+            val bgBefore = median(before)
+            val bgAfter = median(after)
+            val noise = maxOf(0.5f, median(after.map { abs(it - bgAfter) }.toFloatArray()) * 1.4826f)
+            val core = maxOf(3, kotlin.math.ceil(star.width * 1.8f).toInt()).coerceAtMost(7)
+            var peakBefore = 0f
+            var peakAfter = 0f
+            for (dy in -core..core) for (dx in -core..core) if (dx * dx + dy * dy <= core * core) {
+                peakBefore = maxOf(peakBefore, before[(radius + dy) * side + radius + dx] - bgBefore)
+                peakAfter = maxOf(peakAfter, after[(radius + dy) * side + radius + dx] - bgAfter)
+            }
+            if (peakBefore < 4f || peakAfter < 4f) continue
+            evaluated++
+            val gain = (peakAfter / peakBefore).coerceIn(0.25f, 8f)
+            // A bright preserved core must not hide a much fainter coherent trail nearby.
+            val threshold = maxOf(2f, noise * 3f)
+            val edges = BooleanArray(side * side)
+            for (y in 1 until side - 1) for (x in 1 until side - 1) {
+                val dx = x - radius
+                val dy = y - radius
+                if (dx * dx + dy * dy <= (core + 2) * (core + 2)) continue
+                val signal = after[y * side + x] - bgAfter
+                if (signal < threshold) continue
+                var existing = 0f
+                // One-pixel tolerance protects existing faint stars against sharpening/decoder differences.
+                for (oy in -1..1) for (ox in -1..1) {
+                    existing = maxOf(existing, before[(y + oy) * side + x + ox] - bgBefore)
+                }
+                edges[y * side + x] = signal > existing * gain * 2f + maxOf(2f, noise * 3f)
+            }
+            var starAffected = false
+            val directionsForStar = hashSetOf<Int>()
+            for (component in components(edges, side, side)) {
+                if (component.size < 3) continue
+                val x = cx + component.centerX - radius
+                val y = cy + component.centerY - radius
+                if (observed.any { hypot(it.first - x, it.second - y) < 3f }) continue
+                observed += x to y
+                diagnostic("star=${star.x},${star.y} component=$component offset=${x-star.x},${y-star.y}")
+                val isLine = component.size >= 4 && maxOf(component.width, component.height) >= 4 &&
+                    component.elongation >= 2f
+                if (isLine) { lineCount++; linePixels += component.size; starAffected = true }
+                // Require the direction to repeat at distinct stars, not many components at one star.
+                val direction = ((atan2((y - star.y).toDouble(), (x - star.x).toDouble()) + PI) /
+                    (2 * PI) * DIRECTION_BINS).toInt().coerceIn(0, DIRECTION_BINS - 1)
+                directionsForStar += direction
+            }
+            directionsForStar.forEach { ghostDirections[it]++ }
+            if (starAffected) affected++
+        }
+        val repeated = ghostDirections.maxOrNull() ?: 0
+        val fraction = affected.toFloat() / evaluated.coerceAtLeast(1)
+        val hard = buildList {
+            if (affected >= 3 && fraction >= 0.05f) add("new_stellar_streaks_in_full_resolution")
+            if (repeated >= 4 && repeated.toFloat() / evaluated.coerceAtLeast(1) >= 0.10f) {
+                add("repeated_new_stellar_companions_in_full_resolution")
+            }
+        }
+        return LineArtifactResult(hard.isEmpty(),
+            LineArtifactMetrics(lineCount, linePixels.toFloat() / (evaluated.coerceAtLeast(1) * side * side),
+                repeated.toFloat() / observed.size.coerceAtLeast(1),
+                0f, if (hard.isEmpty()) fraction else 1f), hard,
+            buildList {
+                if (evaluated < 3) add("insufficient_stars_for_independent_artifact_check")
+                if (affected > 0 && hard.isEmpty()) add("isolated_new_stellar_structure")
+            })
+    }
+
     fun compare(
         reference: ArgbPixelImage,
         cleanStack: ArgbPixelImage,
@@ -146,7 +275,9 @@ class LineArtifactDetector {
         val width: Int,
         val height: Int,
         val elongation: Float,
-        val angleBin: Int
+        val angleBin: Int,
+        val centerX: Float,
+        val centerY: Float
     )
 
     private fun components(edges: BooleanArray, width: Int, height: Int): List<EdgeComponent> {
@@ -215,7 +346,8 @@ class LineArtifactDetector {
                 componentWidth,
                 componentHeight,
                 sqrt((major + 0.01) / (minor + 0.01)).toFloat(),
-                (angle / PI * DIRECTION_BINS).toInt().coerceIn(0, DIRECTION_BINS - 1)
+                (angle / PI * DIRECTION_BINS).toInt().coerceIn(0, DIRECTION_BINS - 1),
+                meanX.toFloat(), meanY.toFloat()
             )
         }
         return result

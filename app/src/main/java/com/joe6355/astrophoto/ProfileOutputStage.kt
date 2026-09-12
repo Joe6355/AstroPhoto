@@ -9,6 +9,8 @@ import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import java.io.File
 import java.security.MessageDigest
 import com.joe6355.astrophoto.processing.jpeg.v2.diagnostics.PipelineTimingCollector
@@ -27,6 +29,8 @@ import com.joe6355.astrophoto.processing.jpeg.v2.model.ResultCandidateType
 import com.joe6355.astrophoto.processing.jpeg.v2.model.StoredResultCandidate
 import com.joe6355.astrophoto.processing.jpeg.v2.output.LosslessProcessedImageWriter
 import com.joe6355.astrophoto.processing.jpeg.v2.quality.ResultSelectionPolicy
+import com.joe6355.astrophoto.processing.jpeg.v2.quality.LineArtifactDetector
+import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedImage
 import com.joe6355.astrophoto.processing.jpeg.v2.quality.withExperimentalSafeFallback
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedFloatPlane
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedImageReader
@@ -167,6 +171,7 @@ internal data class PrimaryPublication(
 
 internal suspend fun JpegStacker.savePrimaryAndAncillaryEnhanced(
     selected: StoredResultCandidate,
+    referenceImage: FileBackedImage,
     requestedFileName: String,
     effectiveSkyAlpha: FileBackedFloatPlane,
     confirmedStars: List<V2DetectedStar>,
@@ -211,6 +216,7 @@ internal suspend fun JpegStacker.savePrimaryAndAncillaryEnhanced(
             )
         else -> publishAncillaryEnhanced(
             selected = primary.selected,
+            referenceImage = referenceImage,
             effectiveSkyAlpha = effectiveSkyAlpha,
             confirmedStars = confirmedStars,
             candidateStore = candidateStore,
@@ -420,6 +426,7 @@ internal data class AncillaryEnhancedPublication(
 
 internal suspend fun JpegStacker.publishAncillaryEnhanced(
     selected: StoredResultCandidate,
+    referenceImage: FileBackedImage,
     effectiveSkyAlpha: FileBackedFloatPlane,
     confirmedStars: List<V2DetectedStar>,
     candidateStore: ResultCandidateStore,
@@ -434,15 +441,25 @@ internal suspend fun JpegStacker.publishAncillaryEnhanced(
         )
     }
     val started = System.nanoTime()
+    val artifactCheckContext = currentCoroutineContext()
     val outcome = publishOptionalEnhanced(
         createCandidate = {
-            EnhancedGlobalToneProcessor().createStrongestAcceptedCandidate(
+            val candidate = EnhancedGlobalToneProcessor().createStrongestAcceptedCandidate(
                 baseline = selected.image,
                 effectiveSkyAlpha = effectiveSkyAlpha,
                 confirmedStars = confirmedStars,
                 store = candidateStore,
                 knownBaselineQuality = selected.metrics
             )
+            val artifacts = LineArtifactDetector().compareStarNeighborhoods(
+                referenceImage, candidate.generation.image, confirmedStars,
+                cancellationCheck = { artifactCheckContext.ensureActive() }
+            )
+            candidate.copy(validation = candidate.validation.copy(
+                accepted = candidate.validation.accepted && artifacts.accepted,
+                hardFailureReasons = (candidate.validation.hardFailureReasons + artifacts.hardFailureReasons).distinct(),
+                warnings = (candidate.validation.warnings + artifacts.warningReasons).distinct()
+            ))
         },
         saveCandidate = { enhancedImage ->
             FileBackedImageReader(enhancedImage).use { enhancedReader ->
