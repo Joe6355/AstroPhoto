@@ -8,7 +8,8 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Vibrator
 import android.os.VibratorManager
-import androidx.compose.foundation.Canvas
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -34,11 +35,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -101,12 +97,6 @@ fun AboutScreen(
                     )
                 }
             }
-            Text(
-                text = "Ручная камера для астрофото, серий, RAW/DNG, " +
-                    "dark frames и stacking.",
-                modifier = Modifier.padding(top = 12.dp),
-                style = MaterialTheme.typography.bodyLarge
-            )
         }
 
         item {
@@ -167,47 +157,13 @@ fun AboutScreen(
 
 @Composable
 fun AstroPhotoLogo(modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier) {
-        val unit = size.minDimension / 108f
-        drawCircle(
-            color = AstroColors.SurfaceElevated,
-            radius = size.minDimension / 2f
-        )
-        drawRoundRect(
-            color = AstroColors.TextPrimary,
-            topLeft = Offset(24f * unit, 42f * unit),
-            size = Size(60f * unit, 39f * unit),
-            cornerRadius = CornerRadius(6f * unit)
-        )
-        drawCircle(
-            color = AstroColors.Primary,
-            radius = 17f * unit,
-            center = Offset(54f * unit, 61f * unit)
-        )
-        drawCircle(
-            color = AstroColors.Secondary,
-            radius = 10f * unit,
-            center = Offset(54f * unit, 61f * unit)
-        )
-        drawCircle(
-            color = AstroColors.Surface,
-            radius = 5f * unit,
-            center = Offset(54f * unit, 61f * unit)
-        )
-        drawCircle(
-            color = Color.White,
-            radius = 2.5f * unit,
-            center = Offset(79f * unit, 30f * unit)
-        )
-        drawCircle(
-            color = Color.White,
-            radius = 5f * unit,
-            center = Offset(79f * unit, 30f * unit),
-            style = Stroke(width = 1f * unit)
-        )
+    androidx.compose.foundation.layout.Box(modifier = modifier.clip(androidx.compose.foundation.shape.CircleShape)) {
+        androidx.compose.foundation.Image(painterResource(R.drawable.ic_launcher_background),
+            contentDescription = null, modifier = Modifier.matchParentSize())
+        androidx.compose.foundation.Image(painterResource(R.drawable.ic_launcher_foreground),
+            contentDescription = null, modifier = Modifier.matchParentSize())
     }
 }
-
 @Composable
 private fun AboutCard(
     title: String,

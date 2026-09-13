@@ -128,14 +128,6 @@ fun AppSettingsScreen(
                             onSettingsChanged(settings.copy(vibrationAfterProcessing = it))
                         }
                     )
-                    AstroSettingRow(
-                        title = "Сохранять пробные кадры",
-                        description = "JPEG сохраняются в Tests текущей сессии",
-                        checked = settings.saveTestShots,
-                        onCheckedChange = {
-                            onSettingsChanged(settings.copy(saveTestShots = it))
-                        }
-                    )
                 }
             }
 

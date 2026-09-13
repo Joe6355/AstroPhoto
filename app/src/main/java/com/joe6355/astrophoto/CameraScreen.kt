@@ -1912,45 +1912,6 @@ internal fun ManualControlsPanel(
                 style = MaterialTheme.typography.bodySmall,
                 color = AstroColors.TextSecondary
             )
-            FilterChip(
-                selected = saveTestShots,
-                onClick = {
-                    onSaveTestShotsChanged(!saveTestShots)
-                },
-                label = { Text("Сохранять пробные кадры") },
-                enabled = !testShotRunning,
-                modifier = Modifier.padding(top = 8.dp)
-            )
-            TestShotResultCard(
-                result = lastTestShot,
-                focusFwhmHistory = focusFwhmHistory,
-                statusMessage = testShotStatus,
-                running = testShotRunning,
-                onDarker = onTestShotDarker,
-                onBrighter = onTestShotBrighter,
-                onInfinityFocus = onTestShotInfinityFocus,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp)
-            )
-            ExposureAssistantCard(
-                goal = shootingGoal,
-                testShot = lastTestShot,
-                currentIso = iso,
-                currentExposureTimeNs = exposureTimeNs,
-                currentFocusMode = focusMode,
-                recommendation = exposureRecommendation,
-                expanded = exposureAssistantExpanded,
-                onExpandedChanged = onExposureAssistantExpandedChanged,
-                onGoalChanged = onShootingGoalChanged,
-                onApply = onApplyExposureRecommendation,
-                onTestShot = onAssistantTestShot,
-                onStartSeries = onAssistantStartSeries,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp)
-            )
-
             TextButton(
                 onClick = { presetsExpanded = !presetsExpanded },
                 modifier = Modifier
