@@ -78,15 +78,19 @@ class HomeScreenTest {
     }
 
     @Test
-    fun sceneSwitchCyclesThroughAllThreeVariants() {
+    fun sceneSwitchStartsWithMeteorsAndCyclesThroughAllFiveVariants() {
         composeRule.setContent { AstroPhotoTheme { AstroHomeScreen({}, {}, {}) } }
+        composeRule.onNodeWithText("Метеоры ›").assertIsDisplayed()
+        composeRule.onNodeWithTag("home-scene-switch").performClick()
+        composeRule.onNodeWithText("Созвездия ›").assertIsDisplayed()
+        composeRule.onNodeWithTag("home-scene-switch").performClick()
+        composeRule.onNodeWithText("Затмение ›").assertIsDisplayed()
+        composeRule.onNodeWithTag("home-scene-switch").performClick()
         composeRule.onNodeWithText("Орбиты ›").assertIsDisplayed()
         composeRule.onNodeWithTag("home-scene-switch").performClick()
         composeRule.onNodeWithText("Млечный путь ›").assertIsDisplayed()
         composeRule.onNodeWithTag("home-scene-switch").performClick()
         composeRule.onNodeWithText("Метеоры ›").assertIsDisplayed()
-        composeRule.onNodeWithTag("home-scene-switch").performClick()
-        composeRule.onNodeWithText("Орбиты ›").assertIsDisplayed()
     }
 
     @Test

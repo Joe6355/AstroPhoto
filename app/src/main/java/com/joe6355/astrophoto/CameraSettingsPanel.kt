@@ -7,6 +7,7 @@ import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -147,7 +148,7 @@ fun CameraSettingsPanel(
         val density = LocalDensity.current
         val landscape = maxWidth > maxHeight
         val maximumHeight = maxHeight * if (landscape) 0.94f else 0.82f
-        val collapsedHeight = (if (landscape) 188.dp else 200.dp) * density.fontScale.coerceIn(1f, 1.6f)
+        val collapsedHeight = 180.dp * density.fontScale.coerceIn(1f, 1.6f)
         val maximumHeightPx = with(density) { maximumHeight.toPx() }
         val collapsedHeightPx = with(density) {
             collapsedHeight.coerceAtMost(maximumHeight).toPx()
@@ -284,7 +285,8 @@ private fun CameraPanelHeader(
             .testTag(AstroTestTags.CameraSettingsHandle)
             .clickable(role = Role.Button, onClick = onToggle)
             .padding(horizontal = AstroSpacing.Md, vertical = AstroSpacing.Xs),
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Box(
             modifier = Modifier

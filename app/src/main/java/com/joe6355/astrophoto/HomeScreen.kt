@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -23,11 +24,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.graphics.luminance
@@ -49,21 +53,26 @@ fun AstroHomeScreen(
     recentSession: SessionSummary? = null,
     onOpenRecentSession: () -> Unit = onOpenSessions
 ) {
-    var sceneIndex by rememberSaveable { mutableIntStateOf(0) }
+    var sceneIndex by rememberSaveable { mutableIntStateOf(OrbitScene.METEORS.ordinal) }
     val scene = OrbitScene.entries[sceneIndex]
     val light = MaterialTheme.colorScheme.background.luminance() > 0.5f
     val heroText = if (light) AstroColors.TextPrimary else MaterialTheme.colorScheme.onBackground
     val heroSecondary = if (light) AstroColors.TextSecondary else MaterialTheme.colorScheme.onSurfaceVariant
     val heroAccent = if (light) AstroColors.Primary else MaterialTheme.colorScheme.primary
+    BoxWithConstraints(modifier.fillMaxSize().safeDrawingPadding()) {
+    val density = LocalDensity.current
+    var supportingHeight by remember { mutableIntStateOf(0) }
+    val heroHeight = if (supportingHeight == 0) 286.dp else
+        (maxHeight - with(density) { supportingHeight.toDp() } - 48.dp).coerceAtLeast(286.dp)
     LazyColumn(
-        modifier = modifier.fillMaxSize().safeDrawingPadding().testTag(AstroTestTags.HomeScreen),
+        modifier = Modifier.fillMaxSize().testTag(AstroTestTags.HomeScreen),
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
             Column(Modifier.fillMaxWidth().testTag(AstroTestTags.HomeMainContent),
                 verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Box(Modifier.fillMaxWidth().heightIn(min = 286.dp).clip(MaterialTheme.shapes.large)
+                Box(Modifier.fillMaxWidth().heightIn(min = heroHeight).clip(MaterialTheme.shapes.large)
                     .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.large)) {
                     OrbitArtwork(Modifier.matchParentSize(), scene = scene, animated = true)
                     Row(Modifier.align(Alignment.TopStart).fillMaxWidth().padding(start = 22.dp, end = 8.dp, top = 6.dp),
@@ -85,6 +94,8 @@ fun AstroHomeScreen(
                             color = heroSecondary)
                     }
                 }
+                Column(Modifier.fillMaxWidth().onSizeChanged { supportingHeight = it.height },
+                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Column {
                     AstroPrimaryButton("Начать съёмку", onOpenCamera,
                         Modifier.fillMaxWidth().testTag(AstroTestTags.HomePrimaryAction))
@@ -120,7 +131,9 @@ fun AstroHomeScreen(
                     }
                     }
                 }
+                }
             }
         }
+    }
     }
 }

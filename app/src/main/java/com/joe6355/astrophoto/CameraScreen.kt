@@ -1273,7 +1273,6 @@ internal fun CameraScreen(
                     onSeriesStart = ::requestSeriesStart,
                     onSeriesStop = ::requestSeriesStop,
                     onDarkFramesStop = ::requestDarkFramesStop,
-                    onTestShot = ::requestTestShot,
                     onOpenResults = onOpenSessions,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -1337,7 +1336,6 @@ internal fun CameraScreen(
                         if (!enabled) histogramExpanded = false
                     },
                     onSaveTestShotsChanged = { saveTestShots = it },
-                    onTestShot = ::requestTestShot,
                     onTestShotDarker = { adjustTestExposure(brighter = false) },
                     onTestShotBrighter = { adjustTestExposure(brighter = true) },
                     onTestShotInfinityFocus = {
@@ -1730,7 +1728,6 @@ internal fun ManualControlsPanel(
     onSoundAfterSeriesChanged: (Boolean) -> Unit,
     onHistogramEnabledChanged: (Boolean) -> Unit,
     onSaveTestShotsChanged: (Boolean) -> Unit,
-    onTestShot: () -> Unit,
     onTestShotDarker: () -> Unit,
     onTestShotBrighter: () -> Unit,
     onTestShotInfinityFocus: () -> Unit,
@@ -1924,24 +1921,6 @@ internal fun ManualControlsPanel(
                 enabled = !testShotRunning,
                 modifier = Modifier.padding(top = 8.dp)
             )
-            Button(
-                onClick = onTestShot,
-                enabled = !isCapturing &&
-                    !controlsLocked &&
-                    capabilities?.supportsJpegCapture == true,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 52.dp)
-                    .padding(top = 8.dp)
-            ) {
-                Text(
-                    if (testShotRunning) {
-                        "Пробный кадр снимается..."
-                    } else {
-                        "Пробный кадр"
-                    }
-                )
-            }
             TestShotResultCard(
                 result = lastTestShot,
                 focusFwhmHistory = focusFwhmHistory,
@@ -2585,7 +2564,6 @@ internal fun CompactCapturePanel(
     onSeriesStart: () -> Unit,
     onSeriesStop: () -> Unit,
     onDarkFramesStop: () -> Unit,
-    onTestShot: () -> Unit = {},
     onOpenResults: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -2697,27 +2675,17 @@ internal fun CompactCapturePanel(
                 }
 
                 else -> {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically) {
-                    androidx.compose.material3.OutlinedButton(onClick = onTestShot, enabled = formatAvailable,
-                        shape = MaterialTheme.shapes.small,
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 8.dp),
-                        modifier = Modifier.weight(0.38f).heightIn(min = 52.dp)) {
-                        Text("Пробный\nкадр", style = MaterialTheme.typography.labelMedium,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-                    }
                     Button(
                         onClick = onSeriesStart,
                         enabled = formatAvailable,
                         shape = MaterialTheme.shapes.small,
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                         modifier = Modifier
-                            .weight(0.62f)
+                            .fillMaxWidth()
                             .heightIn(min = 52.dp)
                             .testTag(com.joe6355.astrophoto.ui.AstroTestTags.CameraCapture)
                     ) {
                         Text("Начать серию")
-                    }
                     }
                     if (seriesCompletedFrames > 0 || darkFramesCompleted > 0) {
                         TextButton(onClick = onOpenResults) { Text("К обработке →") }

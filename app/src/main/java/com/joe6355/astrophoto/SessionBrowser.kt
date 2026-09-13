@@ -17,6 +17,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -35,6 +38,9 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -521,43 +527,36 @@ internal fun SessionSummaryCard(
             containerColor = MaterialTheme.colorScheme.surface
         )
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            SessionCover(session, Modifier.size(64.dp, 76.dp).clip(MaterialTheme.shapes.small), maxSize = 192)
-            Column(modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            SessionCover(session, Modifier.size(56.dp, 64.dp).clip(MaterialTheme.shapes.small), maxSize = 192)
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(
                     text = session.sessionName,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleSmall,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
                 if (active) {
-                    Text("Активная", color = AstroColors.Success)
+                    Text("Активная", color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.labelMedium)
                 }
             Text(
                 text = formatSessionDate(session.createdAtMillis),
-                modifier = Modifier.padding(top = 4.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = "Основные: ${session.lightFrames}  ·  Тёмные: ${session.darkFrames}",
+                style = MaterialTheme.typography.bodySmall
+            )
+            Text(
+                text = "Размер: ${formatFileSize(session.totalSizeBytes)}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             }
-            }
-            Text(
-                text = "Основные: ${session.lightFrames}  ·  Тёмные: ${session.darkFrames}",
-                modifier = Modifier.padding(top = 8.dp)
-            )
-            Text(
-                text = "Размер: ${formatFileSize(session.totalSizeBytes)}",
-                modifier = Modifier.padding(top = 4.dp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                text = "Открыть",
-                modifier = Modifier.padding(top = 8.dp),
-                color = MaterialTheme.colorScheme.primary,
-                style = MaterialTheme.typography.labelLarge
-            )
+            Text("›", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleLarge)
         }
     }
 }
@@ -620,6 +619,7 @@ fun SessionDetailsScreen(
     }
     var exportPrecheckWarning by remember { mutableStateOf<String?>(null) }
     var timelapseFps by remember(session.folderName) { mutableIntStateOf(5) }
+    var fpsMenuExpanded by remember(session.folderName) { mutableStateOf(false) }
     var timelapseInProgress by remember { mutableStateOf(false) }
     var timelapseProgress by remember {
         mutableStateOf<SessionTimelapseProgress?>(null)
@@ -1045,18 +1045,33 @@ fun SessionDetailsScreen(
                         modifier = Modifier.padding(top = 6.dp),
                         color = AstroColors.TextSecondary
                     )
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        SessionTimelapseExporter.SUPPORTED_FPS.sorted().forEach { fps ->
-                            FilterChip(
-                                selected = timelapseFps == fps,
-                                onClick = { timelapseFps = fps },
-                                enabled = !timelapseInProgress,
-                                modifier = Modifier.weight(1f),
-                                label = { Text("$fps fps", maxLines = 1, softWrap = false) }
-                            )
+                    Text("Частота кадров", modifier = Modifier.padding(top = 12.dp),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    BoxWithConstraints(Modifier.fillMaxWidth().padding(top = 6.dp)) {
+                        OutlinedButton(onClick = { fpsMenuExpanded = true },
+                            enabled = !timelapseInProgress,
+                            shape = MaterialTheme.shapes.small,
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically) {
+                                Text("$timelapseFps кадр/с", style = MaterialTheme.typography.bodyLarge)
+                                Text("⌄", style = MaterialTheme.typography.titleMedium)
+                            }
+                        }
+                        DropdownMenu(expanded = fpsMenuExpanded && !timelapseInProgress,
+                            modifier = Modifier.width(maxWidth),
+                            shape = MaterialTheme.shapes.small,
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                            onDismissRequest = { fpsMenuExpanded = false }) {
+                            SessionTimelapseExporter.SUPPORTED_FPS.sorted().forEach { fps ->
+                                DropdownMenuItem(
+                                    text = { Text("$fps кадр/с") },
+                                    trailingIcon = { if (timelapseFps == fps) Text("✓") },
+                                    onClick = { timelapseFps = fps; fpsMenuExpanded = false })
+                            }
                         }
                     }
                     Button(
@@ -1070,7 +1085,7 @@ fun SessionDetailsScreen(
                         enabled = !timelapseInProgress && stackingFrameCount >= 2,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 4.dp)
+                            .padding(top = 8.dp)
                             .heightIn(min = 48.dp)
                     ) {
                         Text(if (timelapseInProgress) "Создание MP4..." else "Создать MP4")
