@@ -211,7 +211,7 @@ fun AppSettingsScreen(
             item {
                 AstroExpandableSection(title = "О приложении") {
                     AstroSecondaryButton(
-                        text = "Помощь",
+                        text = "Подготовка к съёмке",
                         onClick = onOpenHelp,
                         modifier = Modifier.fillMaxWidth()
                     )

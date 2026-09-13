@@ -8,6 +8,20 @@ import kotlin.math.abs
 
 class ManualControlsAndEditorPresetsTest {
     @Test
+    fun secondsScaleSpreadsLongExposuresAcrossTheTrack() {
+        val range = 1_000_000_000L..33_000_000_000L
+        assertEquals(17_000_000_000L, exposureFromSliderFraction(0.5f, range))
+        assertEquals(range.first, exposureFromSliderFraction(0f, range))
+        assertEquals(range.last, exposureFromSliderFraction(1f, range))
+        assertTrue(exposureSliderFraction(30_000_000_000L, range) -
+            exposureSliderFraction(4_000_000_000L, range) > 0.8f)
+        for (seconds in 1..33) {
+            val value = seconds * 1_000_000_000L
+            assertEquals(value, exposureFromSliderFraction(exposureSliderFraction(value, range), range))
+        }
+    }
+
+    @Test
     fun exposureSliderCoversFullCameraRangeAndRoundTrips() {
         val range = 1_000_000L..30_000_000_000L
 

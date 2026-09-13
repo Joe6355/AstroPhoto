@@ -20,6 +20,10 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -33,6 +37,7 @@ import com.joe6355.astrophoto.ui.AstroPrimaryButton
 import com.joe6355.astrophoto.ui.AstroTestTags
 import com.joe6355.astrophoto.ui.AstroTextButton
 import com.joe6355.astrophoto.ui.OrbitArtwork
+import com.joe6355.astrophoto.ui.OrbitScene
 import com.joe6355.astrophoto.ui.theme.AstroColors
 
 @Composable
@@ -40,33 +45,36 @@ fun AstroHomeScreen(
     onOpenCamera: () -> Unit,
     onOpenSessions: () -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenHelp: () -> Unit,
-    onOpenAbout: () -> Unit,
-    onOpenSelfCheck: () -> Unit,
     modifier: Modifier = Modifier,
     recentSession: SessionSummary? = null,
     onOpenRecentSession: () -> Unit = onOpenSessions
 ) {
+    var sceneIndex by rememberSaveable { mutableIntStateOf(0) }
+    val scene = OrbitScene.entries[sceneIndex]
     val light = MaterialTheme.colorScheme.background.luminance() > 0.5f
     val heroText = if (light) AstroColors.TextPrimary else MaterialTheme.colorScheme.onBackground
     val heroSecondary = if (light) AstroColors.TextSecondary else MaterialTheme.colorScheme.onSurfaceVariant
     val heroAccent = if (light) AstroColors.Primary else MaterialTheme.colorScheme.primary
     LazyColumn(
         modifier = modifier.fillMaxSize().safeDrawingPadding().testTag(AstroTestTags.HomeScreen),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.SpaceBetween
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
             Column(Modifier.fillMaxWidth().testTag(AstroTestTags.HomeMainContent),
                 verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("AstroPhoto", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
-                    AstroTextButton("Настройки", onOpenSettings)
-                }
                 Box(Modifier.fillMaxWidth().heightIn(min = 286.dp).clip(MaterialTheme.shapes.large)
                     .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.large)) {
-                    OrbitArtwork(Modifier.matchParentSize())
-                    Column(Modifier.align(Alignment.BottomStart).padding(22.dp),
+                    OrbitArtwork(Modifier.matchParentSize(), scene = scene, animated = true)
+                    Row(Modifier.align(Alignment.TopStart).fillMaxWidth().padding(start = 22.dp, end = 8.dp, top = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text("AstroPhoto", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, color = heroText)
+                        androidx.compose.material3.TextButton(onClick = { sceneIndex = (sceneIndex + 1) % OrbitScene.entries.size },
+                            modifier = Modifier.testTag("home-scene-switch")) {
+                            Text("${scene.label} ›", color = heroAccent, style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                    Column(Modifier.align(Alignment.BottomStart).padding(start = 22.dp, end = 22.dp, top = 76.dp, bottom = 22.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("ВАША СЛЕДУЮЩАЯ НОЧЬ", style = MaterialTheme.typography.labelMedium,
                             color = heroAccent, letterSpacing = 1.2.sp)
@@ -81,7 +89,7 @@ fun AstroHomeScreen(
                     AstroPrimaryButton("Начать съёмку", onOpenCamera,
                         Modifier.fillMaxWidth().testTag(AstroTestTags.HomePrimaryAction))
                     Row(Modifier.fillMaxWidth().testTag(AstroTestTags.HomeSecondaryNavigation)) {
-                        AstroTextButton("Подготовка", onOpenHelp, Modifier.weight(1f))
+                        AstroTextButton("Настройки", onOpenSettings, Modifier.weight(1f))
                         AstroTextButton("Камера", onOpenCamera, Modifier.weight(1f))
                         AstroTextButton("Обработка", onOpenSessions, Modifier.weight(1f))
                     }
@@ -112,12 +120,6 @@ fun AstroHomeScreen(
                     }
                     }
                 }
-            }
-        }
-        item {
-            Row(Modifier.fillMaxWidth().padding(top = 12.dp).testTag(AstroTestTags.HomeFooter)) {
-                AstroTextButton("О приложении", onOpenAbout, Modifier.weight(1f))
-                AstroTextButton("Самопроверка", onOpenSelfCheck, Modifier.weight(1f))
             }
         }
     }

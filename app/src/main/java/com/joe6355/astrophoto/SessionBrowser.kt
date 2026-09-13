@@ -396,9 +396,6 @@ fun SessionsScreen(
     var activeFolder by remember { mutableStateOf(sessionStore.load()?.folderName) }
     var loading by remember { mutableStateOf(true) }
     var refreshKey by remember { mutableIntStateOf(0) }
-    var showCreateDialog by remember { mutableStateOf(false) }
-    var sessionName by remember { mutableStateOf("") }
-    var sessionNote by remember { mutableStateOf("") }
     val mediaReadPermissions = when {
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> arrayOf(
             Manifest.permission.READ_MEDIA_IMAGES,
@@ -441,15 +438,6 @@ fun SessionsScreen(
                 .fillMaxSize()
                 .padding(horizontal = AstroSpacing.Lg)
         ) {
-        AstroPrimaryButton(
-            text = "Новая съёмка",
-            onClick = {
-                sessionName = ""
-                sessionNote = ""
-                showCreateDialog = true
-            },
-            modifier = Modifier.fillMaxWidth()
-        )
         statusMessage?.let {
             Text(
                 text = it,
@@ -495,7 +483,7 @@ fun SessionsScreen(
             sessions.isEmpty() -> {
                 AstroEmptyState(
                     title = "Съёмок пока нет",
-                    message = "Создайте съёмку, чтобы собрать кадры и результаты в одном месте",
+                    message = "Начните серию во вкладке «Камера» — кадры появятся здесь",
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -519,35 +507,6 @@ fun SessionsScreen(
         }
     }
 
-    if (showCreateDialog) {
-        SessionCreateDialog(
-            name = sessionName,
-            note = sessionNote,
-            onNameChanged = { sessionName = it },
-            onNoteChanged = { sessionNote = it },
-            onCreate = {
-                val created = sessionStore.create(sessionName, sessionNote)
-                activeFolder = created.folderName
-                coroutineScope.launch {
-                    withContext(Dispatchers.IO) {
-                        sessionStore.writeSessionInfo(
-                            created,
-                            SessionCaptureMetadata(
-                                cameraId = "unknown",
-                                iso = 0,
-                                exposureTimeNs = 0L,
-                                focus = "unknown",
-                                selectedFormat = "unknown"
-                            )
-                        )
-                    }
-                    refreshKey++
-                }
-                showCreateDialog = false
-            },
-            onDismiss = { showCreateDialog = false }
-        )
-    }
 }
 
 @Composable
@@ -1087,7 +1046,7 @@ fun SessionDetailsScreen(
                         color = AstroColors.TextSecondary
                     )
                     Row(
-                        modifier = Modifier.padding(top = 8.dp),
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         SessionTimelapseExporter.SUPPORTED_FPS.sorted().forEach { fps ->
@@ -1095,7 +1054,8 @@ fun SessionDetailsScreen(
                                 selected = timelapseFps == fps,
                                 onClick = { timelapseFps = fps },
                                 enabled = !timelapseInProgress,
-                                label = { Text("$fps кадр/с") }
+                                modifier = Modifier.weight(1f),
+                                label = { Text("$fps fps", maxLines = 1, softWrap = false) }
                             )
                         }
                     }
@@ -1110,8 +1070,8 @@ fun SessionDetailsScreen(
                         enabled = !timelapseInProgress && stackingFrameCount >= 2,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(min = 52.dp)
-                            .padding(top = 8.dp)
+                            .padding(top = 4.dp)
+                            .heightIn(min = 48.dp)
                     ) {
                         Text(if (timelapseInProgress) "Создание MP4..." else "Создать MP4")
                     }
@@ -1557,47 +1517,6 @@ private fun DetailCard(title: String, content: String) {
             )
         }
     }
-}
-
-@Composable
-private fun SessionCreateDialog(
-    name: String,
-    note: String,
-    onNameChanged: (String) -> Unit,
-    onNoteChanged: (String) -> Unit,
-    onCreate: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Новая сессия") },
-        text = {
-            Column {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = onNameChanged,
-                    label = { Text("Имя сессии") },
-                    singleLine = true
-                )
-                OutlinedTextField(
-                    value = note,
-                    onValueChange = onNoteChanged,
-                    label = { Text("Заметка") },
-                    modifier = Modifier.padding(top = 8.dp)
-                )
-            }
-        },
-        confirmButton = {
-            Button(onClick = onCreate) {
-                Text("Создать")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Отмена")
-            }
-        }
-    )
 }
 
 private fun formatSessionDate(timestamp: Long): String =

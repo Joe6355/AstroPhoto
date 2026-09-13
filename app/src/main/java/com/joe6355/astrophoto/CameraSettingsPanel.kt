@@ -147,7 +147,7 @@ fun CameraSettingsPanel(
         val density = LocalDensity.current
         val landscape = maxWidth > maxHeight
         val maximumHeight = maxHeight * if (landscape) 0.94f else 0.82f
-        val collapsedHeight = if (landscape) 224.dp else 252.dp
+        val collapsedHeight = (if (landscape) 188.dp else 200.dp) * density.fontScale.coerceIn(1f, 1.6f)
         val maximumHeightPx = with(density) { maximumHeight.toPx() }
         val collapsedHeightPx = with(density) {
             collapsedHeight.coerceAtMost(maximumHeight).toPx()

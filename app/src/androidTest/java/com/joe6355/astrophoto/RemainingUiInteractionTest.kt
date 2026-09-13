@@ -17,6 +17,8 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.joe6355.astrophoto.ui.AstroConfirmationDialog
@@ -28,6 +30,22 @@ import org.junit.Rule
 import org.junit.Test
 
 class RemainingUiInteractionTest {
+    @Test
+    fun exposureRangeSwitchKeepsValueAndSecondsSliderUsesLinearScale() {
+        var exposure by mutableStateOf(4_000_000_000L)
+        composeRule.setContent {
+            AstroPhotoTheme {
+                ExposureAdjustment(exposure, 38_000L..33_000_000_000L, { exposure = it })
+            }
+        }
+        composeRule.onNodeWithText("Доли секунды").performClick()
+        composeRule.runOnIdle { assertEquals(4_000_000_000L, exposure) }
+        composeRule.onNodeWithText("Секунды").performClick()
+        composeRule.onNodeWithTag("exposure-adjustment-slider")
+            .performSemanticsAction(SemanticsActions.SetProgress) { it(0.5f) }
+        composeRule.runOnIdle { assertEquals(17_000_000_000L, exposure) }
+    }
+
     @get:Rule(order = 0)
     val timeout = org.junit.rules.Timeout.seconds(60)
 

@@ -1,6 +1,11 @@
 package com.joe6355.astrophoto.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
@@ -13,6 +18,7 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -27,8 +33,16 @@ import kotlin.random.Random
 import com.joe6355.astrophoto.ui.theme.AstroColors
 
 /** Decorative artwork, never a substitute for a session thumbnail or live preview. */
+enum class OrbitScene(val label: String) {
+    ORBITS("Орбиты"), MILKY_WAY("Млечный путь"), METEORS("Метеоры")
+}
+
 @Composable
-fun OrbitArtwork(modifier: Modifier = Modifier) {
+fun OrbitArtwork(modifier: Modifier = Modifier, scene: OrbitScene = OrbitScene.ORBITS, animated: Boolean = false) {
+    val phase = if (animated) {
+        rememberInfiniteTransition(label = "sky").animateFloat(0f, 1f,
+            animationSpec = infiniteRepeatable(tween(40_000, easing = LinearEasing)), label = "starlight")
+    } else remember { mutableFloatStateOf(0f) }
     val colors = MaterialTheme.colorScheme
     val light = colors.background.luminance() > 0.5f
     val background = if (light) AstroColors.Background else colors.background
@@ -39,26 +53,52 @@ fun OrbitArtwork(modifier: Modifier = Modifier) {
         List(480) { Triple(random.nextFloat(), random.nextFloat(), random.nextFloat()) }
     }
     Canvas(modifier) {
+        val time = phase.value
         drawRect(Brush.linearGradient(listOf(background, lerp(background, accent, 0.24f), background)))
         // A diffuse diagonal band gives the sky depth without a bitmap or animation.
         repeat(14) { index ->
             val center = Offset(size.width * (0.26f + index * 0.045f), size.height * (1f - index * 0.072f))
             drawCircle(Brush.radialGradient(listOf(accent.copy(alpha = 0.045f), Color.Transparent),
-                center, size.width * 0.27f), size.width * 0.27f, center)
+                center, size.width * if (scene == OrbitScene.MILKY_WAY) 0.38f else 0.27f),
+                size.width * if (scene == OrbitScene.MILKY_WAY) 0.38f else 0.27f, center)
         }
         stars.forEachIndexed { index, (x, y, brightness) ->
-            val center = Offset(size.width * x, size.height * y)
+            val drift = kotlin.math.sin(time * 2f * kotlin.math.PI.toFloat()) * 0.007f
+            val center = Offset(size.width * (x + drift * brightness), size.height * y)
+            val twinkle = 0.78f + 0.22f * kotlin.math.sin(time * 8f * kotlin.math.PI.toFloat() + index)
             if (index % 91 == 0) {
                 drawCircle(Brush.radialGradient(listOf(starlight.copy(alpha = 0.6f), Color.Transparent),
                     center, 4.dp.toPx()), 4.dp.toPx(), center)
             }
-            drawCircle(starlight.copy(alpha = 0.22f + brightness * 0.68f),
+            drawCircle(starlight.copy(alpha = (0.22f + brightness * 0.68f) * twinkle),
                 (0.2f + brightness * 0.5f).dp.toPx(), center)
         }
         val radius = size.minDimension * 0.36f
         val center = Offset(size.width * 0.86f, size.height * 0.38f)
-        drawCircle(accent.copy(alpha = 0.3f), radius, center, style = Stroke(0.65.dp.toPx()))
-        drawCircle(accent.copy(alpha = 0.24f), radius * 0.67f, center, style = Stroke(0.65.dp.toPx()))
+        if (scene == OrbitScene.ORBITS) {
+            val pulse = 1f + kotlin.math.sin(time * 2f * kotlin.math.PI.toFloat()) * 0.035f
+            drawCircle(accent.copy(alpha = 0.3f), radius * pulse, center, style = Stroke(0.65.dp.toPx()))
+            drawCircle(accent.copy(alpha = 0.24f), radius * 0.67f * pulse, center, style = Stroke(0.65.dp.toPx()))
+        }
+        if (scene == OrbitScene.MILKY_WAY) {
+            stars.take(240).forEachIndexed { index, (x, y, brightness) ->
+                val bandY = 0.93f - x * 0.9f + (y - 0.5f) * 0.22f
+                drawCircle(starlight.copy(alpha = 0.12f + brightness * 0.24f), 0.4.dp.toPx(),
+                    Offset(size.width * x, size.height * bandY))
+            }
+        }
+        if (scene == OrbitScene.METEORS) {
+            repeat(2) { index ->
+                val progress = (time * 4f + index * 0.51f) % 1f
+                if (progress < 0.3f) {
+                    val travel = progress / 0.3f
+                    val head = Offset(size.width * (0.25f + travel * 0.65f), size.height * (0.08f + index * 0.18f + travel * 0.32f))
+                    val tail = head - Offset(size.width * 0.17f, size.height * 0.084f)
+                    drawLine(Brush.linearGradient(listOf(Color.Transparent, starlight.copy(alpha = kotlin.math.sin(travel * kotlin.math.PI.toFloat()) * 0.8f)), tail, head),
+                        tail, head, 1.dp.toPx())
+                }
+            }
+        }
         drawRect(Brush.verticalGradient(listOf(background.copy(alpha = 0f), background.copy(alpha = 0.72f))))
         val horizon = Path().apply {
             moveTo(0f, size.height)

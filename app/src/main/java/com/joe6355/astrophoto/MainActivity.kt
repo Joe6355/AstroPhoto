@@ -209,19 +209,6 @@ private fun AstroPhotoApp(
                         settingsReturnScreen = AppScreen.Diagnostics
                         navigateTo(AppScreen.Settings)
                     },
-                    onOpenHelp = {
-                        helpReturnScreen = AppScreen.Diagnostics
-                        helpInitialTopic = null
-                        navigateTo(AppScreen.Help)
-                    },
-                    onOpenAbout = {
-                        aboutReturnScreen = AppScreen.Diagnostics
-                        navigateTo(AppScreen.About)
-                    },
-                    onOpenSelfCheck = {
-                        selfCheckReturnScreen = AppScreen.Diagnostics
-                        navigateTo(AppScreen.SelfCheck)
-                    },
                     recentSession = recentSession,
                     onOpenRecentSession = {
                         recentSession?.let { session ->

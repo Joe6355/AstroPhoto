@@ -40,10 +40,7 @@ class HomeScreenTest {
                 AstroHomeScreen(
                     onOpenCamera = { cameraClicks++ },
                     onOpenSessions = {},
-                    onOpenSettings = {},
-                    onOpenHelp = {},
-                    onOpenAbout = {},
-                    onOpenSelfCheck = {}
+                    onOpenSettings = {}
                 )
             }
         }
@@ -63,10 +60,7 @@ class HomeScreenTest {
                 AstroHomeScreen(
                     onOpenCamera = {},
                     onOpenSessions = { destination = "sessions" },
-                    onOpenSettings = { destination = "settings" },
-                    onOpenHelp = { destination = "help" },
-                    onOpenAbout = { destination = "about" },
-                    onOpenSelfCheck = { destination = "self-check" }
+                    onOpenSettings = { destination = "settings" }
                 )
             }
         }
@@ -75,39 +69,28 @@ class HomeScreenTest {
             .assertIsDisplayed()
         composeRule.onNodeWithText("Настройки").performClick()
         composeRule.runOnIdle { assertEquals("settings", destination) }
-        composeRule.onNodeWithText("Подготовка").performClick()
-        composeRule.runOnIdle { assertEquals("help", destination) }
-        composeRule.onNodeWithTag(AstroTestTags.HomeScreen)
-            .performScrollToNode(hasTestTag(AstroTestTags.HomeFooter))
-        composeRule.onNodeWithTag(AstroTestTags.HomeFooter).assertIsDisplayed()
-        composeRule.onNodeWithText("О приложении").performClick()
-        composeRule.runOnIdle { assertEquals("about", destination) }
-        composeRule.onNodeWithText("Самопроверка").performClick()
-        composeRule.runOnIdle { assertEquals("self-check", destination) }
+        composeRule.onNodeWithText("Камера").performClick()
+        composeRule.onNodeWithText("Обработка").performClick()
+        composeRule.runOnIdle { assertEquals("sessions", destination) }
+        composeRule.onNodeWithText("Подготовка").assertDoesNotExist()
+        composeRule.onNodeWithText("О приложении").assertDoesNotExist()
+        composeRule.onNodeWithText("Самопроверка").assertDoesNotExist()
     }
 
     @Test
-    fun footerIsBelowContentAndNearBottomOfTallViewport() {
-        composeRule.setContent {
-            AstroPhotoTheme {
-                AstroHomeScreen({}, {}, {}, {}, {}, {})
-            }
-        }
-
-        val home = composeRule.onNodeWithTag(AstroTestTags.HomeScreen)
-            .fetchSemanticsNode().boundsInRoot
-        val content = composeRule.onNodeWithTag(AstroTestTags.HomeMainContent)
-            .fetchSemanticsNode().boundsInRoot
-        val footer = composeRule.onNodeWithTag(AstroTestTags.HomeFooter)
-            .fetchSemanticsNode().boundsInRoot
-        val maximumBottomGap = with(composeRule.density) { 96.dp.toPx() }
-
-        assertTrue(footer.top >= content.bottom)
-        assertTrue(home.bottom - footer.bottom <= maximumBottomGap)
+    fun sceneSwitchCyclesThroughAllThreeVariants() {
+        composeRule.setContent { AstroPhotoTheme { AstroHomeScreen({}, {}, {}) } }
+        composeRule.onNodeWithText("Орбиты ›").assertIsDisplayed()
+        composeRule.onNodeWithTag("home-scene-switch").performClick()
+        composeRule.onNodeWithText("Млечный путь ›").assertIsDisplayed()
+        composeRule.onNodeWithTag("home-scene-switch").performClick()
+        composeRule.onNodeWithText("Метеоры ›").assertIsDisplayed()
+        composeRule.onNodeWithTag("home-scene-switch").performClick()
+        composeRule.onNodeWithText("Орбиты ›").assertIsDisplayed()
     }
 
     @Test
-    fun shortViewportCanScrollToFooter() {
+    fun shortViewportCanScrollToSessions() {
         composeRule.setContent {
             AstroPhotoTheme {
                 Box(
@@ -115,14 +98,14 @@ class HomeScreenTest {
                         .fillMaxWidth()
                         .height(360.dp)
                 ) {
-                    AstroHomeScreen({}, {}, {}, {}, {}, {})
+                    AstroHomeScreen({}, {}, {})
                 }
             }
         }
 
         composeRule.onNodeWithTag(AstroTestTags.HomeScreen)
-            .performScrollToNode(hasTestTag(AstroTestTags.HomeFooter))
-        composeRule.onNodeWithTag(AstroTestTags.HomeFooter).assertIsDisplayed()
+            .performScrollToNode(hasTestTag(AstroTestTags.HomeSessions))
+        composeRule.onNodeWithTag(AstroTestTags.HomeSessions).assertIsDisplayed()
     }
 
     @Test
@@ -130,7 +113,7 @@ class HomeScreenTest {
         composeRule.setContent {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale = 1.6f)) {
-                AstroPhotoTheme { AstroHomeScreen({}, {}, {}, {}, {}, {}) }
+                AstroPhotoTheme { AstroHomeScreen({}, {}, {}) }
             }
         }
         composeRule.onNodeWithTag(AstroTestTags.HomeScreen)

@@ -43,7 +43,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
+import com.joe6355.astrophoto.ui.AstroSlider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -1228,7 +1228,8 @@ internal fun CameraScreen(
             summary = panelSummary,
             modifier = Modifier.fillMaxSize(),
             collapsedContent = {
-                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 12.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -1436,18 +1437,17 @@ internal fun CameraScreen(
                         when (parameter) {
                             "ISO" -> capabilities?.isoRange?.takeIf { capabilities?.supportsManualSensor == true }?.let { range ->
                                 Text("ISO $iso")
-                                Slider(value = isoSliderFraction(iso, range), onValueChange = { iso = isoFromSliderFraction(it, range) })
+                                AstroSlider(value = isoSliderFraction(iso, range), onValueChange = { iso = isoFromSliderFraction(it, range) })
                             } ?: Text("Ручной ISO недоступен на этой камере.")
                             "Выдержка" -> capabilities?.exposureRangeNs?.takeIf { capabilities?.supportsManualSensor == true }?.let { range ->
-                                Text(formatExposure(exposureTimeNs))
-                                Slider(value = exposureSliderFraction(exposureTimeNs, range), onValueChange = {
+                                ExposureAdjustment(value = exposureTimeNs, range = range, onValueChange = {
                                     exposureWarning = null
-                                    exposureTimeNs = exposureFromSliderFraction(it, range)
+                                    exposureTimeNs = it
                                 })
                             } ?: Text("Ручная выдержка недоступна на этой камере.")
                             "Кадры" -> {
                                 Text("Кадров в серии: $seriesFrameCount")
-                                Slider(value = seriesFrameCount.toFloat().coerceIn(1f, 500f), valueRange = 1f..500f,
+                                AstroSlider(value = seriesFrameCount.toFloat().coerceIn(1f, 500f), valueRange = 1f..500f,
                                     onValueChange = { seriesFrameCount = it.roundToInt() })
                             }
                             else -> {
@@ -1466,7 +1466,7 @@ internal fun CameraScreen(
                                 }
                                 val maximum = capabilities?.minimumFocusDistance ?: 0f
                                 if (focusMode == CameraFocusMode.MF && maximum > 0f) {
-                                    Slider(value = focusDistance.coerceIn(0f, maximum), valueRange = 0f..maximum,
+                                    AstroSlider(value = focusDistance.coerceIn(0f, maximum), valueRange = 0f..maximum,
                                         onValueChange = { focusDistance = it })
                                 }
                             }
@@ -2362,36 +2362,13 @@ internal fun ManualControlsPanel(
                     modifier = Modifier.padding(top = 10.dp),
                     style = MaterialTheme.typography.bodyMedium
                 )
-                Slider(
-                    value = exposureSliderFraction(exposureTimeNs, exposureRange),
-                    onValueChange = { fraction ->
-                        onExposureChanged(
-                            exposureFromSliderFraction(fraction, exposureRange)
-                        )
-                    },
-                    valueRange = 0f..1f,
+                ExposureAdjustment(
+                    value = exposureTimeNs,
+                    range = exposureRange,
+                    onValueChange = onExposureChanged,
                     enabled = manualSensorAvailable && !controlsLocked,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp)
+                    modifier = Modifier.fillMaxWidth()
                 )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        formatExposure(exposureRange.first),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = AstroColors.TextSecondary
-                    )
-                    Text(
-                        formatExposure(exposureRange.last),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = AstroColors.TextSecondary
-                    )
-                }
             }
             exposureWarning?.let { warning ->
                 Text(
@@ -2489,7 +2466,7 @@ internal fun ManualControlsPanel(
                     modifier = Modifier.padding(top = 10.dp),
                     style = MaterialTheme.typography.bodyMedium
                 )
-                Slider(
+                AstroSlider(
                     value = isoSliderFraction(iso, isoRange),
                     onValueChange = { value ->
                         onIsoChanged(
@@ -2565,7 +2542,7 @@ internal fun ManualControlsPanel(
                 )
             }
             if (manualFocusAvailable && focusMode == CameraFocusMode.MF) {
-                Slider(
+                AstroSlider(
                     value = focusDistance.coerceIn(0f, maxFocusDistance),
                     onValueChange = {
                         onFocusChanged(it.coerceIn(0f, maxFocusDistance))
@@ -2720,21 +2697,30 @@ internal fun CompactCapturePanel(
                 }
 
                 else -> {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        TextButton(onClick = onTestShot, enabled = formatAvailable) { Text("Пробный кадр") }
-                        if (seriesCompletedFrames > 0 || darkFramesCompleted > 0) {
-                            TextButton(onClick = onOpenResults) { Text("К обработке →") }
-                        }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.OutlinedButton(onClick = onTestShot, enabled = formatAvailable,
+                        shape = MaterialTheme.shapes.small,
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                        modifier = Modifier.weight(0.38f).heightIn(min = 52.dp)) {
+                        Text("Пробный\nкадр", style = MaterialTheme.typography.labelMedium,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                     }
                     Button(
                         onClick = onSeriesStart,
                         enabled = formatAvailable,
+                        shape = MaterialTheme.shapes.small,
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 56.dp)
+                            .weight(0.62f)
+                            .heightIn(min = 52.dp)
                             .testTag(com.joe6355.astrophoto.ui.AstroTestTags.CameraCapture)
                     ) {
                         Text("Начать серию")
+                    }
+                    }
+                    if (seriesCompletedFrames > 0 || darkFramesCompleted > 0) {
+                        TextButton(onClick = onOpenResults) { Text("К обработке →") }
                     }
                     val status = darkFramesMessage ?: seriesMessage
                     status?.let {
@@ -3126,6 +3112,9 @@ internal fun exposureSliderFraction(
     val maximum = supportedRange.last.coerceAtLeast(minimum)
     if (minimum == maximum) return 0f
     val current = exposureTimeNs.coerceIn(minimum, maximum)
+    if (minimum >= 1_000_000_000L) {
+        return ((current - minimum).toDouble() / (maximum - minimum)).toFloat().coerceIn(0f, 1f)
+    }
     return ((ln(current.toDouble()) - ln(minimum.toDouble())) /
         (ln(maximum.toDouble()) - ln(minimum.toDouble())))
         .toFloat()
@@ -3140,6 +3129,9 @@ internal fun exposureFromSliderFraction(
     val maximum = supportedRange.last.coerceAtLeast(minimum)
     if (minimum == maximum) return minimum
     val position = fraction.coerceIn(0f, 1f).toDouble()
+    if (minimum >= 1_000_000_000L) {
+        return (minimum + ((maximum - minimum) * position).roundToLong()).coerceIn(minimum, maximum)
+    }
     val value = exp(
         ln(minimum.toDouble()) +
             (ln(maximum.toDouble()) - ln(minimum.toDouble())) * position
