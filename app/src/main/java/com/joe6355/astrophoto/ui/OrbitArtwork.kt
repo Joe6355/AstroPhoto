@@ -90,9 +90,10 @@ fun OrbitArtwork(modifier: Modifier = Modifier, scene: OrbitScene = OrbitScene.M
         }
         if (scene == OrbitScene.METEORS) {
             repeat(3) { index ->
-                val progress = (time * 6f + index / 3f) % 1f
-                if (progress < 0.38f) {
-                    val travel = progress / 0.38f
+                // Three passes per 40-second cycle, with quiet gaps between them.
+                val progress = (time + index / 3f) % 1f
+                if (progress < 0.06f) {
+                    val travel = progress / 0.06f
                     val head = Offset(size.width * (0.2f + travel * 0.7f), size.height * (0.08f + index * 0.11f + travel * 0.26f))
                     val tail = head - Offset(size.width * 0.17f, size.height * 0.084f)
                     val intensity = kotlin.math.sin(travel * kotlin.math.PI.toFloat())
