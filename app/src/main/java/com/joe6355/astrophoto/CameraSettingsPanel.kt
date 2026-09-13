@@ -11,6 +11,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.exclude
+import androidx.compose.foundation.layout.onConsumedWindowInsetsChanged
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -20,6 +24,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -29,6 +34,7 @@ import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -42,6 +48,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
@@ -144,11 +151,18 @@ fun CameraSettingsPanel(
     collapsedContent: @Composable ColumnScope.() -> Unit,
     expandedContent: @Composable ColumnScope.(androidx.compose.foundation.ScrollState) -> Unit
 ) {
-    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+    var consumedInsets by remember { mutableStateOf(WindowInsets(0, 0, 0, 0)) }
+    var compactContentHeightPx by remember { mutableIntStateOf(0) }
+    var headerHeightPx by remember { mutableIntStateOf(0) }
+    BoxWithConstraints(modifier = modifier.fillMaxSize()
+        .onConsumedWindowInsetsChanged { consumedInsets = it }) {
         val density = LocalDensity.current
         val landscape = maxWidth > maxHeight
         val maximumHeight = maxHeight * if (landscape) 0.94f else 0.82f
-        val collapsedHeight = 180.dp * density.fontScale.coerceIn(1f, 1.6f)
+        val bottomInsetPx = WindowInsets.navigationBars.exclude(consumedInsets).getBottom(density)
+        // The running series adds status lines and progress; size the compact panel to fit them.
+        val contentHeight = with(density) { (compactContentHeightPx + headerHeightPx + bottomInsetPx).toDp() }
+        val collapsedHeight = maxOf(180.dp * density.fontScale.coerceIn(1f, 1.6f), contentHeight)
         val maximumHeightPx = with(density) { maximumHeight.toPx() }
         val collapsedHeightPx = with(density) {
             collapsedHeight.coerceAtMost(maximumHeight).toPx()
@@ -253,7 +267,7 @@ fun CameraSettingsPanel(
                     onToggle = {
                         animateTo(toggledCameraPanelAnchor(currentAnchor.value))
                     },
-                    modifier = dragModifier
+                    modifier = dragModifier.onSizeChanged { headerHeightPx = it.height }
                 )
                 Column(
                     modifier = Modifier
@@ -263,7 +277,11 @@ fun CameraSettingsPanel(
                     if (showExpandedContent) {
                         expandedContent(scrollState)
                     } else {
-                        collapsedContent()
+                        Column(Modifier.fillMaxWidth()
+                            .verticalScroll(rememberScrollState())
+                            .onSizeChanged { compactContentHeightPx = it.height }) {
+                            collapsedContent()
+                        }
                     }
                 }
             }

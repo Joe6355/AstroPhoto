@@ -1228,7 +1228,7 @@ internal fun CameraScreen(
             summary = panelSummary,
             modifier = Modifier.fillMaxSize(),
             collapsedContent = {
-                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                Column(Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 12.dp),
