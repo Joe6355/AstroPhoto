@@ -16,6 +16,9 @@ import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -58,6 +61,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -388,10 +394,13 @@ private fun String.metadataValue(key: String): String? =
         ?.trim()
         ?.takeIf { it.isNotEmpty() }
 
+enum class SessionManagementAction { RENAME, DELETE }
+
 @Composable
 fun SessionsScreen(
     onBack: () -> Unit,
     statusMessage: String? = null,
+    onManageSession: (SessionSummary, SessionManagementAction) -> Unit,
     onOpenDetails: (SessionSummary) -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -504,7 +513,8 @@ fun SessionsScreen(
                         SessionSummaryCard(
                             session = session,
                             active = session.folderName == activeFolder,
-                            onClick = { onOpenDetails(session) }
+                            onClick = { onOpenDetails(session) },
+                            onManage = { action -> onManageSession(session, action) }
                         )
                     }
                 }
@@ -519,12 +529,25 @@ fun SessionsScreen(
 internal fun SessionSummaryCard(
     session: SessionSummary,
     active: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onManage: ((SessionManagementAction) -> Unit)? = null
 ) {
+    var menuExpanded by remember(session.folderName) { mutableStateOf(false) }
+    Box(Modifier.fillMaxWidth()) {
     Card(
-        onClick = onClick,
+        modifier = Modifier.fillMaxWidth()
+            .clip(MaterialTheme.shapes.medium)
+            .combinedClickable(
+                role = Role.Button,
+                onClick = onClick,
+                onLongClickLabel = "Действия с сессией",
+                onLongClick = if (onManage != null) ({ menuExpanded = true }) else null
+            )
+            .semantics { selected = menuExpanded },
+        border = if (menuExpanded) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null,
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
+            containerColor = if (menuExpanded) MaterialTheme.colorScheme.surfaceVariant
+                else MaterialTheme.colorScheme.surface
         )
     ) {
         Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -559,6 +582,24 @@ internal fun SessionSummaryCard(
             Text("›", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleLarge)
         }
     }
+        DropdownMenu(
+            expanded = menuExpanded,
+            onDismissRequest = { menuExpanded = false },
+            modifier = Modifier.widthIn(min = 220.dp),
+            shape = MaterialTheme.shapes.medium,
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            DropdownMenuItem(text = { Text("Переименовать") }, onClick = {
+                menuExpanded = false
+                onManage?.invoke(SessionManagementAction.RENAME)
+            })
+            DropdownMenuItem(text = { Text("Удалить", color = MaterialTheme.colorScheme.error) }, onClick = {
+                menuExpanded = false
+                onManage?.invoke(SessionManagementAction.DELETE)
+            })
+        }
+    }
 }
 
 @Composable
@@ -568,7 +609,9 @@ fun SessionDetailsScreen(
     onActivated: () -> Unit,
     onRenamed: (SessionSummary) -> Unit,
     onDeleted: (String) -> Unit,
-    onOpenHelp: (HelpTopic) -> Unit
+    onOpenHelp: (HelpTopic) -> Unit,
+    initialManagementAction: SessionManagementAction? = null,
+    onManagementActionHandled: () -> Unit = {}
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val sessionStore = remember { ShootingSessionStore(context.applicationContext) }
@@ -637,6 +680,33 @@ fun SessionDetailsScreen(
     var managementStatus by remember { mutableStateOf<String?>(null) }
     var deleteProgressCurrent by remember { mutableIntStateOf(0) }
     var deleteProgressTotal by remember { mutableIntStateOf(0) }
+
+    fun requestManagement(action: SessionManagementAction) {
+        if (managementInProgress) return
+        if (exportInProgress || timelapseInProgress || stackingInProgress) {
+            managementStatus = "Сначала завершите текущую операцию"
+            return
+        }
+        managementStatus = null
+        when (action) {
+            SessionManagementAction.RENAME -> {
+                renameInput = currentSummary.sessionName
+                renameDialogVisible = true
+            }
+            SessionManagementAction.DELETE -> {
+                deleteStep = 1
+                deleteConfirmation = ""
+                deleteDialogVisible = true
+            }
+        }
+    }
+
+    LaunchedEffect(initialManagementAction) {
+        initialManagementAction?.let { action ->
+            requestManagement(action)
+            onManagementActionHandled()
+        }
+    }
 
     fun startExport() {
         if (exportInProgress) return
@@ -927,15 +997,7 @@ fun SessionDetailsScreen(
         item {
             AstroExpandableSection(title = "Управление сессией") {
                 Button(
-                    onClick = {
-                        if (exportInProgress || timelapseInProgress || stackingInProgress) {
-                            managementStatus = "Сначала завершите текущую операцию"
-                        } else {
-                            renameInput = currentSummary.sessionName
-                            managementStatus = null
-                            renameDialogVisible = true
-                        }
-                    },
+                    onClick = { requestManagement(SessionManagementAction.RENAME) },
                     enabled = !managementInProgress,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -944,16 +1006,7 @@ fun SessionDetailsScreen(
                     Text("Переименовать")
                 }
                 Button(
-                    onClick = {
-                        if (exportInProgress || timelapseInProgress || stackingInProgress) {
-                            managementStatus = "Сначала завершите текущую операцию"
-                        } else {
-                            deleteStep = 1
-                            deleteConfirmation = ""
-                            managementStatus = null
-                            deleteDialogVisible = true
-                        }
-                    },
+                    onClick = { requestManagement(SessionManagementAction.DELETE) },
                     enabled = !managementInProgress,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = AstroColors.Destructive,

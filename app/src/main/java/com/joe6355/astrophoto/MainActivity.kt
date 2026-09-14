@@ -122,6 +122,7 @@ private fun AstroPhotoApp(
     var aboutReturnScreen by remember { mutableStateOf(AppScreen.Diagnostics) }
     var selfCheckReturnScreen by remember { mutableStateOf(AppScreen.Diagnostics) }
     var selectedSession by remember { mutableStateOf<SessionSummary?>(null) }
+    var pendingSessionAction by remember { mutableStateOf<SessionManagementAction?>(null) }
     var recentSession by remember { mutableStateOf<SessionSummary?>(null) }
     var cameraNavigationEnabled by remember { mutableStateOf(true) }
     LaunchedEffect(currentScreen) {
@@ -233,8 +234,15 @@ private fun AstroPhotoApp(
                 AppScreen.Sessions -> SessionsScreen(
                     onBack = { navigateBack() },
                     statusMessage = sessionManagerMessage,
+                    onManageSession = { session, action ->
+                        sessionManagerMessage = null
+                        selectedSession = session
+                        pendingSessionAction = action
+                        navigateTo(AppScreen.SessionDetails)
+                    },
                     onOpenDetails = { session ->
                         sessionManagerMessage = null
+                        pendingSessionAction = null
                         selectedSession = session
                         navigateTo(AppScreen.SessionDetails)
                     }
@@ -242,6 +250,8 @@ private fun AstroPhotoApp(
                 AppScreen.SessionDetails -> selectedSession?.let { session ->
                     SessionDetailsScreen(
                         session = session,
+                        initialManagementAction = pendingSessionAction,
+                        onManagementActionHandled = { pendingSessionAction = null },
                         onBack = { navigateBack() },
                         onActivated = {},
                         onRenamed = { renamed ->
@@ -262,7 +272,14 @@ private fun AstroPhotoApp(
                     SessionsScreen(
                         onBack = { navigateBack() },
                         statusMessage = sessionManagerMessage,
+                        onManageSession = { session, action ->
+                            sessionManagerMessage = null
+                            selectedSession = session
+                            pendingSessionAction = action
+                            navigateTo(AppScreen.SessionDetails)
+                        },
                         onOpenDetails = { session ->
+                            pendingSessionAction = null
                             selectedSession = session
                             navigateTo(AppScreen.SessionDetails)
                         }
