@@ -30,7 +30,7 @@ jobs:
         run: chmod +x gradlew
 
       - name: Unit tests, lint and debug/release builds
-        run: ./gradlew testDebugUnitTest lintDebug lintRelease assembleDebug assembleRelease --stacktrace
+        run: ./gradlew testDebugUnitTest lintDebug lintRelease assembleDebug assembleDebugAndroidTest assembleRelease --stacktrace
 
       - name: Upload reports
         if: always()

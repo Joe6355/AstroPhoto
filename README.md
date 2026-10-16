@@ -8,8 +8,10 @@ Android-приложение для ручной астрофотографии,
 Требуются JDK 21 и Android SDK. Полная локальная проверка:
 
 ```powershell
-.\gradlew.bat testDebugUnitTest lintDebug lintRelease assembleDebug assembleRelease
+.\gradlew.bat testDebugUnitTest lintDebug lintRelease assembleDebug assembleDebugAndroidTest assembleRelease
 ```
+
+`assembleDebugAndroidTest` компилирует instrumentation-тесты и собирает тестовый APK без устройства.
 
 CI выполняет тот же gate для pull request и push в ветки `main` и `beta`.
 

@@ -57,9 +57,7 @@ class SessionTimelapseExporterDeviceTest {
             relativePath = "Pictures/AstroPhoto/$folderName/",
             createdAtMillis = System.currentTimeMillis(),
             lightsJpeg = 3,
-            lightsRaw = 0,
             darksJpeg = 0,
-            darksRaw = 0,
             totalSizeBytes = 0,
             infoContent = ""
         )

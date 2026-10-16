@@ -63,7 +63,7 @@ class RemainingUiInteractionTest {
                 CompositionLocalProvider(LocalDensity provides Density(2f, 1.3f)) {
                     Box(Modifier.width(300.dp)) {
                         SessionSummaryCard(SessionSummary("Session_test", name, "Pictures/AstroPhoto/Session_test/",
-                            0L, 30, 0, 0, 0, 1024L, ""), active = true, onClick = {})
+                            0L, 30, 0, 1024L, ""), active = true, onClick = {})
                     }
                 }
             }
