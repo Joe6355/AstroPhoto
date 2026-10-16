@@ -110,7 +110,6 @@ class VendorCameraSupportTest {
                     listOrder = 0,
                     supportsManualSensor = false,
                     maximumExposureNs = 30_000_000_000L,
-                    supportsRaw = false,
                     sensorPixelCount = 50_000_000L,
                     isLogicalCamera = true
                 ),
@@ -119,7 +118,6 @@ class VendorCameraSupportTest {
                     listOrder = 1,
                     supportsManualSensor = true,
                     maximumExposureNs = 10_000_000_000L,
-                    supportsRaw = true,
                     sensorPixelCount = 12_000_000L,
                     isLogicalCamera = false
                 )

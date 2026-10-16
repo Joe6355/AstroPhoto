@@ -1055,7 +1055,7 @@ fun ProcessedResultsScreen(
                 Column {
                     Text(
                         "Будет удалён только этот файл из Processed. " +
-                            "Lights, Darks и RAW не изменятся."
+                            "Исходные Lights и Darks не изменятся."
                     )
                     operationStatus?.takeIf {
                         it.startsWith("Ошибка удаления")

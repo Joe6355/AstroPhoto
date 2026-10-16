@@ -16,7 +16,6 @@ class SessionTimelapseExporterTest {
             frame("dark.jpg", SessionFrameCategory.DARKS_JPEG, 5),
             frame("bad.jpg", SessionFrameCategory.LIGHTS_JPEG, 20),
             frame("early.jpg", SessionFrameCategory.LIGHTS_JPEG, 10),
-            frame("raw.dng", SessionFrameCategory.LIGHTS_RAW, 1),
             frame("crop.jpg", SessionFrameCategory.CROPPED_JPEG, 40)
         )
 

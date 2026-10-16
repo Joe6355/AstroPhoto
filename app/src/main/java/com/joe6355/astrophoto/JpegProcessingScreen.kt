@@ -170,8 +170,6 @@ fun JpegStackingBlock(
     val cropsRepository = remember { CroppedFramesRepository(context.applicationContext) }
     val marksStore = remember { FrameMarksStore(context.applicationContext) }
     val stacker = remember { JpegStacker(context.applicationContext) }
-    val rawStacker = remember { RawStacker(context.applicationContext) }
-    val rawSidecarStore = remember { AstroRawSidecarStore(context.applicationContext) }
     val coroutineScope = rememberCoroutineScope()
     val processingStates by SessionProcessingCoordinator.states.collectAsState()
     val sessionProcessingState = processingStates[session.folderName]
@@ -214,10 +212,6 @@ fun JpegStackingBlock(
     var progressCurrent by remember(session.folderName) { mutableIntStateOf(0) }
     var progressTotal by remember(session.folderName) { mutableIntStateOf(0) }
     var status by remember(session.folderName) { mutableStateOf<String?>(null) }
-    var rawStatus by remember(session.folderName) { mutableStateOf<String?>(null) }
-    var rawSidecarKeys by remember(session.folderName) {
-        mutableStateOf<Set<String>>(emptySet())
-    }
     var result by remember(session.folderName) {
         mutableStateOf<JpegStackResult?>(null)
     }
@@ -237,14 +231,6 @@ fun JpegStackingBlock(
         if (!stacking) {
             loading = true
             frames = framesRepository.loadFrames(session)
-            rawSidecarKeys = withContext(Dispatchers.IO) {
-                frames.asSequence()
-                    .filter { it.category == SessionFrameCategory.LIGHTS_RAW }
-                    .filter { frame ->
-                        rawSidecarStore.openForFrame(session, frame)?.use { true } ?: false
-                    }
-                    .mapTo(mutableSetOf()) { it.key }
-            }
             cropManifest = cropsRepository.loadManifest(session)
             marks = marksStore.loadOrCreate(session)
             loading = false
@@ -270,15 +256,8 @@ fun JpegStackingBlock(
     val jpegFrames = frames.filter {
         it.category == SessionFrameCategory.LIGHTS_JPEG
     }
-    val rawFrames = frames.filter {
-        it.category == SessionFrameCategory.LIGHTS_RAW
-    }
     val excludedLightKeys = marks.bad + marks.autoBad
     val badFrames = jpegFrames.filter { it.key in excludedLightKeys }
-    val usableRawFrames = rawFrames
-        .filter { it.key in rawSidecarKeys }
-        .filterNot { it.key in excludedLightKeys }
-    val missingRawSidecars = rawFrames.count { it.key !in rawSidecarKeys }
     val eligibleFrames = selectEligibleLightFrames(
         frames = frames,
         marks = marks,
@@ -491,70 +470,6 @@ fun JpegStackingBlock(
         }
     }
 
-    fun startRawStacking() {
-        if (!canStartProcessing(
-                stacking,
-                SessionProcessingCoordinator.isActive(session.folderName)
-            )
-        ) return
-        stacking = true
-        progressCurrent = 0
-        progressTotal = usableRawFrames.size
-        result = null
-        status = "Подготовка линейных RAW-кадров…"
-        rawStatus = status
-        processingJob = SessionProcessingCoordinator.start(
-            context = context,
-            sessionFolder = session.folderName,
-            label = "RAW-стеккинг",
-            initialStatus = checkNotNull(status),
-            initialTotal = progressTotal
-        ) {
-            try {
-                val rawResult = rawStacker.stack(
-                    session = session,
-                    frames = usableRawFrames
-                ) { message, current, total ->
-                    reportProcessing(message, current, total)
-                    rawStatus = message
-                }
-                rawResult.exceptionOrNull()?.let { error ->
-                    if (error is CancellationException) throw error
-                }
-                rawResult.fold(
-                    onSuccess = { created ->
-                        result = created
-                        status = buildString {
-                            append("Готово: ${created.fileName}")
-                            created.warnings.forEach { append("\n$it") }
-                        }
-                        rawStatus = status
-                        reportProcessing(checkNotNull(status))
-                        notifyProcessingCompleted()
-                        onStackCompleted()
-                        onResultReady(created.fileName)
-                    },
-                    onFailure = { error ->
-                        Log.e("AstroPhotoProcessing", "RAW processing failed", error)
-                        reportProcessing(error.message ?: "Не удалось обработать RAW")
-                        rawStatus = status
-                    }
-                )
-            } catch (error: CancellationException) {
-                reportProcessing("Обработка RAW остановлена")
-                rawStatus = status
-                throw error
-            } catch (error: Throwable) {
-                Log.e("AstroPhotoProcessing", "RAW processing crashed", error)
-                reportProcessing(error.message ?: "Не удалось обработать RAW")
-                rawStatus = status
-            } finally {
-                stacking = false
-                processingJob = null
-            }
-        }
-    }
-
     fun startProfile(profile: AstroProcessingProfile,
         userApprovedInsufficientFrames: Boolean = false
     ) {
@@ -661,76 +576,6 @@ fun JpegStackingBlock(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-            if (rawFrames.isNotEmpty()) {
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surface
-                    )
-                ) {
-                    Column(
-                        modifier = Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Text(
-                            text = "RAW 16-bit — линейный стек",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            text = "Баланс чёрного и белого, проявка Bayer, " +
-                                "субпиксельное выравнивание и мягкая растяжка.",
-                            color = AstroColors.TextSecondary,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                        Text(
-                            "Готово к RAW16-обработке: ${usableRawFrames.size} " +
-                                "из ${rawFrames.size}"
-                        )
-                        if (missingRawSidecars > 0) {
-                            Text(
-                                text = "Без служебного .araw: $missingRawSidecars. " +
-                                    "Эти DNG нужно переснять после обновления приложения.",
-                                color = AstroColors.Warning,
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        }
-                        if (usableRawFrames.size < 2) {
-                            Text(
-                                text = "Нужно минимум два RAW-кадра без отметки «брак».",
-                                color = AstroColors.Warning,
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        }
-                        Button(
-                            onClick = { startRawStacking() },
-                            enabled = operationsEnabled && !loading && !stacking &&
-                                usableRawFrames.size >= 2,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 52.dp)
-                        ) {
-                            Text("Сложить RAW в линейном пространстве")
-                        }
-                        rawStatus?.let { message ->
-                            Text(
-                                text = message,
-                                color = if (
-                                    message.startsWith("Готово") ||
-                                    message.startsWith("Чтение") ||
-                                    message.startsWith("Линейная") ||
-                                    message.startsWith("Растяжка") ||
-                                    message.startsWith("Подготовка")
-                                ) {
-                                    AstroColors.TextSecondary
-                                } else {
-                                    AstroColors.Error
-                                },
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        }
-                    }
-                }
-            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,

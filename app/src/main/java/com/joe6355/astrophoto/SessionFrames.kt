@@ -79,9 +79,7 @@ import java.util.Locale
 enum class SessionFrameCategory(val title: String) {
     LIGHTS_JPEG("Lights JPEG"),
     CROPPED_JPEG("Cropped"),
-    LIGHTS_RAW("Lights RAW"),
-    DARKS_JPEG("Darks JPEG"),
-    DARKS_RAW("Darks RAW")
+    DARKS_JPEG("Darks JPEG")
 }
 
 data class SessionFrame(
@@ -200,7 +198,6 @@ class SessionFramesRepository(private val context: Context) {
                 val name = cursor.getString(nameIndex).orEmpty()
                 if (name.isBlank()) continue
                 if (category == SessionFrameCategory.CROPPED_JPEG && !name.isJpegFileName()) continue
-                if (category.isRaw && !name.isDngFileName()) continue
                 val relative = "${path.removePrefix(basePath)}$name"
                 val uri = ContentUris.withAppendedId(collection, cursor.getLong(idIndex))
                 frames += SessionFrame(
@@ -234,7 +231,6 @@ class SessionFramesRepository(private val context: Context) {
                 if (category == SessionFrameCategory.CROPPED_JPEG && !file.name.isJpegFileName()) {
                     return@mapNotNull null
                 }
-                if (category.isRaw && !file.name.isDngFileName()) return@mapNotNull null
                 SessionFrame(
                     key = relative,
                     fileName = file.name,
@@ -254,9 +250,7 @@ class SessionFramesRepository(private val context: Context) {
         return when {
             normalized.contains("Lights/Cropped") -> SessionFrameCategory.CROPPED_JPEG
             normalized.contains("Lights/JPEG") -> SessionFrameCategory.LIGHTS_JPEG
-            normalized.contains("Lights/RAW") -> SessionFrameCategory.LIGHTS_RAW
             normalized.contains("Darks/JPEG") -> SessionFrameCategory.DARKS_JPEG
-            normalized.contains("Darks/RAW") -> SessionFrameCategory.DARKS_RAW
             else -> null
         }
     }
@@ -266,11 +260,6 @@ class SessionFramesRepository(private val context: Context) {
         return extension == "jpg" || extension == "jpeg"
     }
 
-    private fun String.isDngFileName(): Boolean =
-        substringAfterLast('.', "").equals("dng", ignoreCase = true)
-
-    private val SessionFrameCategory.isRaw: Boolean
-        get() = this == SessionFrameCategory.LIGHTS_RAW || this == SessionFrameCategory.DARKS_RAW
 
     private fun decodeSampledBitmap(path: String, maxSize: Int): Bitmap? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -437,7 +426,7 @@ internal fun SessionCover(session: SessionSummary, modifier: Modifier = Modifier
             Image(bitmap.asImageBitmap(), contentDescription = "Кадр съёмки ${session.sessionName}",
                 modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         } else {
-            Text(if (session.lightsRaw > 0 && session.lightsJpeg == 0) "RAW" else "JPEG",
+            Text("JPEG",
                 style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
@@ -738,14 +727,6 @@ private fun SessionFrameCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall
                 )
-                if (!frame.isJpeg) {
-                    Text(
-                        "RAW/DNG preview может не поддерживаться Android",
-                        modifier = Modifier.padding(top = 4.dp),
-                        color = AstroColors.Warning,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
                 Text(
                     text = status.first,
                     modifier = Modifier.padding(top = 4.dp),
@@ -905,32 +886,14 @@ private fun FrameViewerDialog(
                     .background(Color.Black),
                 contentAlignment = Alignment.Center
             ) {
-                if (frame.isJpeg) {
-                    preview?.let {
-                        Image(
-                            bitmap = it.asImageBitmap(),
-                            contentDescription = frame.fileName,
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Fit
-                        )
-                    } ?: CircularProgressIndicator()
-                } else {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(20.dp)
-                    ) {
-                        Text("RAW/DNG preview может не поддерживаться Android")
-                        Text(
-                            frame.displayPath,
-                            modifier = Modifier.padding(top = 12.dp),
-                            color = AstroColors.TextSecondary
-                        )
-                        Text(
-                            formatFrameSize(frame.sizeBytes),
-                            modifier = Modifier.padding(top = 6.dp)
-                        )
-                    }
-                }
+                preview?.let {
+                    Image(
+                        bitmap = it.asImageBitmap(),
+                        contentDescription = frame.fileName,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Fit
+                    )
+                } ?: CircularProgressIndicator()
             }
 
             Row(

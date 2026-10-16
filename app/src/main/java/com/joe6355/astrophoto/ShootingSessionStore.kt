@@ -88,12 +88,10 @@ class ShootingSessionStore(private val context: Context) {
 
     fun relativeDirectory(
         session: ShootingSession,
-        dark: Boolean,
-        raw: Boolean
+        dark: Boolean
     ): String {
         val frameType = if (dark) "Darks" else "Lights"
-        val format = if (raw) "RAW" else "JPEG"
-        return "AstroPhoto/${session.folderName}/$frameType/$format"
+        return "AstroPhoto/${session.folderName}/$frameType/JPEG"
     }
 
     fun writeSessionInfo(

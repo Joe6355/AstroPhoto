@@ -18,7 +18,6 @@ import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.CaptureFailure
-import android.hardware.camera2.DngCreator
 import android.hardware.camera2.TotalCaptureResult
 import android.hardware.camera2.params.MeteringRectangle
 import android.media.Image
@@ -57,7 +56,6 @@ data class ManualCameraCapabilities(
     val supportsManualFocus: Boolean,
     val supportsTapToFocus: Boolean,
     val supportsJpegCapture: Boolean,
-    val supportsRawCapture: Boolean,
     val sensorIsoRange: IntRange? = isoRange,
     val postRawSensitivityBoostRange: IntRange? = null,
     val publicExposureRangeNs: LongRange? = exposureRangeNs,
@@ -152,8 +150,7 @@ enum class CameraCaptureStage {
 
 private enum class CaptureType {
     JPEG,
-    TEST_JPEG,
-    RAW
+    TEST_JPEG
 }
 
 class CameraPreviewView @JvmOverloads constructor(
@@ -178,7 +175,6 @@ class CameraPreviewView @JvmOverloads constructor(
     private var captureSession: CameraCaptureSession? = null
     private var previewRequestBuilder: CaptureRequest.Builder? = null
     private var imageReader: ImageReader? = null
-    private var rawImageReader: ImageReader? = null
     private var previewSurface: Surface? = null
     private var headlessSurfaceTexture: SurfaceTexture? = null
     private var previewSize: Size? = null
@@ -214,8 +210,6 @@ class CameraPreviewView @JvmOverloads constructor(
     private var requestedCaptureFileName: String? = null
     private var requestedCaptureRelativeDirectory: String? = null
     private var jpegQuality = 92
-    private var pendingRawImage: Image? = null
-    private var pendingRawResult: TotalCaptureResult? = null
     private var exposureAnalysisEnabled = true
     private val exposureAnalyzer = ExposureAnalyzer(
         textureView = this,
@@ -720,111 +714,6 @@ class CameraPreviewView @JvmOverloads constructor(
         }
     }
 
-    fun captureRawDng(
-        fileName: String? = null,
-        relativeDirectory: String? = null,
-        onStageChanged: (CameraCaptureStage) -> Unit = {},
-        onResult: (Result<String>) -> Unit
-    ) {
-        if (captureInProgress) {
-            onResult(Result.failure(IllegalStateException("Съёмка уже выполняется")))
-            return
-        }
-
-        val handler = backgroundHandler
-        if (handler == null) {
-            onResult(Result.failure(IllegalStateException("Камера ещё не готова")))
-            return
-        }
-
-        captureInProgress = true
-        activeCaptureType = CaptureType.RAW
-        requestedCaptureFileName = fileName
-        requestedCaptureRelativeDirectory = relativeDirectory
-        captureStageCallback = onStageChanged
-        captureResultCallback = onResult
-        reportStatus("capture started: RAW/DNG")
-        notifyCaptureStage(CameraCaptureStage.CAPTURING)
-        handler.post {
-            pendingRawImage?.close()
-            pendingRawImage = null
-            pendingRawResult = null
-
-            val camera = cameraDevice
-            val session = captureSession
-            val reader = rawImageReader
-            if (camera == null || session == null || reader == null || !active) {
-                finishCapture(
-                    Result.failure(IllegalStateException("RAW-съёмка недоступна"))
-                )
-                return@post
-            }
-
-            try {
-                val captureRequest = camera.createCaptureRequest(
-                    CameraDevice.TEMPLATE_STILL_CAPTURE
-                ).apply {
-                    addTarget(reader.surface)
-                    set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
-                }
-                applyManualParameters(captureRequest)
-                pausePreviewForExtendedCapture(session)
-
-                session.capture(
-                    captureRequest.build(),
-                    object : CameraCaptureSession.CaptureCallback() {
-                        override fun onCaptureCompleted(
-                            session: CameraCaptureSession,
-                            request: CaptureRequest,
-                            result: TotalCaptureResult
-                        ) {
-                            handleManualCaptureCompleted(request, result)
-                            if (activeCaptureType != CaptureType.RAW) return
-                            pendingRawResult = result
-                            saveRawWhenReady()
-                        }
-
-                        override fun onCaptureFailed(
-                            session: CameraCaptureSession,
-                            request: CaptureRequest,
-                            failure: CaptureFailure
-                        ) {
-                            handleManualCaptureFailure(request)
-                            clearPendingRaw()
-                            finishCapture(
-                                Result.failure(
-                                    IllegalStateException("Камера не смогла сделать RAW-снимок")
-                                )
-                            )
-                        }
-
-                        override fun onCaptureSequenceAborted(
-                            session: CameraCaptureSession,
-                            sequenceId: Int
-                        ) {
-                            clearPendingRaw()
-                            finishCapture(
-                                Result.failure(IllegalStateException("RAW-съёмка была прервана"))
-                            )
-                        }
-                    },
-                    handler
-                )
-            } catch (exception: Exception) {
-                handleManualCaptureSubmissionFailure()
-                clearPendingRaw()
-                finishCapture(
-                    Result.failure(
-                        IllegalStateException(
-                            exception.message ?: "Не удалось запустить RAW-съёмку",
-                            exception
-                        )
-                    )
-                )
-            }
-        }
-    }
-
     fun captureTestJpeg(
         onStageChanged: (CameraCaptureStage) -> Unit = {},
         onResult: (Result<ByteArray>) -> Unit
@@ -966,9 +855,6 @@ class CameraPreviewView @JvmOverloads constructor(
 
             val characteristics = manager.getCameraCharacteristics(cameraId)
             cameraCharacteristics = characteristics
-            val capabilities = characteristics.get(
-                CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES
-            )
             val publicExposureRange = characteristics.get(
                 CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE
             )?.let { it.lower..it.upper }
@@ -1012,17 +898,6 @@ class CameraPreviewView @JvmOverloads constructor(
                 ?.getOutputSizes(ImageFormat.JPEG)
                 ?.maxByOrNull { it.width.toLong() * it.height }
             val jpegCaptureAvailable = jpegSize?.let(::createJpegImageReader) == true
-            val rawCapabilityAvailable = capabilities?.contains(
-                CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_RAW
-            ) == true
-            val rawSize = if (rawCapabilityAvailable) {
-                streamConfigurationMap
-                    ?.getOutputSizes(ImageFormat.RAW_SENSOR)
-                    ?.maxByOrNull { it.width.toLong() * it.height }
-            } else {
-                null
-            }
-            val rawCaptureAvailable = rawSize?.let(::createRawImageReader) == true
             val cameraCapabilities = ManualCameraCapabilities(
                 cameraId = cameraId,
                 exposureRangeNs = exposureRangeSelection.effectiveRangeNs,
@@ -1040,7 +915,6 @@ class CameraPreviewView @JvmOverloads constructor(
                 supportsTapToFocus = maxAfRegions > 0 &&
                     availableAfModes.contains(CaptureRequest.CONTROL_AF_MODE_AUTO),
                 supportsJpegCapture = jpegCaptureAvailable,
-                supportsRawCapture = rawCaptureAvailable,
                 sensorIsoRange = sensorIsoRange?.let { it.lower..it.upper },
                 postRawSensitivityBoostRange = postRawBoostRange?.let {
                     it.lower..it.upper
@@ -1134,31 +1008,6 @@ class CameraPreviewView @JvmOverloads constructor(
         }
     }
 
-    private fun createRawImageReader(size: Size): Boolean {
-        return try {
-            rawImageReader?.close()
-            rawImageReader = ImageReader.newInstance(
-                size.width,
-                size.height,
-                ImageFormat.RAW_SENSOR,
-                2
-            ).apply {
-                setOnImageAvailableListener(
-                    { reader -> handleAvailableRaw(reader) },
-                    backgroundHandler
-                )
-            }
-            true
-        } catch (exception: Exception) {
-            rawImageReader?.close()
-            rawImageReader = null
-            reportError(
-                exception.message ?: "Не удалось подготовить RAW-съёмку"
-            )
-            false
-        }
-    }
-
     @Suppress("DEPRECATION")
     private fun createPreviewSession(camera: CameraDevice) {
         val texture = cameraSurfaceTexture() ?: return
@@ -1176,7 +1025,6 @@ class CameraPreviewView @JvmOverloads constructor(
             val outputSurfaces = buildList {
                 add(surface)
                 imageReader?.surface?.let(::add)
-                rawImageReader?.surface?.let(::add)
             }
             camera.createCaptureSession(
                 outputSurfaces,
@@ -1582,175 +1430,6 @@ class CameraPreviewView @JvmOverloads constructor(
         }
     }
 
-    private fun handleAvailableRaw(reader: ImageReader) {
-        val image = try {
-            reader.acquireNextImage()
-        } catch (exception: Exception) {
-            finishCapture(Result.failure(exception))
-            return
-        } ?: return
-
-        if (activeCaptureType != CaptureType.RAW) {
-            image.close()
-            return
-        }
-
-        pendingRawImage?.close()
-        pendingRawImage = image
-        saveRawWhenReady()
-    }
-
-    private fun saveRawWhenReady() {
-        val image = pendingRawImage ?: return
-        val captureResult = pendingRawResult ?: return
-        val characteristics = cameraCharacteristics
-        if (characteristics == null) {
-            clearPendingRaw()
-            finishCapture(
-                Result.failure(IllegalStateException("Характеристики RAW недоступны"))
-            )
-            return
-        }
-
-        pendingRawImage = null
-        pendingRawResult = null
-        try {
-            notifyCaptureStage(CameraCaptureStage.SAVING)
-            val fileName = saveDngToGallery(
-                image,
-                characteristics,
-                captureResult,
-                requestedCaptureFileName,
-                requestedCaptureRelativeDirectory
-            )
-            val sidecarResult = runCatching {
-                AstroRawSidecarStore(context.applicationContext).saveCapture(
-                    image = image,
-                    characteristics = characteristics,
-                    captureResult = captureResult,
-                    dngFileName = fileName,
-                    relativeDirectory = requestedCaptureRelativeDirectory,
-                    outputOrientationDegrees = calculateJpegOrientation()
-                )
-            }
-            sidecarResult.fold(
-                onSuccess = { reportStatus("capture saved: $fileName + $it") },
-                onFailure = {
-                    Log.w("AstroPhotoCamera", "RAW processing sidecar was not saved", it)
-                    reportStatus("capture saved: $fileName; RAW processing unavailable")
-                }
-            )
-            finishCapture(Result.success(fileName))
-        } catch (exception: Exception) {
-            finishCapture(
-                Result.failure(
-                    IllegalStateException(
-                        exception.message ?: "Не удалось сохранить DNG",
-                        exception
-                    )
-                )
-            )
-        } finally {
-            image.close()
-        }
-    }
-
-    private fun saveDngToGallery(
-        image: Image,
-        characteristics: CameraCharacteristics,
-        captureResult: TotalCaptureResult,
-        requestedFileName: String?,
-        relativeDirectory: String?
-    ): String {
-        val fileName = requestedFileName ?: "AstroPhoto_${
-            SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        }.dng"
-        val dngCreator = DngCreator(characteristics, captureResult)
-
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val resolver = context.contentResolver
-                val values = ContentValues().apply {
-                    put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
-                    put(MediaStore.Images.Media.MIME_TYPE, "image/x-adobe-dng")
-                    put(
-                        MediaStore.Images.Media.RELATIVE_PATH,
-                        galleryRelativePath(relativeDirectory)
-                    )
-                    put(MediaStore.Images.Media.IS_PENDING, 1)
-                }
-                val imageUri = resolver.insert(
-                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                    values
-                ) ?: error("Не удалось создать DNG в MediaStore")
-
-                try {
-                    resolver.openOutputStream(imageUri)?.use { output ->
-                        dngCreator.writeImage(output, image)
-                    } ?: error("Не удалось открыть DNG для записи")
-
-                    val completedValues = ContentValues().apply {
-                        put(MediaStore.Images.Media.IS_PENDING, 0)
-                    }
-                    resolver.update(imageUri, completedValues, null, null)
-                } catch (exception: Exception) {
-                    resolver.delete(imageUri, null, null)
-                    throw exception
-                }
-            } else {
-                saveLegacyDng(image, fileName, dngCreator, relativeDirectory)
-            }
-        } finally {
-            dngCreator.close()
-        }
-
-        return fileName
-    }
-
-    @Suppress("DEPRECATION")
-    private fun saveLegacyDng(
-        image: Image,
-        fileName: String,
-        dngCreator: DngCreator,
-        relativeDirectory: String?
-    ) {
-        if (ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.WRITE_EXTERNAL_STORAGE
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            error("Нет разрешения на сохранение DNG")
-        }
-
-        val picturesDirectory = Environment.getExternalStoragePublicDirectory(
-            Environment.DIRECTORY_PICTURES
-        )
-        val astroPhotoDirectory = File(
-            picturesDirectory,
-            relativeDirectory ?: "AstroPhoto"
-        )
-        if (!astroPhotoDirectory.exists() && !astroPhotoDirectory.mkdirs()) {
-            error("Не удалось создать папку Pictures/AstroPhoto")
-        }
-
-        val dngFile = File(astroPhotoDirectory, fileName)
-        FileOutputStream(dngFile).use { output ->
-            dngCreator.writeImage(output, image)
-        }
-        MediaScannerConnection.scanFile(
-            context,
-            arrayOf(dngFile.absolutePath),
-            arrayOf("image/x-adobe-dng"),
-            null
-        )
-    }
-
-    private fun clearPendingRaw() {
-        pendingRawImage?.close()
-        pendingRawImage = null
-        pendingRawResult = null
-    }
-
     private fun saveJpegToGallery(
         jpegBytes: ByteArray,
         requestedFileName: String?,
@@ -1964,14 +1643,6 @@ class CameraPreviewView @JvmOverloads constructor(
         cameraDevice = null
         imageReader?.close()
         imageReader = null
-        rawImageReader?.close()
-        rawImageReader = null
-        val handler = backgroundHandler
-        if (handler != null) {
-            handler.post { clearPendingRaw() }
-        } else {
-            clearPendingRaw()
-        }
         cameraCharacteristics = null
         previewSurface?.release()
         previewSurface = null

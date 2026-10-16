@@ -95,14 +95,12 @@ data class SessionSummary(
     val relativePath: String,
     val createdAtMillis: Long,
     val lightsJpeg: Int,
-    val lightsRaw: Int,
     val darksJpeg: Int,
-    val darksRaw: Int,
     val totalSizeBytes: Long,
     val infoContent: String
 ) {
-    val lightFrames: Int get() = lightsJpeg + lightsRaw
-    val darkFrames: Int get() = darksJpeg + darksRaw
+    val lightFrames: Int get() = lightsJpeg
+    val darkFrames: Int get() = darksJpeg
 
     fun toShootingSession(): ShootingSession = ShootingSession(
         sessionName = sessionName,
@@ -254,9 +252,7 @@ class SessionBrowserRepository(private val context: Context) {
     ) {
         var createdAtMillis: Long = 0L
         var lightsJpeg: Int = 0
-        var lightsRaw: Int = 0
         var darksJpeg: Int = 0
-        var darksRaw: Int = 0
         var totalSizeBytes: Long = 0L
         var infoContent: String = ""
 
@@ -266,12 +262,8 @@ class SessionBrowserRepository(private val context: Context) {
             when {
                 normalized.contains("/Lights/JPEG/") ||
                     normalized.endsWith("/Lights/JPEG") -> lightsJpeg++
-                normalized.contains("/Lights/RAW/") ||
-                    normalized.endsWith("/Lights/RAW") -> lightsRaw++
                 normalized.contains("/Darks/JPEG/") ||
                     normalized.endsWith("/Darks/JPEG") -> darksJpeg++
-                normalized.contains("/Darks/RAW/") ||
-                    normalized.endsWith("/Darks/RAW") -> darksRaw++
             }
         }
 
@@ -288,9 +280,7 @@ class SessionBrowserRepository(private val context: Context) {
                 relativePath = relativePath,
                 createdAtMillis = createdAtMillis,
                 lightsJpeg = lightsJpeg,
-                lightsRaw = lightsRaw,
                 darksJpeg = darksJpeg,
-                darksRaw = darksRaw,
                 totalSizeBytes = totalSizeBytes,
                 infoContent = infoContent.ifBlank { "Нет информации" }
             )
@@ -315,7 +305,6 @@ private data class SessionQualityReport(
 
 private fun analyzeSession(
     session: SessionSummary,
-    rawSupported: Boolean,
     badFrameCount: Int
 ): SessionQualityReport {
     val hasInfo = session.infoContent.isNotBlank() &&
@@ -323,20 +312,13 @@ private fun analyzeSession(
     val empty = session.lightFrames == 0 &&
         session.darkFrames == 0 &&
         !hasInfo
-    val formatsMatch =
-        (session.lightsRaw > 0 && session.darksRaw > 0) ||
-            (session.lightsJpeg > 0 && session.darksJpeg > 0)
-    val onlyJpegWhileRawAvailable = rawSupported &&
-        session.lightsRaw == 0 &&
-        session.darksRaw == 0 &&
-        session.lightsJpeg + session.darksJpeg > 0
+    val formatsMatch = session.lightsJpeg > 0 && session.darksJpeg > 0
 
     val status = when {
         empty ||
             session.lightFrames == 0 ||
             session.darkFrames == 0 ||
             !hasInfo -> SessionQualityStatus.PROBLEM
-        onlyJpegWhileRawAvailable -> SessionQualityStatus.IMPROVE
         session.lightFrames >= 3 &&
             session.darkFrames >= 3 &&
             formatsMatch -> SessionQualityStatus.READY
@@ -346,9 +328,6 @@ private fun analyzeSession(
     val recommendations = buildList {
         if (session.darkFrames < 3 || !formatsMatch) {
             add("Снимите dark frames с теми же ISO и выдержкой.")
-        }
-        if (rawSupported && session.lightsRaw == 0) {
-            add("Для астрофото лучше использовать RAW/DNG.")
         }
         if (session.lightFrames < 5) {
             add("Для слабых звёзд увеличьте количество кадров.")
@@ -638,7 +617,6 @@ fun SessionDetailsScreen(
     var active by remember {
         mutableStateOf(sessionStore.load()?.folderName == session.folderName)
     }
-    var rawSupported by remember { mutableStateOf(false) }
     var checkInProgress by remember { mutableStateOf(false) }
     var checkRefreshKey by remember { mutableIntStateOf(0) }
     var badFrameCount by remember { mutableIntStateOf(0) }
@@ -869,9 +847,6 @@ fun SessionDetailsScreen(
                 it.category == SessionFrameCategory.LIGHTS_JPEG &&
                     it.key !in existingBadKeys
             }
-            rawSupported = withContext(Dispatchers.IO) {
-                deviceSupportsRaw(context.applicationContext)
-            }
             Log.i("AstroPhotoPostCompletion", "post_completion.session.refresh.done")
         } catch (error: CancellationException) {
             throw error
@@ -982,9 +957,7 @@ fun SessionDetailsScreen(
             DetailCard(
                 "Файлы",
                 "Lights JPEG: ${currentSummary.lightsJpeg}\n" +
-                    "Lights RAW: ${currentSummary.lightsRaw}\n" +
                     "Darks JPEG: ${currentSummary.darksJpeg}\n" +
-                    "Darks RAW: ${currentSummary.darksRaw}\n" +
                     "Общий размер: ${formatFileSize(currentSummary.totalSizeBytes)}"
             )
         }
@@ -1030,7 +1003,6 @@ fun SessionDetailsScreen(
                 if (showingSessionCheck) {
                     SessionQualityBlock(
                         session = currentSummary,
-                        rawSupported = rawSupported,
                         badFrameCount = badFrameCount,
                         manualBadFrameCount = manualBadFrameCount,
                         autoBadFrameCount = autoBadFrameCount,
@@ -1470,7 +1442,6 @@ internal fun shouldOpenCompletedResultEditor(
 @Composable
 private fun SessionQualityBlock(
     session: SessionSummary,
-    rawSupported: Boolean,
     badFrameCount: Int,
     manualBadFrameCount: Int,
     autoBadFrameCount: Int,
@@ -1478,8 +1449,8 @@ private fun SessionQualityBlock(
     loading: Boolean,
     onRefresh: () -> Unit
 ) {
-    val report = remember(session, rawSupported, badFrameCount) {
-        analyzeSession(session, rawSupported, badFrameCount)
+    val report = remember(session, badFrameCount) {
+        analyzeSession(session, badFrameCount)
     }
     val statusContainer = when (report.status) {
         SessionQualityStatus.READY -> AstroColors.SuccessSurface
@@ -1512,9 +1483,7 @@ private fun SessionQualityBlock(
                 fontWeight = FontWeight.SemiBold
             )
             Text("Основные JPEG: ${session.lightsJpeg}")
-            Text("Основные RAW: ${session.lightsRaw}")
             Text("Тёмные JPEG: ${session.darksJpeg}")
-            Text("Тёмные RAW: ${session.darksRaw}")
             Text("Всего light frames: ${session.lightFrames}")
             Text("Всего dark frames: ${session.darkFrames}")
             Text("Всего кадров: ${session.lightFrames + session.darkFrames}")
@@ -1527,7 +1496,6 @@ private fun SessionQualityBlock(
             Text("Найдено автоотбором: $autoBadFrameCount")
             Text("Будет использовано в JPEG stacking: $stackingFrameCount")
             Text("session_info.txt: ${if (hasInfo) "есть" else "нет"}")
-            Text("RAW/DNG: ${if (session.lightsRaw + session.darksRaw > 0) "есть" else "нет"}")
             Text("JPEG: ${if (session.lightsJpeg + session.darksJpeg > 0) "есть" else "нет"}")
             Text("Размер: ${formatFileSize(session.totalSizeBytes)}")
 
@@ -1660,18 +1628,3 @@ private fun formatFileSize(bytes: Long): String = when {
     )
     else -> "$bytes Б"
 }
-
-private fun deviceSupportsRaw(context: Context): Boolean = runCatching {
-    val manager = context.getSystemService(CameraManager::class.java)
-    manager.cameraIdList.any { cameraId ->
-        val characteristics = manager.getCameraCharacteristics(cameraId)
-        val rearCamera = characteristics.get(CameraCharacteristics.LENS_FACING) ==
-            CameraCharacteristics.LENS_FACING_BACK
-        val capabilities = characteristics.get(
-            CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES
-        )
-        rearCamera && capabilities?.contains(
-            CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_RAW
-        ) == true
-    }
-}.getOrDefault(false)

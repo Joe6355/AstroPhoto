@@ -66,7 +66,7 @@ class AppNavigationControllerTest {
     @Test fun astroDefaultsRespectHardwareLimitsAndUseSeriesIntegration() {
         val controls = CameraControlsState(SavedCameraSettings())
         controls.capabilities.value = ManualCameraCapabilities("0", 1_000_000L..8_000_000_000L,
-            100..640, 10f, true, true, true, true, false)
+            100..640, 10f, true, true, true, true)
         controls.setAstroMode(true)
         assertTrue(controls.exposureTimeNs.longValue <= 8_000_000_000L)
         assertTrue(controls.exposureTimeNs.longValue * controls.seriesFrameCount.intValue >= MINIMUM_ASTRO_INTEGRATION_NS)

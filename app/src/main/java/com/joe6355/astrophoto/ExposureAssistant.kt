@@ -31,8 +31,7 @@ enum class ShootingGoal(val title: String) {
 }
 
 enum class AssistantCaptureFormat {
-    JPEG,
-    RAW
+    JPEG
 }
 
 data class ExposureRecommendation(
@@ -51,8 +50,7 @@ data class ExposureRecommendation(
 
 internal fun ExposureRecommendation.forJpegOnlyUi(): ExposureRecommendation = copy(
     format = AssistantCaptureFormat.JPEG,
-    frameCount = frameCount.coerceAtLeast(1),
-    explanation = explanation.replace("RAW/DNG", "JPEG")
+    frameCount = frameCount.coerceAtLeast(1)
 )
 
 fun buildExposureRecommendation(
@@ -193,7 +191,7 @@ fun buildExposureRecommendation(
                 "${formatAssistantExposure(currentExposureTimeNs)}."
             if (goal == ShootingGoal.STARS) {
                 explanation +=
-                    "Для звёзд лучше RAW/DNG, серия от 10 кадров и Dark Frames."
+                    "Для звёзд лучше серия от 10 кадров и Dark Frames."
             }
         }
 
@@ -229,14 +227,7 @@ fun buildExposureRecommendation(
             exposureRange.last
         ),
         focusMode = focus,
-        format = if (
-            base.format == AssistantCaptureFormat.RAW &&
-            !capabilities.supportsRawCapture
-        ) {
-            AssistantCaptureFormat.JPEG
-        } else {
-            base.format
-        },
+        format = AssistantCaptureFormat.JPEG,
         frameCount = base.frameCount,
         timerSeconds = timer,
         explanation = explanation.distinct().joinToString(" ")
@@ -382,7 +373,7 @@ private fun ShootingGoal.baseProfile(): GoalProfile = when (this) {
         iso = 800,
         exposureTimeNs = 10_000_000_000L,
         focusMode = CameraFocusMode.INFINITY,
-        format = AssistantCaptureFormat.RAW,
+        format = AssistantCaptureFormat.JPEG,
         frameCount = 10,
         timerSeconds = 5
     )
@@ -398,7 +389,7 @@ private fun ShootingGoal.baseProfile(): GoalProfile = when (this) {
         iso = 400,
         exposureTimeNs = 5_000_000_000L,
         focusMode = CameraFocusMode.INFINITY,
-        format = AssistantCaptureFormat.RAW,
+        format = AssistantCaptureFormat.JPEG,
         frameCount = 5,
         timerSeconds = 5
     )
@@ -421,7 +412,7 @@ private fun ShootingGoal.baseProfile(): GoalProfile = when (this) {
 }
 
 private fun ShootingGoal.explanation(): String = when (this) {
-    ShootingGoal.STARS -> "Для звёзд предпочтительны RAW/DNG, фокус ∞ и серия."
+    ShootingGoal.STARS -> "Для звёзд предпочтительны фокус ∞ и серия кадров."
     ShootingGoal.MOON -> "Луна яркая, поэтому нужны низкое ISO и короткая выдержка."
     ShootingGoal.CITY_SKY ->
         "Городское небо требует умеренного ISO и защиты от засветки."

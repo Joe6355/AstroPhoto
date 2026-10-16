@@ -64,7 +64,6 @@ internal data class RearCameraCandidate(
     val listOrder: Int,
     val supportsManualSensor: Boolean,
     val maximumExposureNs: Long?,
-    val supportsRaw: Boolean,
     val sensorPixelCount: Long,
     val isLogicalCamera: Boolean
 )
@@ -116,7 +115,6 @@ internal fun selectBestRearCameraId(candidates: List<RearCameraCandidate>): Stri
     candidates.maxWithOrNull(
         compareBy<RearCameraCandidate> { it.supportsManualSensor }
             .thenBy { it.maximumExposureNs ?: 0L }
-            .thenBy { it.supportsRaw }
             .thenBy { it.isLogicalCamera }
             .thenBy { it.sensorPixelCount }
             .thenBy { -it.listOrder }
@@ -157,9 +155,6 @@ internal fun readRearCameraCandidates(
         listOrder = index,
         supportsManualSensor = supportsVerifiedManualSensor(characteristics),
         maximumExposureNs = rangeSelection.effectiveRangeNs?.last,
-        supportsRaw = capabilities.contains(
-            CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_RAW
-        ),
         sensorPixelCount = pixelArraySize?.let {
             it.width.toLong() * it.height.toLong()
         } ?: 0L,

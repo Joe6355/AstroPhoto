@@ -20,9 +20,8 @@ class CameraFormatDefaultTest {
     }
 
     @Test
-    fun explicitSupportedPreferencesArePreserved() {
+    fun onlyJpegPreferenceIsPreserved() {
         assertEquals("JPEG", canonicalCaptureFormat("JPEG"))
-        assertEquals("RAW", canonicalCaptureFormat("RAW"))
     }
 
     @Test
@@ -35,8 +34,8 @@ class CameraFormatDefaultTest {
         val persisted = SavedCameraSettings(
             iso = 1600,
             exposureTimeNs = 2_000_000_000L,
-            seriesFormat = "RAW",
-            darkFramesFormat = "RAW"
+            seriesFormat = "JPEG",
+            darkFramesFormat = "JPEG"
         )
         val editedFromStaleScreen = SavedCameraSettings(
             themeMode = AppThemeMode.LIGHT.name,
@@ -49,8 +48,8 @@ class CameraFormatDefaultTest {
 
         assertEquals(1600, merged.iso)
         assertEquals(2_000_000_000L, merged.exposureTimeNs)
-        assertEquals("RAW", merged.seriesFormat)
-        assertEquals("RAW", merged.darkFramesFormat)
+        assertEquals("JPEG", merged.seriesFormat)
+        assertEquals("JPEG", merged.darkFramesFormat)
         assertEquals(AppThemeMode.LIGHT.name, merged.themeMode)
         assertEquals(100, merged.jpegQuality)
         assertEquals(false, merged.vibrationAfterProcessing)
@@ -67,18 +66,18 @@ class CameraFormatDefaultTest {
         )
         val camera = SavedCameraSettings(
             iso = 800,
-            singleFormat = "RAW",
-            seriesFormat = "RAW",
-            darkFramesFormat = "RAW",
+            singleFormat = "JPEG",
+            seriesFormat = "JPEG",
+            darkFramesFormat = "JPEG",
             darkFramesCount = 10
         )
 
         val merged = mergeCameraSettings(persisted, camera)
 
         assertEquals(800, merged.iso)
-        assertEquals("RAW", merged.singleFormat)
-        assertEquals("RAW", merged.seriesFormat)
-        assertEquals("RAW", merged.darkFramesFormat)
+        assertEquals("JPEG", merged.singleFormat)
+        assertEquals("JPEG", merged.seriesFormat)
+        assertEquals("JPEG", merged.darkFramesFormat)
         assertEquals(10, merged.darkFramesCount)
         assertEquals(AppThemeMode.RED_NIGHT.name, merged.themeMode)
         assertEquals(false, merged.deletionProtectionEnabled)

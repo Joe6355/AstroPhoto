@@ -81,9 +81,6 @@ fun readCameraDiagnostics(context: Context): Result<CameraDiagnosticInfo> = runC
     val awbModes = characteristics.get(CameraCharacteristics.CONTROL_AWB_AVAILABLE_MODES)
 
     val supportsManualSensor = supportsVerifiedManualSensor(characteristics)
-    val supportsRaw = capabilities?.contains(
-        CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_RAW
-    ) == true
     val supportsManualFocus = (minimumFocusDistance ?: 0f) > 0f
 
     val missingValues = buildList {
@@ -144,12 +141,6 @@ fun readCameraDiagnostics(context: Context): Result<CameraDiagnosticInfo> = runC
                 value = yesNo(supportsManualSensor),
                 description = "Нужен для ручной выдержки и ISO",
                 isSupported = supportsManualSensor
-            ),
-            DiagnosticRow(
-                name = "RAW/DNG",
-                value = yesNo(supportsRaw),
-                description = "RAW нужен для сохранения необработанного кадра",
-                isSupported = supportsRaw
             ),
             DiagnosticRow(
                 name = "ISO",
@@ -265,7 +256,9 @@ private fun formatHardwareLevel(level: Int?): String = when (level) {
 }
 
 private fun formatCapabilities(values: IntArray?): String =
-    values?.takeIf { it.isNotEmpty() }?.joinToString { capabilityName(it) } ?: "Недоступно"
+    values?.filterNot {
+        it == CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_RAW
+    }?.takeIf { it.isNotEmpty() }?.joinToString { capabilityName(it) } ?: "Недоступно"
 
 private fun capabilityName(value: Int): String = when (value) {
     CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_BACKWARD_COMPATIBLE ->
@@ -273,7 +266,6 @@ private fun capabilityName(value: Int): String = when (value) {
     CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR -> "MANUAL_SENSOR"
     CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_POST_PROCESSING ->
         "MANUAL_POST_PROCESSING"
-    CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_RAW -> "RAW"
     CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_PRIVATE_REPROCESSING ->
         "PRIVATE_REPROCESSING"
     CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_READ_SENSOR_SETTINGS ->

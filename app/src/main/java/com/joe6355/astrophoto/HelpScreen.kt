@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -41,7 +43,6 @@ enum class HelpTopic {
     ISO,
     EXPOSURE,
     INFINITY_FOCUS,
-    RAW,
     LIGHTS,
     DARKS,
     SERIES,
@@ -66,7 +67,7 @@ val ASTROPHOTO_HELP_SECTIONS = listOf(
         HelpTopic.QUICK_START,
         "Быстрый старт",
         "Закрепите телефон на штативе, выберите Astro Mode или ручные ISO, " +
-            "выдержку и фокус. Укажите JPEG либо RAW/DNG, количество кадров, " +
+            "выдержку и фокус. Укажите количество кадров, " +
             "задержку и таймер, затем запустите серию. Результаты сохраняются " +
             "в сессии, где доступны отбор, обработка, таймлапс и экспорт."
     ),
@@ -105,14 +106,6 @@ val ASTROPHOTO_HELP_SECTIONS = listOf(
             "фокусом ∞, ручным фокусом и автофокусом. Пробный кадр показывает " +
             "FWHM звёзд: сравнивайте последовательные кадры, меньшее значение " +
             "означает более точный фокус."
-    ),
-    HelpSection(
-        HelpTopic.RAW,
-        "JPEG и RAW/DNG",
-        "JPEG занимает меньше места и используется для встроенного stacking и " +
-            "MP4-таймлапса. RAW/DNG сохраняет больше исходных данных для " +
-            "дальнейшей обработки, но требует больше места и может не " +
-            "отображаться обычной галереей."
     ),
     HelpSection(
         HelpTopic.LIGHTS,
@@ -175,14 +168,14 @@ val ASTROPHOTO_HELP_SECTIONS = listOf(
     HelpSection(
         HelpTopic.SESSIONS,
         "Сессии",
-        "Сессия хранит Light JPEG/RAW, Dark JPEG/RAW, результаты обработки и " +
+        "Сессия хранит Light JPEG, Dark JPEG, результаты обработки и " +
             "настройки съёмки. Создавайте отдельную сессию для каждого объекта " +
             "или ночной съёмки."
     ),
     HelpSection(
         HelpTopic.EXPORT,
         "Экспорт на ПК",
-        "Экспорт ZIP собирает исходные JPEG/RAW, Dark Frames, результаты, " +
+        "Экспорт ZIP собирает исходные JPEG, Dark Frames, результаты, " +
             "метаданные и README сессии. Архив можно передать через системное " +
             "меню «Поделиться»."
     ),
@@ -293,13 +286,22 @@ fun HelpScreen(
 fun HelpTopicDialog(
     topic: HelpTopic,
     onOpenHelp: (HelpTopic) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    additionalContent: (@Composable () -> Unit)? = null
 ) {
     val section = ASTROPHOTO_HELP_SECTIONS.first { it.topic == topic }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(section.title) },
-        text = { Text(section.text) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                additionalContent?.invoke()
+                Text(section.text)
+            }
+        },
         confirmButton = {
             Button(
                 onClick = {
@@ -323,9 +325,9 @@ internal val ASTROPHOTO_ONBOARDING_PAGES = listOf(
     "Подготовьте камеру" to
         "Закрепите телефон на штативе. Astro Mode задаст стартовые параметры, " +
         "а ISO, выдержку и фокус можно скорректировать вручную.",
-    "Выберите формат и серию" to
-        "JPEG подходит для обработки и таймлапса в приложении. RAW/DNG хранит " +
-        "больше исходных данных. В серии доступно до 500 кадров.",
+    "Настройте серию" to
+        "JPEG подходит для обработки и таймлапса в приложении. " +
+        "В серии доступно до 500 кадров.",
     "Настройте запуск" to
         "Выберите количество кадров, задержку между ними и таймер старта, затем " +
         "не двигайте телефон до окончания серии.",

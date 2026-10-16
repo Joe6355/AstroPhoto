@@ -115,20 +115,20 @@ class ManualControlsAndEditorPresetsTest {
     }
 
     @Test
-    fun cameraUiAdaptsRecommendationsToJpegSeries() {
+    fun cameraUiKeepsRecommendationsInJpegSeries() {
         val adapted = ExposureRecommendation(
             iso = 800,
             exposureTimeNs = 10_000_000_000L,
             focusMode = CameraFocusMode.INFINITY,
-            format = AssistantCaptureFormat.RAW,
+            format = AssistantCaptureFormat.JPEG,
             frameCount = 1,
             timerSeconds = 5,
-            explanation = "Для звёзд лучше RAW/DNG"
+            explanation = "Для звёзд лучше серия кадров"
         ).forJpegOnlyUi()
 
         assertEquals(AssistantCaptureFormat.JPEG, adapted.format)
         assertEquals(1, adapted.frameCount)
-        assertFalse(adapted.explanation.contains("RAW/DNG"))
+        assertEquals("Для звёзд лучше серия кадров", adapted.explanation)
     }
 
     @Test

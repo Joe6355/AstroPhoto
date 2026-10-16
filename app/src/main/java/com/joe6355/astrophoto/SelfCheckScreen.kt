@@ -78,7 +78,6 @@ enum class SelfCheckId(val title: String) {
     CAMERA("Камера"),
     CAMERA_PERMISSION("Разрешение камеры"),
     MANUAL_SENSOR("Manual Sensor"),
-    RAW("RAW/DNG"),
     JPEG("JPEG-съёмка"),
     STORAGE_FOLDER("Папка сохранения"),
     ACTIVE_SESSION("Активная сессия"),
@@ -102,7 +101,6 @@ data class SelfCheckReport(
     val cameraId: String = "неизвестно",
     val hardwareLevel: String = "неизвестно",
     val manualSensor: String = "неизвестно",
-    val raw: String = "неизвестно",
     val isoRange: String = "неизвестно",
     val exposureRange: String = "неизвестно",
     val physicalCameraIds: String = "неизвестно",
@@ -379,7 +377,6 @@ internal class SelfCheckRunner(private val context: Context) {
         var cameraId = "неизвестно"
         var hardwareLevel = "неизвестно"
         var manualSensorText = "неизвестно"
-        var rawText = "неизвестно"
         var isoText = "неизвестно"
         var exposureText = "неизвестно"
         var physicalCameraIdsText = "неизвестно"
@@ -400,9 +397,6 @@ internal class SelfCheckRunner(private val context: Context) {
             val manual = capabilities.contains(
                 CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR
             )
-            val raw = capabilities.contains(
-                CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_RAW
-            )
             val iso = characteristics.get(
                 CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE
             )
@@ -418,12 +412,11 @@ internal class SelfCheckRunner(private val context: Context) {
                 )
             )
             manualSensorText = if (manual) "Да" else "Нет"
-            rawText = if (raw) "Да" else "Нет"
             isoText = iso?.let { "${it.lower} - ${it.upper}" } ?: "неизвестно"
             exposureText = exposure?.let {
                 "${formatSeconds(it.lower)} - ${formatSeconds(it.upper)}"
             } ?: "неизвестно"
-            CameraProbe(manual, raw, jpegAvailable)
+            CameraProbe(manual, jpegAvailable)
         }
 
         cameraResult.fold(
@@ -440,14 +433,6 @@ internal class SelfCheckRunner(private val context: Context) {
                     "Manual Sensor: ${if (probe.manualSensor) "доступен" else "недоступен"}.",
                     if (!probe.manualSensor) {
                         "Ручная выдержка и ISO могут работать ограниченно."
-                    } else null
-                )
-                update(
-                    SelfCheckId.RAW,
-                    if (probe.raw) SelfCheckStatus.OK else SelfCheckStatus.WARNING,
-                    "RAW/DNG: ${if (probe.raw) "доступен" else "недоступен"}.",
-                    if (!probe.raw) {
-                        "Можно снимать JPEG, но RAW/DNG на этом устройстве недоступен."
                     } else null
                 )
                 update(
@@ -469,11 +454,6 @@ internal class SelfCheckRunner(private val context: Context) {
                 )
                 update(
                     SelfCheckId.MANUAL_SENSOR,
-                    SelfCheckStatus.NOT_CHECKED,
-                    "Camera2 characteristics недоступны."
-                )
-                update(
-                    SelfCheckId.RAW,
                     SelfCheckStatus.NOT_CHECKED,
                     "Camera2 characteristics недоступны."
                 )
@@ -600,7 +580,6 @@ internal class SelfCheckRunner(private val context: Context) {
             cameraId = cameraId,
             hardwareLevel = hardwareLevel,
             manualSensor = manualSensorText,
-            raw = rawText,
             isoRange = isoText,
             exposureRange = exposureText,
             physicalCameraIds = physicalCameraIdsText,
@@ -631,9 +610,7 @@ internal class SelfCheckRunner(private val context: Context) {
         session ?: return "Активной сессии для проверки структуры нет."
         val expected = listOf(
             "Lights/JPEG/",
-            "Lights/RAW/",
             "Darks/JPEG/",
-            "Darks/RAW/",
             "Tests/JPEG/",
             "Processed/"
         )
@@ -776,7 +753,6 @@ internal class SelfCheckRunner(private val context: Context) {
 
     private data class CameraProbe(
         val manualSensor: Boolean,
-        val raw: Boolean,
         val jpeg: Boolean
     )
 
@@ -843,7 +819,6 @@ private fun formatSelfCheckReport(
         appendLine("Camera ID: ${report.cameraId}")
         appendLine("Hardware level: ${report.hardwareLevel}")
         appendLine("Manual Sensor: ${report.manualSensor}")
-        appendLine("RAW/DNG: ${report.raw}")
         appendLine("ISO range: ${report.isoRange}")
         appendLine("Exposure range: ${report.exposureRange}")
         appendLine("Physical Camera IDs: ${report.physicalCameraIds}")

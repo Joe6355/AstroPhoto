@@ -201,4 +201,4 @@ internal fun mergeCameraSettings(
 )
 
 internal fun canonicalCaptureFormat(storedValue: String?): String =
-    storedValue?.takeIf { it == "JPEG" || it == "RAW" } ?: "JPEG"
+    storedValue?.takeIf { it == "JPEG" } ?: "JPEG"

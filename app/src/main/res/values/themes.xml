@@ -2,9 +2,9 @@
 <resources>
 
     <style name="AstroPhotoBaseTheme" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">#080B1C</item>
-        <item name="android:statusBarColor">#080B1C</item>
-        <item name="android:navigationBarColor">#080B1C</item>
+        <item name="android:windowBackground">#080F13</item>
+        <item name="android:statusBarColor">#080F13</item>
+        <item name="android:navigationBarColor">#080F13</item>
         <item name="android:windowLightStatusBar">false</item>
     </style>
     <style name="Theme.AstroPhoto" parent="@style/AstroPhotoBaseTheme" />

@@ -78,11 +78,7 @@ internal fun adaptCameraPreset(
             else -> preset.exposureTimeNs.coerceIn(range.first, range.last)
         }
     } ?: preset.exposureTimeNs
-    val adaptedFormat = if (preset.preferRaw && capabilities.supportsRawCapture) {
-        UiCaptureType.RAW
-    } else {
-        UiCaptureType.JPEG
-    }
+    val adaptedFormat = UiCaptureType.JPEG
     val adaptedFocusMode = if (preset.focusMode != CameraFocusMode.AF && !capabilities.supportsManualFocus) {
         CameraFocusMode.AF
     } else {
@@ -96,7 +92,7 @@ internal fun adaptCameraPreset(
         preset.delaySeconds,
         adaptedFocusMode,
         adaptedIso != preset.iso || adaptedExposure != preset.exposureTimeNs ||
-            (preset.preferRaw && adaptedFormat != UiCaptureType.RAW) || adaptedFocusMode != preset.focusMode
+            adaptedFocusMode != preset.focusMode
     )
 }
 

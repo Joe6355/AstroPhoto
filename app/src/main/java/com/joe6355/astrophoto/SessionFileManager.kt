@@ -56,8 +56,6 @@ class SessionFileManager(private val context: Context) {
                 try {
                     renamePublicFolder(session.folderName, newFolderName)
                     publicMoved = true
-                    // One atomic directory rename; failure does not partially move RAW sidecars.
-                    AstroRawSidecarStore(context).renameSession(session.folderName, newFolderName)
                 } catch (error: Exception) {
                     val rolledBack = if (publicMoved) {
                         runCatching { renamePublicFolder(newFolderName, session.folderName) }.isSuccess
@@ -101,10 +99,7 @@ class SessionFileManager(private val context: Context) {
             } else {
                 deleteLegacySession(session.folderName, onProgress)
             }
-            val privateCounts = AstroRawSidecarStore(context)
-                .deleteSession(session.folderName)
-            val counts = publicCounts.first + privateCounts.first to
-                publicCounts.second + privateCounts.second
+            val counts = publicCounts
             val infoDeleted = if (counts.second == 0) SessionInfoStore(context).delete(session.folderName) else true
             val active = sessionStore.load()
             val activeCleared = active?.folderName == session.folderName

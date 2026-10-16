@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Vibrator
 import android.os.VibratorManager
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -161,7 +162,11 @@ fun AstroPhotoLogo(modifier: Modifier = Modifier) {
         androidx.compose.foundation.Image(painterResource(R.drawable.ic_launcher_background),
             contentDescription = null, modifier = Modifier.matchParentSize())
         androidx.compose.foundation.Image(painterResource(R.drawable.ic_launcher_foreground),
-            contentDescription = null, modifier = Modifier.matchParentSize())
+            contentDescription = null, modifier = Modifier.matchParentSize().graphicsLayer {
+                // Match the launcher's visible 72/108 area of the adaptive icon.
+                scaleX = 1.5f
+                scaleY = 1.5f
+            })
     }
 }
 @Composable
@@ -232,7 +237,6 @@ private fun buildDiagnosticsText(
         appendLine("App version: $versionName")
         appendLine("Camera ID: ${value("Camera ID")}")
         appendLine("Hardware level: ${value("Hardware Level")}")
-        appendLine("RAW/DNG: ${value("RAW/DNG")}")
         appendLine("Manual Sensor: ${value("Manual Sensor")}")
         appendLine("Max exposure: ${value("Макс. выдержка")}")
         appendLine("ISO range: ${value("ISO")}")
@@ -248,7 +252,7 @@ private fun buildDiagnosticsText(
 
 private val ABOUT_FEATURES = listOf(
     "Ручная выдержка, ISO и фокус",
-    "JPEG и RAW/DNG",
+    "Съёмка JPEG",
     "Астро-серии и Dark Frames",
     "Сессии съёмки",
     "Stacking Average, Median и Sigma",

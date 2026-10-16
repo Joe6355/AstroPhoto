@@ -324,7 +324,6 @@ class SessionZipExporter(private val context: Context) {
                 )
             }
         }
-        appendRawSidecars(sources, session)
         appendFallbackProcessingReports(sources, session)
         sources.removeAll { it.relativePath.equals("session_info.txt", ignoreCase = true) }
         if (sources.none {
@@ -363,7 +362,6 @@ class SessionZipExporter(private val context: Context) {
         } else {
             mutableListOf()
         }
-        appendRawSidecars(sources, session)
         appendFallbackProcessingReports(sources, session)
         sources.removeAll { it.relativePath.equals("session_info.txt", ignoreCase = true) }
         if (sources.none {
@@ -378,25 +376,6 @@ class SessionZipExporter(private val context: Context) {
             )
         }
         return sources
-    }
-
-    private fun appendRawSidecars(
-        sources: MutableList<ZipSource>,
-        session: SessionSummary
-    ) {
-        val existing = sources.mapTo(mutableSetOf()) {
-            it.relativePath.replace('\\', '/').lowercase(Locale.US)
-        }
-        AstroRawSidecarStore(context).listForSession(session.folderName).forEach { sidecar ->
-            val relativePath = sanitizeEntryPath(sidecar.relativePath)
-            if (existing.add(relativePath.lowercase(Locale.US))) {
-                sources += ZipSource(
-                    relativePath = relativePath,
-                    sizeBytes = sidecar.file.length(),
-                    open = { sidecar.file.inputStream() }
-                )
-            }
-        }
     }
 
     private fun appendFallbackProcessingReports(
@@ -460,9 +439,7 @@ class SessionZipExporter(private val context: Context) {
             appendLine()
             appendLine("Количество файлов")
             appendLine("Lights JPEG: ${count("Lights/JPEG/", setOf(".jpg", ".jpeg"))}")
-            appendLine("Lights RAW/DNG: ${count("Lights/RAW/", setOf(".dng"))}")
             appendLine("Darks JPEG: ${count("Darks/JPEG/", setOf(".jpg", ".jpeg"))}")
-            appendLine("Darks RAW/DNG: ${count("Darks/RAW/", setOf(".dng"))}")
             appendLine("Tests: ${count("Tests/")}")
             appendLine("Processed: ${count("Processed/")}")
             appendLine()
@@ -471,11 +448,6 @@ class SessionZipExporter(private val context: Context) {
             appendLine("Darks — тёмные кадры для вычитания шума.")
             appendLine("Processed — результаты stacking и редактирования.")
             appendLine("Tests — пробные кадры.")
-            appendLine()
-            appendLine(
-                "RAW/DNG можно обрабатывать на ПК в Siril, DeepSkyStacker, " +
-                    "RawTherapee, darktable или другом ПО."
-            )
         }
     }
 
@@ -626,10 +598,8 @@ class SessionZipExporter(private val context: Context) {
         private val ZIP_DIRECTORIES = listOf(
             "Lights/",
             "Lights/JPEG/",
-            "Lights/RAW/",
             "Darks/",
             "Darks/JPEG/",
-            "Darks/RAW/",
             "Tests/",
             "Tests/JPEG/",
             "Processed/"

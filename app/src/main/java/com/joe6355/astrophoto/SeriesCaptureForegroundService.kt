@@ -110,8 +110,8 @@ class SeriesCaptureForegroundService : Service() {
                 controller.startHeadlessCapture()
                 withTimeout(CAMERA_READY_TIMEOUT_MILLIS) { ready.await() }
 
-                val format = request.format.toCaptureType()
-                val extension = if (format == UiCaptureType.RAW) "dng" else "jpg"
+                val format = UiCaptureType.JPEG
+                val extension = "jpg"
                 val safetyChecker = SeriesSafetyChecker(
                     applicationContext,
                     StorageSpaceChecker(applicationContext)
@@ -340,10 +340,6 @@ class SeriesCaptureForegroundService : Service() {
         )
     }
 
-    private fun String.toCaptureType(): UiCaptureType =
-        runCatching { UiCaptureType.valueOf(uppercase(Locale.US)) }
-            .getOrDefault(UiCaptureType.JPEG)
-
     private fun String.toFocusMode(): CameraFocusMode =
         runCatching { CameraFocusMode.valueOf(uppercase(Locale.US)) }
             .getOrDefault(CameraFocusMode.INFINITY)
@@ -352,6 +348,9 @@ class SeriesCaptureForegroundService : Service() {
         val format = intent.getStringExtra(EXTRA_FORMAT) ?: return null
         val session = intent.getStringExtra(EXTRA_SESSION_FOLDER) ?: return null
         val directory = intent.getStringExtra(EXTRA_RELATIVE_DIRECTORY) ?: return null
+        if (format != UiCaptureType.JPEG.name ||
+            directory != "AstroPhoto/$session/Lights/JPEG"
+        ) return null
         val prefix = intent.getStringExtra(EXTRA_FILE_PREFIX) ?: return null
         val focusMode = intent.getStringExtra(EXTRA_FOCUS_MODE) ?: return null
         val count = intent.getIntExtra(EXTRA_FRAME_COUNT, 0)

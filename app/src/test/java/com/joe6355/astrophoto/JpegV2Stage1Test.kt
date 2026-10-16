@@ -167,19 +167,6 @@ class JpegV2Stage1Test {
         assertTrue(legacyCompatibleFrame.isJpeg)
     }
 
-    @Test
-    fun rawIdentifiersAndEligibleFrameBehaviorRemainUnchanged() {
-        assertEquals(
-            listOf("LIGHTS_JPEG", "CROPPED_JPEG", "LIGHTS_RAW", "DARKS_JPEG", "DARKS_RAW"),
-            SessionFrameCategory.entries.map { it.name }
-        )
-        val raw = SessionFrame(
-            "Lights/RAW/a.dng", "a.dng", SessionFrameCategory.LIGHTS_RAW,
-            1L, 2L, "Lights/RAW/a.dng", null, "C:/session/Lights/RAW/a.dng"
-        )
-        assertTrue(selectEligibleLightFrames(listOf(raw), FrameMarks(), false).isEmpty())
-    }
-
     private fun analysis(
         id: String,
         count: Int,

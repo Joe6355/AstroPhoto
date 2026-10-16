@@ -259,7 +259,7 @@ internal fun CameraScreen(
         writeSessionInfo(updated, format)
         saveLocationStatus = "Сохранено в ${
             if (dark) "Darks" else "Lights"
-        }/${if (format == UiCaptureType.RAW) "RAW" else "JPEG"}"
+        }/JPEG"
         coroutineScope.launch {
             val refreshed = storageChecker.readAvailableSpace()
             storageInfo = refreshed.copy(
@@ -278,11 +278,7 @@ internal fun CameraScreen(
         coroutineScope.launch {
             val checked = storageChecker.estimate(
                 session = currentSession,
-                format = if (format == UiCaptureType.RAW) {
-                    StorageCaptureFormat.RAW
-                } else {
-                    StorageCaptureFormat.JPEG
-                },
+                format = StorageCaptureFormat.JPEG,
                 frameCount = frameCount
             )
             storageInfo = checked
@@ -306,11 +302,7 @@ internal fun CameraScreen(
     ) {
         storageInfo = storageChecker.estimate(
             session = currentSession,
-            format = if (seriesFormat == UiCaptureType.RAW) {
-                StorageCaptureFormat.RAW
-            } else {
-                StorageCaptureFormat.JPEG
-            },
+            format = StorageCaptureFormat.JPEG,
             frameCount = seriesFrameCount
         )
     }
@@ -424,52 +416,29 @@ internal fun CameraScreen(
             captureStatus = "JPEG-съёмка недоступна для этой камеры"
             return
         }
-        if (captureType == UiCaptureType.RAW &&
-            capabilities?.supportsRawCapture != true
-        ) {
-            captureStatus = "RAW_SENSOR недоступен для этой камеры"
-            return
-        }
-
         val session = ensureSession(captureType)
         val relativeDirectory = sessionStore.relativeDirectory(
             session = session,
-            dark = false,
-            raw = captureType == UiCaptureType.RAW
+            dark = false
         )
         isCapturing = true
-        captureStatus = if (captureType == UiCaptureType.RAW) {
-            "Съёмка RAW..."
-        } else {
-            "Съёмка..."
-        }
+        captureStatus = "Съёмка..."
         val onResult: (Result<String>) -> Unit = { result ->
             isCapturing = false
             captureStatus = result.fold(
                 onSuccess = { fileName ->
                     recordSessionFrame(dark = false, format = captureType)
-                    if (captureType == UiCaptureType.RAW) {
-                        "DNG сохранён: $fileName"
-                    } else {
-                        "Фото сохранено: $fileName"
-                    }
+                    "Фото сохранено: $fileName"
                 },
                 onFailure = { error ->
                     "Ошибка съёмки: ${error.message ?: "неизвестная ошибка"}"
                 }
             )
         }
-        if (captureType == UiCaptureType.RAW) {
-            preview.captureRawDng(
-                relativeDirectory = relativeDirectory,
-                onResult = onResult
-            )
-        } else {
-            preview.captureJpeg(
-                relativeDirectory = relativeDirectory,
-                onResult = onResult
-            )
-        }
+        preview.captureJpeg(
+            relativeDirectory = relativeDirectory,
+            onResult = onResult
+        )
     }
 
     fun startSeries() {
@@ -485,13 +454,6 @@ internal fun CameraScreen(
             seriesMessage = "JPEG-серия недоступна для этой камеры"
             return
         }
-        if (seriesFormat == UiCaptureType.RAW &&
-            capabilities?.supportsRawCapture != true
-        ) {
-            seriesMessage = "Выбранный формат серии недоступен для этой камеры"
-            return
-        }
-
         val selectedFormat = seriesFormat
         val selectedFrameCount = seriesFrameCount
         val selectedDelaySeconds = seriesDelaySeconds
@@ -499,8 +461,7 @@ internal fun CameraScreen(
         val session = ensureSession(selectedFormat)
         val relativeDirectory = sessionStore.relativeDirectory(
             session = session,
-            dark = false,
-            raw = selectedFormat == UiCaptureType.RAW
+            dark = false
         )
         val seriesPrefix = "AstroSeries_${
             SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
@@ -574,22 +535,14 @@ internal fun CameraScreen(
             darkFramesMessage = "JPEG недоступен для этой камеры"
             return
         }
-        if (darkFramesFormat == UiCaptureType.RAW &&
-            capabilities?.supportsRawCapture != true
-        ) {
-            darkFramesMessage = "Выбранный формат Dark Frames недоступен"
-            return
-        }
-
         val selectedFormat = darkFramesFormat
         val selectedCount = darkFramesCount
         val session = ensureSession(selectedFormat)
         val relativeDirectory = sessionStore.relativeDirectory(
             session = session,
-            dark = true,
-            raw = selectedFormat == UiCaptureType.RAW
+            dark = true
         )
-        val extension = if (selectedFormat == UiCaptureType.RAW) "dng" else "jpg"
+        val extension = "jpg"
         val prefix = "DarkFrames_${
             SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         }"
@@ -893,11 +846,7 @@ internal fun CameraScreen(
                 startCapture(captureType)
             }
         }
-        if (captureType == UiCaptureType.RAW) {
-            checkStorageBeforeCapture(captureType, 1, "RAW-снимка", proceed)
-        } else {
-            proceed()
-        }
+        proceed()
     }
 
     fun proceedSeriesStart() {
@@ -1253,6 +1202,7 @@ internal fun CameraScreen(
                 }
                 CompactCapturePanel(
                     capabilities = capabilities,
+                    captureMode = captureMode,
                     isCapturing = isCapturing,
                     captureStatus = captureStatus,
                     seriesRunning = seriesRunning,
@@ -1270,6 +1220,8 @@ internal fun CameraScreen(
                     darkFramesMessage = darkFramesMessage,
                     testShotRunning = testShotRunning,
                     testShotStatus = testShotStatus,
+                    onCaptureModeChanged = { captureMode = it },
+                    onSingleCapture = { requestCapture(UiCaptureType.JPEG) },
                     onSeriesStart = ::requestSeriesStart,
                     onSeriesStop = ::requestSeriesStop,
                     onDarkFramesStop = ::requestDarkFramesStop,
@@ -1841,46 +1793,6 @@ internal fun ManualControlsPanel(
                     color = AstroColors.Success
                 )
             }
-            Text(
-                text = storageInfo?.availableBytes?.let { bytes ->
-                    "Свободно: ${formatStorageSize(bytes)}"
-                } ?: "Не удалось определить свободное место",
-                modifier = Modifier.padding(top = 4.dp),
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (storageInfo?.criticallyLow == true) {
-                    AstroColors.Error
-                } else {
-                    AstroColors.TextSecondary
-                }
-            )
-            if (storageInfo?.criticallyLow == true) {
-                Text(
-                    text = "Мало места",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = AstroColors.Error
-                )
-            }
-            storageInfo?.takeIf { it.estimatedBytes > 0L }?.let { estimate ->
-                Text(
-                    text = "Оценка текущей серии: ${
-                        formatStorageSize(estimate.estimatedBytes)
-                    } — ${
-                        if (estimate.mayBeInsufficient) {
-                            "может не хватить места"
-                        } else {
-                            "места должно хватить"
-                        }
-                    }",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (estimate.mayBeInsufficient) {
-                        AstroColors.Warning
-                    } else {
-                        AstroColors.Success
-                    }
-                )
-            }
-
             com.joe6355.astrophoto.ui.AstroExpandableSection(
                 title = "Дополнительно",
                 modifier = Modifier.padding(top = 12.dp)
@@ -2497,7 +2409,50 @@ internal fun ManualControlsPanel(
         HelpTopicDialog(
             topic = topic,
             onOpenHelp = onOpenHelp,
-            onDismiss = { helpTopic = null }
+            onDismiss = { helpTopic = null },
+            additionalContent = {
+                if (topic == HelpTopic.SESSIONS) {
+                    Text(
+                        text = storageInfo?.availableBytes?.let { bytes ->
+                            "Свободно: ${formatStorageSize(bytes)}"
+                        } ?: "Не удалось определить свободное место",
+                        modifier = Modifier.padding(top = 4.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (storageInfo?.criticallyLow == true) {
+                            AstroColors.Error
+                        } else {
+                            AstroColors.TextSecondary
+                        }
+                    )
+                    if (storageInfo?.criticallyLow == true) {
+                        Text(
+                            text = "Мало места",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = AstroColors.Error
+                        )
+                    }
+                    storageInfo?.takeIf { it.estimatedBytes > 0L }?.let { estimate ->
+                        Text(
+                            text = "Оценка текущей серии: ${
+                                formatStorageSize(estimate.estimatedBytes)
+                            } — ${
+                                if (estimate.mayBeInsufficient) {
+                                    "может не хватить места"
+                                } else {
+                                    "места должно хватить"
+                                }
+                            }",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (estimate.mayBeInsufficient) {
+                                AstroColors.Warning
+                            } else {
+                                AstroColors.Success
+                            }
+                        )
+                    }
+                }
+            }
         )
     }
 }
@@ -2505,6 +2460,7 @@ internal fun ManualControlsPanel(
 @Composable
 internal fun CompactCapturePanel(
     capabilities: ManualCameraCapabilities?,
+    captureMode: UiCaptureMode,
     seriesFrameCount: Int,
     isCapturing: Boolean,
     captureStatus: String?,
@@ -2522,6 +2478,8 @@ internal fun CompactCapturePanel(
     darkFramesMessage: String?,
     testShotRunning: Boolean,
     testShotStatus: String?,
+    onCaptureModeChanged: (UiCaptureMode) -> Unit,
+    onSingleCapture: () -> Unit,
     onSeriesStart: () -> Unit,
     onSeriesStop: () -> Unit,
     onDarkFramesStop: () -> Unit,
@@ -2636,8 +2594,29 @@ internal fun CompactCapturePanel(
                 }
 
                 else -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = captureMode == UiCaptureMode.SINGLE,
+                            onClick = { onCaptureModeChanged(UiCaptureMode.SINGLE) },
+                            label = { Text("Один кадр") },
+                            modifier = Modifier.weight(1f)
+                        )
+                        FilterChip(
+                            selected = captureMode == UiCaptureMode.SERIES,
+                            onClick = { onCaptureModeChanged(UiCaptureMode.SERIES) },
+                            label = { Text("Серия") },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                     Button(
-                        onClick = onSeriesStart,
+                        onClick = if (captureMode == UiCaptureMode.SINGLE) {
+                            onSingleCapture
+                        } else {
+                            onSeriesStart
+                        },
                         enabled = formatAvailable,
                         shape = MaterialTheme.shapes.small,
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 8.dp),
@@ -2646,12 +2625,22 @@ internal fun CompactCapturePanel(
                             .heightIn(min = 52.dp)
                             .testTag(com.joe6355.astrophoto.ui.AstroTestTags.CameraCapture)
                     ) {
-                        Text("Начать серию")
+                        Text(
+                            if (captureMode == UiCaptureMode.SINGLE) {
+                                "Снять JPEG"
+                            } else {
+                                "Начать серию"
+                            }
+                        )
                     }
                     if (seriesCompletedFrames > 0 || darkFramesCompleted > 0) {
                         TextButton(onClick = onOpenResults) { Text("К обработке →") }
                     }
-                    val status = darkFramesMessage ?: seriesMessage
+                    val status = if (captureMode == UiCaptureMode.SINGLE) {
+                        captureStatus
+                    } else {
+                        darkFramesMessage ?: seriesMessage
+                    }
                     status?.let {
                         Text(
                             text = it,
@@ -2869,8 +2858,7 @@ internal fun DiagnosticCard(row: DiagnosticRow) {
 }
 
 internal enum class UiCaptureType {
-    JPEG,
-    RAW
+    JPEG
 }
 
 internal enum class UiCaptureMode {
@@ -2929,21 +2917,12 @@ internal suspend fun captureSeriesFrame(
                 }
             }
 
-            if (format == UiCaptureType.RAW) {
-                preview.captureRawDng(
-                    fileName = fileName,
-                    relativeDirectory = relativeDirectory,
-                    onStageChanged = onStageChanged,
-                    onResult = onResult
-                )
-            } else {
-                preview.captureJpeg(
-                    fileName = fileName,
-                    relativeDirectory = relativeDirectory,
-                    onStageChanged = onStageChanged,
-                    onResult = onResult
-                )
-            }
+            preview.captureJpeg(
+                fileName = fileName,
+                relativeDirectory = relativeDirectory,
+                onStageChanged = onStageChanged,
+                onResult = onResult
+            )
         }
     }
 } catch (_: TimeoutCancellationException) {

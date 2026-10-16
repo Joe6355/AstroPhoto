@@ -3,7 +3,10 @@ package com.joe6355.astrophoto
 import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -36,6 +39,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,6 +53,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.joe6355.astrophoto.ui.theme.AstroPhotoTheme
 import com.joe6355.astrophoto.ui.theme.AstroColors
 import com.joe6355.astrophoto.ui.OrbitDestination
@@ -138,13 +144,40 @@ private fun AstroPhotoApp(
     var cameraPermissionGranted by remember {
         mutableStateOf(context.hasCameraPermission())
     }
+    var cameraPermissionBlocked by remember { mutableStateOf(false) }
     var initialRequestSent by remember { mutableStateOf(false) }
+    val activity = context.findComponentActivity()
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         cameraPermissionGranted = granted
+        cameraPermissionBlocked = !granted &&
+            activity?.shouldShowRequestPermissionRationale(Manifest.permission.CAMERA) == false
     }
-    val activity = context.findComponentActivity()
+
+    DisposableEffect(activity, context) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                cameraPermissionGranted = context.hasCameraPermission()
+                if (cameraPermissionGranted) cameraPermissionBlocked = false
+            }
+        }
+        activity?.lifecycle?.addObserver(observer)
+        onDispose { activity?.lifecycle?.removeObserver(observer) }
+    }
+
+    fun requestCameraPermission() {
+        if (cameraPermissionBlocked) {
+            context.startActivity(
+                Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.fromParts("package", context.packageName, null)
+                )
+            )
+        } else {
+            permissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
 
     fun navigateTo(screen: AppScreen) {
         navigation.navigateTo(screen)
@@ -324,7 +357,7 @@ private fun AstroPhotoApp(
                 AppScreen.About -> AboutScreen(
                     cameraPermissionGranted = cameraPermissionGranted,
                     onRequestCameraPermission = {
-                        permissionLauncher.launch(Manifest.permission.CAMERA)
+                        requestCameraPermission()
                     },
                     onOpenHelp = {
                         helpReturnScreen = AppScreen.About
@@ -345,15 +378,16 @@ private fun AstroPhotoApp(
                 AppScreen.SelfCheck -> SelfCheckScreen(
                     cameraPermissionGranted = cameraPermissionGranted,
                     onRequestCameraPermission = {
-                        permissionLauncher.launch(Manifest.permission.CAMERA)
+                        requestCameraPermission()
                     },
                     onBack = { navigateBack() }
                 )
             }
         } else {
             PermissionScreen(
+                permissionBlocked = cameraPermissionBlocked,
                 onRequestPermission = {
-                    permissionLauncher.launch(Manifest.permission.CAMERA)
+                    requestCameraPermission()
                 },
                 onOpenAbout = {
                     aboutReturnScreen = AppScreen.Diagnostics
@@ -530,7 +564,8 @@ private fun StarSplashScreen() {
 @Composable
 private fun PermissionScreen(
     onRequestPermission: () -> Unit,
-    onOpenAbout: () -> Unit
+    onOpenAbout: () -> Unit,
+    permissionBlocked: Boolean = false
 ) {
     Column(
         modifier = Modifier
@@ -552,12 +587,16 @@ private fun PermissionScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Text(
-            text = "Для проверки камеры нужно разрешение CAMERA",
+            text = if (permissionBlocked) {
+                "Разрешите доступ к камере в настройках приложения, затем вернитесь в AstroPhoto."
+            } else {
+                "Разрешите доступ к камере, чтобы видеть изображение и делать снимки."
+            },
             modifier = Modifier.padding(top = 32.dp, bottom = 20.dp),
             style = MaterialTheme.typography.bodyLarge
         )
         Button(onClick = onRequestPermission) {
-            Text("Разрешить камеру")
+            Text(if (permissionBlocked) "Открыть настройки" else "Разрешить камеру")
         }
         TextButton(
             onClick = onOpenAbout,

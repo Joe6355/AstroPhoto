@@ -229,14 +229,11 @@ class JpegPostCompletionHotfixTest {
         assertTrue(refresh.contains("catch (error: Throwable)"))
     }
 
-    @Test fun manualAndRawWorkflowRemainOutsideAutomaticCoordinator() {
+    @Test fun manualWorkflowRemainsOutsideAutomaticCoordinator() {
         val source = source("app/src/main/java/com/joe6355/astrophoto/JpegProcessingScreen.kt")
-        val manual = source.substring(source.indexOf("fun startStacking()"), source.indexOf("fun startRawStacking()"))
-        val raw = source.substring(source.indexOf("fun startRawStacking()"), source.indexOf("fun startProfile(profile:"))
+        val manual = source.substring(source.indexOf("fun startStacking()"), source.indexOf("fun startProfile(profile:"))
         assertFalse(manual.contains("AutomaticProfileCompletionCoordinator"))
-        assertFalse(raw.contains("AutomaticProfileCompletionCoordinator"))
         assertTrue(manual.contains("onStackCompleted()"))
-        assertTrue(raw.contains("onStackCompleted()"))
     }
 
     @Test fun missingImportedSessionInfoDoesNotAttemptForbiddenPicturesInsert() {

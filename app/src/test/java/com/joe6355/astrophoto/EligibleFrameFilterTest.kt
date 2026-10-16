@@ -118,15 +118,13 @@ class EligibleFrameFilterTest {
         val autoBad = light("auto-bad")
         val favoriteBad = light("favorite-bad")
         val favoriteAutoBad = light("favorite-auto-bad")
-        val raw = frame("raw", SessionFrameCategory.LIGHTS_RAW)
         val frames = listOf(
             plain,
             favorite,
             bad,
             autoBad,
             favoriteBad,
-            favoriteAutoBad,
-            raw
+            favoriteAutoBad
         )
         val marks = FrameMarks(
             bad = setOf(bad.key, favoriteBad.key),

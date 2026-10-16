@@ -2939,36 +2939,6 @@ class JpegStacker internal constructor(
         )
     }
 
-    internal fun appendRawStackSessionInfo(
-        session: SessionSummary,
-        fileName: String,
-        frameCount: Int,
-        rejectedFrameCount: Int,
-        alignedFrameCount: Int,
-        downscaled: Boolean,
-        processedAtMillis: Long
-    ) {
-        val processedAt = SimpleDateFormat(
-            "yyyy-MM-dd HH:mm:ss",
-            Locale.getDefault()
-        ).format(Date(processedAtMillis))
-        val block = buildString {
-            appendLine()
-            appendLine("processedFile: Processed/$fileName")
-            appendLine("processedType: Linear RAW16 stacking")
-            appendLine("rawFrames: $frameCount")
-            appendLine("rawRejectedFrames: $rejectedFrameCount")
-            appendLine("rawSubpixelAlignedFrames: $alignedFrameCount")
-            appendLine("rawDownscaled: $downscaled")
-            appendLine("rawToneMap: percentile asinh sRGB")
-            appendLine("processedAt: $processedAt")
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            appendMediaStoreSessionInfo(session, block)
-        } else {
-            appendLegacySessionInfo(session, block)
-        }
-    }
 
     companion object {
         private const val MAX_PROFILE_FRAMES = 30

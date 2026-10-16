@@ -1,6 +1,6 @@
 # AstroPhoto
 
-Android-приложение для ручной астрофотографии, серийной JPEG/RAW-съёмки,
+Android-приложение для ручной астрофотографии, серийной JPEG-съёмки,
 работы с сессиями и JPEG stacking. Package: `com.joe6355.astrophoto`.
 
 ## Сборка

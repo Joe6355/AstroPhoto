@@ -11,8 +11,7 @@ import java.io.File
 import java.util.Locale
 
 enum class StorageCaptureFormat {
-    JPEG,
-    RAW
+    JPEG
 }
 
 data class StorageSpaceInfo(
@@ -53,12 +52,7 @@ class StorageSpaceChecker(private val context: Context) {
         frameCount: Int
     ): StorageSpaceInfo = withContext(Dispatchers.IO) {
         val available = readAvailableSpace()
-        val average = averageFrameSize(session, format)
-            ?: if (format == StorageCaptureFormat.RAW) {
-                DEFAULT_RAW_BYTES
-            } else {
-                DEFAULT_JPEG_BYTES
-            }
+        val average = averageFrameSize(session, format) ?: DEFAULT_JPEG_BYTES
         val estimated = (average.toDouble() * frameCount.coerceAtLeast(1) * 1.2)
             .toLong()
         available.copy(
@@ -84,7 +78,7 @@ class StorageSpaceChecker(private val context: Context) {
         session: ShootingSession,
         format: StorageCaptureFormat
     ): List<Long> {
-        val extension = if (format == StorageCaptureFormat.RAW) ".dng" else ".jpg"
+        val extension = ".jpg"
         val pathPrefix =
             "${Environment.DIRECTORY_PICTURES}/AstroPhoto/${session.folderName}/"
         val sizes = mutableListOf<Long>()
@@ -131,7 +125,7 @@ class StorageSpaceChecker(private val context: Context) {
         session: ShootingSession,
         format: StorageCaptureFormat
     ): List<Long> {
-        val extension = if (format == StorageCaptureFormat.RAW) "dng" else "jpg"
+        val extension = "jpg"
         val pictures = Environment.getExternalStoragePublicDirectory(
             Environment.DIRECTORY_PICTURES
         )
@@ -151,7 +145,6 @@ class StorageSpaceChecker(private val context: Context) {
     }
 
     companion object {
-        private const val DEFAULT_RAW_BYTES = 25L * 1024L * 1024L
         private const val DEFAULT_JPEG_BYTES = 5L * 1024L * 1024L
     }
 }
