@@ -1,0 +1,2 @@
+# Preserve the canonical bytes checked by GroundTruthReviewWorkflowTest on Windows.
+app/src/test/resources/jpeg-stage6/**/ground-truth.csv text eol=lf
