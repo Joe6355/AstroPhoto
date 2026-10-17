@@ -83,6 +83,32 @@ class JpegV2Stage12Test {
         assertTrue(residualDecision(0.35f, 0.60f).accepted)
     }
 
+    @Test fun rotationConsensusDoesNotCountUnmatchedCentroidsAsMatchedOutliers() {
+        val stars = (0 until 4).flatMap { row -> (0 until 4).map { col ->
+            Star(25f + col * 40f + row * 1.3f, 23f + row * 28f + col * 0.7f)
+        } }
+        val actual = ReferenceToSourceTransform(-4f, 3f, 0.010f)
+        val candidate = stars.mapIndexed { index, star ->
+            val mapped = actual.mapOutputToSource(star.x, star.y)
+            val offset = when (index) {
+                0, 1, 2 -> -2.5f to 2f // Outside matching distance, still inside centroid search.
+                3, 12 -> 0.8f to -0.5f // Matched, but outside the rigid inlier tolerance.
+                else -> 0f to 0f
+            }
+            star.copy(x = mapped.x + offset.first, y = mapped.y + offset.second)
+        }
+        val initial = actual.copy(rotationRadians = 0f)
+        val result = refine(FrameFixture(render(stars), render(candidate), initial, initial,
+            stars.mapIndexed { index, star -> FullResolutionStarPatch(
+                star.x, star.y, 1f, star.amplitude, star.sigma * 2.35482f, 0f,
+                index / 4, TemporalMotionCluster.COHERENT_MOVING_SKY, 1f)
+            }))
+        assertTrue(result.rejectionReason, result.accepted)
+        assertEquals(actual.rotationRadians, result.refinedTransform.rotationRadians, 0.0005f)
+        assertTrue(result.percentile90Residual < 0.1f)
+        assertTrue(result.diagnostics.count { it.rejectionReason == "centroid_rigid_outlier" } >= 5)
+    }
+
     @Test fun rotationWithZeroOriginTranslationIsNotStationaryMotion() {
         val stars = (0 until 4).flatMap { row -> (0 until 4).map { col ->
             Star(25f + col * 40f + row * 1.3f, 23f + row * 28f + col * 0.7f)

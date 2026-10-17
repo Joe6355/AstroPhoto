@@ -154,13 +154,18 @@ class StellarCentroidFrameRefiner(
         val rigid = rigidRegistration.takeIf { it.isReliable && it.rotationAllowed }?.referenceToSourceTransform()
         // Use the same robust consensus as the registrar, but verify the original matched pairs.
         // Do not mix rejected correspondences back into the rigid P90 (translation also uses inliers).
-        val rigidMatches = rigid?.let { transform ->
-            val errors = residuals(evidenceMatches, transform)
-            evidenceMatches.filterIndexed { index, _ -> errors[index] <= StarSimilarityRegistrar.MAX_ROTATION_RESIDUAL }
-        }.orEmpty()
+        val rigidErrors = rigid?.let { residuals(evidenceMatches, it) }.orEmpty()
+        // Match support and inlier support use the same two distances as the registrar.
+        // Unmatched centroids remain rejected diagnostics, not members of the matched-pair denominator.
+        val rigidMatchedCount = rigidErrors.count {
+            it <= StarSimilarityRegistrar.AUTOMATIC_ROTATION_MATCH_TOLERANCE
+        }
+        val rigidMatches = evidenceMatches.filterIndexed { index, _ ->
+            rigidErrors.getOrNull(index)?.let { it <= StarSimilarityRegistrar.MAX_ROTATION_RESIDUAL } == true
+        }
         val rigidConsensusValid = rigidMatches.size >= StarSimilarityRegistrar.MIN_ROTATION_INLIERS &&
-            evidenceMatches.size >= StarSimilarityRegistrar.MIN_ROTATION_MATCHED_STARS &&
-            rigidMatches.size.toFloat() / evidenceMatches.size.coerceAtLeast(1) >=
+            rigidMatchedCount >= StarSimilarityRegistrar.MIN_ROTATION_MATCHED_STARS &&
+            rigidMatches.size.toFloat() / rigidMatchedCount.coerceAtLeast(1) >=
             StarSimilarityRegistrar.MIN_ROTATION_INLIER_RATIO &&
             SpatialStarDistributionValidator().evaluate(rigidMatches.map { it.reference.asDetectedStar() },
                 reference.width, reference.height).rotationAllowed
@@ -177,7 +182,8 @@ class StellarCentroidFrameRefiner(
         rotationDiagnostic("frame=$frameId fullResolutionRigid allowed=${rigidRegistration.rotationAllowed} " +
             "reliable=${rigidRegistration.isReliable} reason=${rigidRegistration.rotationRejectionReason} " +
             "angle=${rigidRegistration.rotationRadians} matches=${rigidRegistration.matchedStars} " +
-            "inliers=${rigidRegistration.inlierStars} measured=${evidenceMatches.size} verified=${rigidMatches.size} " +
+            "inliers=${rigidRegistration.inlierStars} measured=${evidenceMatches.size} " +
+            "pairedMatched=$rigidMatchedCount verified=${rigidMatches.size} " +
             "median=${rigidResiduals?.let(::median)} p90=${rigidResiduals?.let { percentile(it, 0.9f) }} " +
             "gate=${rigid?.let { decideTransform(initialTransform, it, znccTransform, rigidMatches,
                 selection.selected.map { patch -> patch.sector }.distinct().size, searchRadius,

@@ -30,16 +30,21 @@ import org.junit.Test
 class LocalFullResolutionCorrespondenceAuditTest {
     @Test fun checksIndependentFullResolutionCorrespondences() {
         val path = System.getenv("ASTROPHOTO_CORRESPONDENCE_AUDIT_ROOT")
-        assumeTrue("Local backed-up sessions required", !path.isNullOrBlank())
-        val root = File(requireNotNull(path))
-        val sessions = listOf("Session_20260901_013659_дорога_20", "Session_20260828_220247_дом100",
+        val directInputs = System.getenv("ASTROPHOTO_CORRESPONDENCE_INPUT_DIR")?.takeIf { it.isNotBlank() }
+        assumeTrue("Local backed-up sessions required", !path.isNullOrBlank() || !directInputs.isNullOrBlank())
+        val root = path?.let(::File)
+        val sessions = if (!directInputs.isNullOrBlank()) listOf("explicit-local-copy") else
+            listOf("Session_20260901_013659_дорога_20", "Session_20260828_220247_дом100",
             "Session_20260828_231111", "Session_20260829_001615", "Session_20260813_001021_дорога_20")
         val onlySession = System.getenv("ASTROPHOTO_CORRESPONDENCE_SESSION")
+        val sampleCount = System.getenv("ASTROPHOTO_CORRESPONDENCE_SAMPLE_COUNT")?.toInt() ?: 10
+        require(sampleCount in 3..60)
         for (session in sessions.filter { onlySession == null || it == onlySession }) {
-            val inputs = File(root, "$session/Lights/JPEG").listFiles().orEmpty()
+            val inputDirectory = directInputs?.let(::File) ?: File(requireNotNull(root), "$session/Lights/JPEG")
+            val inputs = inputDirectory.listFiles().orEmpty()
                 .filter { it.extension.equals("jpg", true) }.sortedBy { it.name }
-            assertTrue("Missing local session: $session", inputs.size >= 10)
-            val sample = (0..9).map { inputs[it * (inputs.size - 1) / 9] }
+            assertTrue("Missing local session: $session", inputs.size >= sampleCount)
+            val sample = (0 until sampleCount).map { inputs[it * (inputs.size - 1) / (sampleCount - 1)] }
             fun hash(file: File) = MessageDigest.getInstance("SHA-256").digest(file.readBytes()).toList()
             val before = sample.associateWith(::hash)
             var width = 0; var height = 0
@@ -81,7 +86,9 @@ class LocalFullResolutionCorrespondenceAuditTest {
                 val result = StarSimilarityRegistrar().registerAutomatic(frames[reference], frames[index], width, height)
                 if (result.isReliable) reliable++
                 if (result.isReliable) {
-                    val refined = StellarCentroidFrameRefiner().refine(
+                    val refined = StellarCentroidFrameRefiner(rotationDiagnostic = {
+                        println("FULL_RIGID session=$session $it")
+                    }).refine(
                         frameId = sample[index].name, isReference = false, reference = referenceSource,
                         candidate = source(sample[index]), initialTransform = result.referenceToSourceTransform(),
                         znccTransform = result.referenceToSourceTransform(), patches = patches,
@@ -96,7 +103,16 @@ class LocalFullResolutionCorrespondenceAuditTest {
                     println("FULL_CENTROID session=$session candidate=${sample[index].name} " +
                         "accepted=${refined.accepted} matches=${refined.acceptedStarCount} " +
                         "median=${refined.medianResidual} p90=${refined.percentile90Residual} reason=${refined.rejectionReason} " +
-                        "identityAccepted=${identity.accepted} identityReason=${identity.rejectionReason}")
+                        "identityAccepted=${identity.accepted} identityReason=${identity.rejectionReason} " +
+                        "dx=${refined.refinedTransform.dx} dy=${refined.refinedTransform.dy} " +
+                        "rotation=${refined.refinedTransform.rotationRadians}")
+                    refined.matches.forEach { match ->
+                        println("FULL_CENTROID_PAIR frame=${sample[index].name} " +
+                            "reference=${match.reference.x},${match.reference.y} " +
+                            "candidate=${match.candidate.x},${match.candidate.y} " +
+                            "accepted=${match.accepted} reason=${match.rejectionReason} " +
+                            "snr=${minOf(match.reference.snr, match.candidate.snr)}")
+                    }
                 }
                 println("FULL_CORRESPONDENCE session=$session reference=${sample[reference].name} candidate=${sample[index].name} " +
                     "reliable=${result.isReliable} inliers=${result.inlierStars} residual=${result.residualError} " +

@@ -704,7 +704,7 @@ class StarSimilarityRegistrar(
         private const val AUTOMATIC_TRANSLATION_INLIER_TOLERANCE = 0.75f
         private const val AUTOMATIC_TRANSLATION_MATCH_TOLERANCE = 1.35f
         private const val AUTOMATIC_ROTATION_INLIER_TOLERANCE = 0.45f
-        private const val AUTOMATIC_ROTATION_MATCH_TOLERANCE = 1.10f
+        internal const val AUTOMATIC_ROTATION_MATCH_TOLERANCE = 1.10f
         private const val MAX_RIGID_PAIR_DISTANCE_ERROR = 1.5f
         private const val MIN_ROTATION_RESIDUAL_IMPROVEMENT = 0.05f
         private val MAX_SEQUENCE_ROTATION_DISAGREEMENT = Math.toRadians(0.20).toFloat()
