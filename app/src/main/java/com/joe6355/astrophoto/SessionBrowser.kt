@@ -33,7 +33,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -61,6 +63,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
@@ -380,7 +383,8 @@ fun SessionsScreen(
     onBack: () -> Unit,
     statusMessage: String? = null,
     onManageSession: (SessionSummary, SessionManagementAction) -> Unit,
-    onOpenDetails: (SessionSummary) -> Unit
+    onOpenDetails: (SessionSummary) -> Unit,
+    listState: LazyListState = rememberLazyListState()
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val repository = remember { SessionBrowserRepository(context.applicationContext) }
@@ -484,7 +488,8 @@ fun SessionsScreen(
 
             else -> {
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    state = listState,
+                    modifier = Modifier.fillMaxSize().testTag("sessions-list"),
                     contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(AstroSpacing.Md)
                 ) {
@@ -592,6 +597,7 @@ fun SessionDetailsScreen(
     initialManagementAction: SessionManagementAction? = null,
     onManagementActionHandled: () -> Unit = {}
 ) {
+    val detailsListState = rememberLazyListState()
     val context = androidx.compose.ui.platform.LocalContext.current
     val sessionStore = remember { ShootingSessionStore(context.applicationContext) }
     val repository = remember { SessionBrowserRepository(context.applicationContext) }
@@ -929,8 +935,10 @@ fun SessionDetailsScreen(
     }
 
     LazyColumn(
+        state = detailsListState,
         modifier = Modifier
             .fillMaxSize()
+            .testTag("session-details-list")
             .safeDrawingPadding(),
         contentPadding = PaddingValues(16.dp, 24.dp, 16.dp, 36.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)

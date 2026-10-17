@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -120,6 +121,8 @@ private fun AstroPhotoApp(
         mutableStateOf(!appSettingsStore.isOnboardingSeen())
     }
     val navigation = remember { AppNavigationController() }
+    // This screen leaves composition while a session is open; its scroll position must not.
+    val sessionsListState = rememberLazyListState()
     val currentScreen by navigation.currentScreen
     var showExitDialog by navigation.showExitDialog
     var helpReturnScreen by remember { mutableStateOf(AppScreen.Diagnostics) }
@@ -265,6 +268,7 @@ private fun AstroPhotoApp(
                     }
                 )
                 AppScreen.Sessions -> SessionsScreen(
+                    listState = sessionsListState,
                     onBack = { navigateBack() },
                     statusMessage = sessionManagerMessage,
                     onManageSession = { session, action ->
@@ -303,6 +307,7 @@ private fun AstroPhotoApp(
                     )
                 } ?: run {
                     SessionsScreen(
+                        listState = sessionsListState,
                         onBack = { navigateBack() },
                         statusMessage = sessionManagerMessage,
                         onManageSession = { session, action ->

@@ -1,5 +1,7 @@
 package com.joe6355.astrophoto
 
+import androidx.activity.compose.BackHandler
+
 import android.content.ContentUris
 import android.content.Context
 import android.graphics.Bitmap
@@ -26,6 +28,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Button
@@ -409,6 +412,8 @@ fun SessionFramesScreen(
     session: SessionSummary,
     onBack: () -> Unit
 ) {
+    val framesListState = rememberLazyListState()
+    BackHandler(onBack = onBack)
     val context = androidx.compose.ui.platform.LocalContext.current
     val repository = remember { SessionFramesRepository(context.applicationContext) }
     val cropsRepository = remember { CroppedFramesRepository(context.applicationContext) }
@@ -541,7 +546,8 @@ fun SessionFramesScreen(
             }
             else -> {
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    state = framesListState,
+                    modifier = Modifier.fillMaxSize().testTag("session-frames-list"),
                     contentPadding = PaddingValues(top = 10.dp, bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {

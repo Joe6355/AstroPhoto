@@ -1,5 +1,7 @@
 package com.joe6355.astrophoto
 
+import androidx.activity.compose.BackHandler
+
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -370,6 +372,7 @@ fun JpegAutoSelectionScreen(
     onBack: () -> Unit,
     onApplied: () -> Unit
 ) {
+    BackHandler(onBack = onBack)
     val context = androidx.compose.ui.platform.LocalContext.current
     val framesRepository = remember {
         SessionFramesRepository(context.applicationContext)

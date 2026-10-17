@@ -1,5 +1,7 @@
 package com.joe6355.astrophoto
 
+import androidx.activity.compose.BackHandler
+
 import android.content.ClipData
 import android.content.ContentUris
 import android.content.ContentValues
@@ -28,6 +30,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.Button
 import androidx.compose.material3.AlertDialog
@@ -670,6 +673,8 @@ fun ProcessedResultsScreen(
     onBack: () -> Unit,
     initialEditorFileName: String? = null
 ) {
+    val resultsListState = rememberLazyListState()
+    BackHandler(onBack = onBack)
     val context = androidx.compose.ui.platform.LocalContext.current
     val repository = remember {
         ProcessedResultsRepository(context.applicationContext)
@@ -857,7 +862,8 @@ fun ProcessedResultsScreen(
             }
             else -> {
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    state = resultsListState,
+                    modifier = Modifier.fillMaxSize().testTag("processed-results-list"),
                     contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {

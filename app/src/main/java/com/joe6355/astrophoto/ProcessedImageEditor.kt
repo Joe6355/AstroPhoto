@@ -1,5 +1,7 @@
 package com.joe6355.astrophoto
 
+import androidx.activity.compose.BackHandler
+
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
@@ -944,6 +946,7 @@ fun ProcessedImageEditorScreen(
     onBack: () -> Unit,
     onSaved: () -> Unit
 ) {
+    BackHandler(onBack = onBack)
     val locale = LocalConfiguration.current.locales[0]
     val context = androidx.compose.ui.platform.LocalContext.current
     val editor = remember { ProcessedImageEditor(context.applicationContext) }
