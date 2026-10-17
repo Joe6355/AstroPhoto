@@ -30,6 +30,7 @@
         android:theme="@style/Theme.AstroPhoto">
         <activity
             android:name=".MainActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout"
             android:exported="true"
             android:theme="@style/Theme.AstroPhoto"
             android:windowSoftInputMode="adjustResize">
