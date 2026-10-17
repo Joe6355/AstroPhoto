@@ -1,6 +1,7 @@
 package com.joe6355.astrophoto.processing.jpeg.v2.registration
 
 import com.joe6355.astrophoto.processing.jpeg.v2.model.RegistrationResult
+import com.joe6355.astrophoto.processing.jpeg.v2.model.TransformPoint
 import kotlin.math.abs
 import kotlin.math.hypot
 
@@ -22,9 +23,11 @@ data class TransformSequenceValidation(
 )
 
 class TransformSequenceValidator {
+    /** Compare all motion at one reference point, retaining the original sampling transforms. */
     fun validate(
         values: List<OrderedRegistration>,
         expectedMotionModel: ExpectedSequenceMotionModel? = null,
+        comparisonPoint: TransformPoint = TransformPoint(0f, 0f),
         retryTranslationOnly: (OrderedRegistration) -> RegistrationResult? = { null }
     ): TransformSequenceValidation {
         if (values.isEmpty()) return TransformSequenceValidation(emptyList(), 0f, emptyList(), emptyList())
@@ -33,7 +36,7 @@ class TransformSequenceValidator {
         if (reliable.size < 3) {
             val priorLimit = motionPriorLimit(expectedMotionModel)
             val validated = ordered.mapIndexed { index, entry ->
-                val priorDeviation = motionPriorDeviation(entry, expectedMotionModel)
+                val priorDeviation = motionPriorDeviation(entry, expectedMotionModel, comparisonPoint)
                 val disagreesWithPrior =
                     entry.registration.isReliable &&
                         !entry.isReference &&
@@ -51,12 +54,12 @@ class TransformSequenceValidator {
                             entry.registration.isReliable && !disagreesWithPrior
                         ) 1f else 0f,
                         transformSequenceDeviation = priorDeviation,
-                        neighborTransformDelta = neighborDelta(entry, ordered.getOrNull(index - 1))
+                        neighborTransformDelta = neighborDelta(entry, ordered.getOrNull(index - 1), comparisonPoint)
                     )
                 )
             }
             val smoothness = if (reliable.size >= 2) 1f else 0f
-            val priorAgreement = priorAgreementScore(ordered, expectedMotionModel)
+            val priorAgreement = priorAgreementScore(ordered, expectedMotionModel, comparisonPoint)
             return TransformSequenceValidation(
                 validated,
                 minOf(smoothness, priorAgreement),
@@ -69,10 +72,10 @@ class TransformSequenceValidator {
         }
 
         val stepDx = reliable.zipWithNext { first, second ->
-            second.registration.dx - first.registration.dx
+            displacement(second, comparisonPoint).x - displacement(first, comparisonPoint).x
         }
         val stepDy = reliable.zipWithNext { first, second ->
-            second.registration.dy - first.registration.dy
+            displacement(second, comparisonPoint).y - displacement(first, comparisonPoint).y
         }
         val medianStepDx = median(stepDx)
         val medianStepDy = median(stepDy)
@@ -104,18 +107,20 @@ class TransformSequenceValidator {
                 previous,
                 next,
                 medianStepDx,
-                medianStepDy
+                medianStepDy,
+                comparisonPoint
             )
             val rotationDeviation = localRotationDeviation(entry, previous, next, medianRotationStep)
-            val currentNeighborDelta = neighborDelta(entry, previous)
+            val currentNeighborDelta = neighborDelta(entry, previous, comparisonPoint)
             val directionReversal = hasUnsupportedDirectionReversal(
                 previous,
                 entry,
                 next,
                 medianStepDx,
-                medianStepDy
+                medianStepDy,
+                comparisonPoint
             )
-            val priorDeviation = motionPriorDeviation(entry, expectedMotionModel)
+            val priorDeviation = motionPriorDeviation(entry, expectedMotionModel, comparisonPoint)
             val priorLimit = motionPriorLimit(expectedMotionModel)
             if (expectedMotionModel?.motionObservable == true) {
                 totalPriorDeviation += priorDeviation
@@ -151,10 +156,11 @@ class TransformSequenceValidator {
                     previous,
                     next,
                     medianStepDx,
-                    medianStepDy
+                    medianStepDy,
+                    comparisonPoint
                 )
                 val retryRotationDeviation = localRotationDeviation(retryEntry, previous, next, medianRotationStep)
-                val retryPriorDeviation = motionPriorDeviation(retryEntry, expectedMotionModel)
+                val retryPriorDeviation = motionPriorDeviation(retryEntry, expectedMotionModel, comparisonPoint)
                 if (
                     retryDeviation <= translationLimit &&
                     retryRotationDeviation <= rotationLimit &&
@@ -171,7 +177,7 @@ class TransformSequenceValidator {
                             transformRetryUsed = true,
                             transformSequenceScore = sequenceEntryScore(retryDeviation, translationLimit),
                             transformSequenceDeviation = retryDeviation,
-                            neighborTransformDelta = neighborDelta(retryEntry, previous)
+                            neighborTransformDelta = neighborDelta(retryEntry, previous, comparisonPoint)
                         )
                     )
                     invalidReason = null
@@ -212,13 +218,15 @@ class TransformSequenceValidator {
 
     private fun motionPriorDeviation(
         value: OrderedRegistration,
-        prior: ExpectedSequenceMotionModel?
+        prior: ExpectedSequenceMotionModel?,
+        comparisonPoint: TransformPoint
     ): Float {
         if (prior == null) return 0f
         val predicted = prior.predictedTransform(value.captureIndex)
+        val observed = displacement(value, comparisonPoint)
         return hypot(
-            value.registration.dx - predicted.dx,
-            value.registration.dy - predicted.dy
+            observed.x - predicted.dx,
+            observed.y - predicted.dy
         )
     }
 
@@ -231,13 +239,14 @@ class TransformSequenceValidator {
 
     private fun priorAgreementScore(
         values: List<OrderedRegistration>,
-        prior: ExpectedSequenceMotionModel?
+        prior: ExpectedSequenceMotionModel?,
+        comparisonPoint: TransformPoint
     ): Float {
         if (prior?.motionObservable != true) return 1f
         val comparable = values.filter { it.registration.isReliable && !it.isReference }
         if (comparable.isEmpty()) return 0f
         val limit = motionPriorLimit(prior)
-        return (1f - comparable.map { motionPriorDeviation(it, prior) }.average().toFloat() /
+        return (1f - comparable.map { motionPriorDeviation(it, prior, comparisonPoint) }.average().toFloat() /
             limit.coerceAtLeast(0.001f)).coerceIn(0f, 1f)
     }
 
@@ -246,27 +255,33 @@ class TransformSequenceValidator {
         previous: OrderedRegistration?,
         next: OrderedRegistration?,
         medianStepDx: Float,
-        medianStepDy: Float
-    ): Float = when {
-        previous != null && next != null -> minOf(
-            hypot(
-                current.registration.dx - previous.registration.dx - medianStepDx,
-                current.registration.dy - previous.registration.dy - medianStepDy
-            ),
-            hypot(
-                next.registration.dx - current.registration.dx - medianStepDx,
-                next.registration.dy - current.registration.dy - medianStepDy
+        medianStepDy: Float,
+        comparisonPoint: TransformPoint
+    ): Float {
+        val currentPoint = displacement(current, comparisonPoint)
+        val previousPoint = previous?.let { displacement(it, comparisonPoint) }
+        val nextPoint = next?.let { displacement(it, comparisonPoint) }
+        return when {
+            previousPoint != null && nextPoint != null -> minOf(
+                hypot(
+                    currentPoint.x - previousPoint.x - medianStepDx,
+                    currentPoint.y - previousPoint.y - medianStepDy
+                ),
+                hypot(
+                    nextPoint.x - currentPoint.x - medianStepDx,
+                    nextPoint.y - currentPoint.y - medianStepDy
+                )
             )
-        )
-        previous != null -> hypot(
-            current.registration.dx - previous.registration.dx - medianStepDx,
-            current.registration.dy - previous.registration.dy - medianStepDy
-        )
-        next != null -> hypot(
-            next.registration.dx - current.registration.dx - medianStepDx,
-            next.registration.dy - current.registration.dy - medianStepDy
-        )
-        else -> 0f
+            previousPoint != null -> hypot(
+                currentPoint.x - previousPoint.x - medianStepDx,
+                currentPoint.y - previousPoint.y - medianStepDy
+            )
+            nextPoint != null -> hypot(
+                nextPoint.x - currentPoint.x - medianStepDx,
+                nextPoint.y - currentPoint.y - medianStepDy
+            )
+            else -> 0f
+        }
     }
 
     private fun localRotationDeviation(
@@ -299,13 +314,17 @@ class TransformSequenceValidator {
         current: OrderedRegistration,
         next: OrderedRegistration?,
         medianStepDx: Float,
-        medianStepDy: Float
+        medianStepDy: Float,
+        comparisonPoint: TransformPoint
     ): Boolean {
         if (previous == null || next == null) return false
-        val firstDx = current.registration.dx - previous.registration.dx
-        val firstDy = current.registration.dy - previous.registration.dy
-        val secondDx = next.registration.dx - current.registration.dx
-        val secondDy = next.registration.dy - current.registration.dy
+        val previousPoint = displacement(previous, comparisonPoint)
+        val currentPoint = displacement(current, comparisonPoint)
+        val nextPoint = displacement(next, comparisonPoint)
+        val firstDx = currentPoint.x - previousPoint.x
+        val firstDy = currentPoint.y - previousPoint.y
+        val secondDx = nextPoint.x - currentPoint.x
+        val secondDy = nextPoint.y - currentPoint.y
         val firstLength = hypot(firstDx, firstDy)
         val secondLength = hypot(secondDx, secondDy)
         if (firstLength < MIN_DIRECTION_STEP_PX || secondLength < MIN_DIRECTION_STEP_PX) return false
@@ -321,13 +340,26 @@ class TransformSequenceValidator {
 
     private fun neighborDelta(
         current: OrderedRegistration,
-        previous: OrderedRegistration?
+        previous: OrderedRegistration?,
+        comparisonPoint: TransformPoint
     ): Float = previous?.let {
+        val currentPoint = displacement(current, comparisonPoint)
+        val previousPoint = displacement(it, comparisonPoint)
         hypot(
-            current.registration.dx - it.registration.dx,
-            current.registration.dy - it.registration.dy
+            currentPoint.x - previousPoint.x,
+            currentPoint.y - previousPoint.y
         )
     } ?: 0f
+
+    /** Origin offsets of a rotating transform are not its displacement at the model's anchor. */
+    private fun displacement(value: OrderedRegistration, point: TransformPoint): TransformPoint {
+        val registration = value.registration
+        if (registration.rotationRadians == 0f && registration.scale == 1f) {
+            return TransformPoint(registration.dx, registration.dy)
+        }
+        val mapped = registration.referenceToSourceTransform().mapOutputToSource(point.x, point.y)
+        return TransformPoint(mapped.x - point.x, mapped.y - point.y)
+    }
 
     private fun replace(
         values: MutableList<OrderedRegistration>,

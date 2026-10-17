@@ -12,6 +12,7 @@ import java.util.UUID
 import com.joe6355.astrophoto.processing.jpeg.v2.diagnostics.ProcessingReport
 import com.joe6355.astrophoto.processing.jpeg.v2.model.RegistrationResult
 import com.joe6355.astrophoto.processing.jpeg.v2.model.SkyMask
+import com.joe6355.astrophoto.processing.jpeg.v2.model.TransformPoint
 import com.joe6355.astrophoto.processing.jpeg.v2.registration.FrameAcceptanceDecision
 import com.joe6355.astrophoto.processing.jpeg.v2.registration.FullResolutionRefinementResult
 import com.joe6355.astrophoto.processing.jpeg.v2.registration.FullResolutionRegistrationRefiner
@@ -103,7 +104,8 @@ internal fun prepareProvisionalProfileRegistration(
             residual = diagnostics.model.residual * fullVelocityScale,
             motionObservable = diagnostics.model.motionObservable,
             verificationScore = diagnostics.verification.selectedModel.score
-        )
+        ),
+        comparisonPoint = TransformPoint(selection.targetWidth * 0.5f, selection.targetHeight * 0.5f)
     )
     val validatedByKey = sequenceValidation.registrations.associate {
         it.frameId to it.registration

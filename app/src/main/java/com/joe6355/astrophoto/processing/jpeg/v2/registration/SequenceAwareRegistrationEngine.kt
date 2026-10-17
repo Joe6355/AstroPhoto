@@ -156,10 +156,12 @@ class SequenceAwareRegistrationEngine(
                         imageHeight
                     ) <= MAX_LEGACY_LOCAL_REFINEMENT
             } ?: local.transform
+            val selectedCenter = selectedTransform.mapOutputToSource(imageWidth * 0.5f, imageHeight * 0.5f)
+            val predictedCenter = predicted.mapOutputToSource(imageWidth * 0.5f, imageHeight * 0.5f)
             val effectiveLocal = local.copy(
                 transform = selectedTransform,
-                correctionDx = selectedTransform.dx - predicted.dx,
-                correctionDy = selectedTransform.dy - predicted.dy
+                correctionDx = selectedCenter.x - predictedCenter.x,
+                correctionDy = selectedCenter.y - predictedCenter.y
             )
             val agreement = sequenceAgreement(
                 selectedTransform,

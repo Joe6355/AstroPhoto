@@ -165,6 +165,8 @@ class StarSimilarityRegistrar(
                 evaluation = it,
                 allReferenceCount = allReferences.size,
                 allCandidateCount = allCandidates.size,
+                evaluatedReferenceCount = references.size,
+                evaluatedCandidateCount = candidates.size,
                 imageWidth = imageWidth,
                 imageHeight = imageHeight,
                 model = "TRANSLATION_ONLY",
@@ -231,6 +233,8 @@ class StarSimilarityRegistrar(
             evaluation = rigid,
             allReferenceCount = allReferences.size,
             allCandidateCount = allCandidates.size,
+            evaluatedReferenceCount = references.size,
+            evaluatedCandidateCount = candidates.size,
             imageWidth = imageWidth,
             imageHeight = imageHeight,
             model = "FIXED_SCALE_RIGID",
@@ -283,6 +287,8 @@ class StarSimilarityRegistrar(
             evaluation = selected,
             allReferenceCount = allReferences.size,
             allCandidateCount = allCandidates.size,
+            evaluatedReferenceCount = references.size,
+            evaluatedCandidateCount = candidates.size,
             imageWidth = imageWidth,
             imageHeight = imageHeight,
             model = "SEQUENCE_TRANSLATION",
@@ -442,6 +448,8 @@ class StarSimilarityRegistrar(
         evaluation: Evaluation,
         allReferenceCount: Int,
         allCandidateCount: Int,
+        evaluatedReferenceCount: Int,
+        evaluatedCandidateCount: Int,
         imageWidth: Int,
         imageHeight: Int,
         model: String,
@@ -449,8 +457,10 @@ class StarSimilarityRegistrar(
         rotationRejectionReason: String?,
         distribution: SpatialStarDistribution?
     ): RegistrationResult {
+        // Only the bounded catalogs participate in matching. Unexamined faint detections
+        // must not reduce coverage or confidence; keep their full counts for diagnostics.
         val coverage = evaluation.inliers.toFloat() /
-            minOf(allReferenceCount, allCandidateCount).coerceAtLeast(1)
+            minOf(evaluatedReferenceCount, evaluatedCandidateCount).coerceAtLeast(1)
         val inlierRatio = evaluation.inliers.toFloat() / evaluation.matches.coerceAtLeast(1)
         val residualLimit = if (rotationAllowed) MAX_ROTATION_RESIDUAL else MAX_TRANSLATION_RESIDUAL
         val confidence = (
