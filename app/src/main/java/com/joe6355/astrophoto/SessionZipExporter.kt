@@ -325,6 +325,7 @@ class SessionZipExporter(private val context: Context) {
             }
         }
         appendFallbackProcessingReports(sources, session)
+        appendFrameMarks(sources, session)
         sources.removeAll { it.relativePath.equals("session_info.txt", ignoreCase = true) }
         if (sources.none {
                 it.relativePath.equals("session_info.txt", ignoreCase = true)
@@ -363,6 +364,7 @@ class SessionZipExporter(private val context: Context) {
             mutableListOf()
         }
         appendFallbackProcessingReports(sources, session)
+        appendFrameMarks(sources, session)
         sources.removeAll { it.relativePath.equals("session_info.txt", ignoreCase = true) }
         if (sources.none {
                 it.relativePath.equals("session_info.txt", ignoreCase = true)
@@ -376,6 +378,13 @@ class SessionZipExporter(private val context: Context) {
             )
         }
         return sources
+    }
+
+    private fun appendFrameMarks(sources: MutableList<ZipSource>, session: SessionSummary) {
+        val content = FrameMarksStore(context).readForExport(session) ?: return
+        val bytes = content.toByteArray(Charsets.UTF_8)
+        sources.removeAll { it.relativePath.equals("frame_marks.json", ignoreCase = true) }
+        sources += ZipSource("frame_marks.json", bytes.size.toLong()) { bytes.inputStream() }
     }
 
     private fun appendFallbackProcessingReports(

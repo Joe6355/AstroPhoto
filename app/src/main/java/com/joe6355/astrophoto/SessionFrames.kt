@@ -1,7 +1,6 @@
 package com.joe6355.astrophoto
 
 import android.content.ContentUris
-import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -71,7 +70,6 @@ import com.joe6355.astrophoto.ui.theme.AstroColors
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -278,6 +276,8 @@ class SessionFramesRepository(private val context: Context) {
 }
 
 class FrameMarksStore(private val context: Context) {
+    private val files = SessionSidecarFiles(File(context.filesDir, "frame-marks"), "json", ::readLegacyContent)
+
     suspend fun loadOrCreate(session: SessionSummary): FrameMarks =
         withContext(Dispatchers.IO) {
             runCatching {
@@ -297,6 +297,14 @@ class FrameMarksStore(private val context: Context) {
             runCatching { saveInternal(session, marks) }
         }
 
+    internal fun prepareRename(oldFolder: String, newFolder: String) {
+        if (oldFolder != newFolder) files.prepareRename(oldFolder, newFolder)
+    }
+
+    internal fun delete(folder: String): Boolean = files.delete(folder)
+
+    internal fun readForExport(session: SessionSummary): String? = readContent(session)
+
     private fun parse(content: String): FrameMarks = runCatching {
         val json = JSONObject(content)
         val bad = json.optJSONArray("bad").toStringSet()
@@ -313,64 +321,28 @@ class FrameMarksStore(private val context: Context) {
         put("autoBad", JSONArray(marks.autoBad.intersect(marks.bad).sorted()))
     }.toString(2)
 
-    private fun readContent(session: SessionSummary): String? {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val uri = findMediaStoreUri(session) ?: return null
-            return context.contentResolver.openInputStream(uri)
-                ?.bufferedReader()
-                ?.use { it.readText() }
-        }
-        return legacyFile(session).takeIf { it.exists() }?.readText()
-    }
+    private fun readContent(session: SessionSummary): String? = files.read(session.folderName)
 
     private fun saveInternal(session: SessionSummary, marks: FrameMarks) {
-        val content = encode(marks)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val resolver = context.contentResolver
-            val collection = MediaStore.Files.getContentUri("external")
-            val relativePath =
-                "${Environment.DIRECTORY_PICTURES}/AstroPhoto/${session.folderName}/"
-            var inserted = false
-            val uri = findMediaStoreUri(session) ?: resolver.insert(
-                collection,
-                ContentValues().apply {
-                    put(MediaStore.Files.FileColumns.DISPLAY_NAME, "frame_marks.json")
-                    put(MediaStore.Files.FileColumns.MIME_TYPE, "application/json")
-                    put(MediaStore.Files.FileColumns.RELATIVE_PATH, relativePath)
-                    put(MediaStore.Files.FileColumns.IS_PENDING, 1)
-                }
-            )?.also { inserted = true } ?: error("Не удалось создать frame_marks.json")
-
-            try {
-                resolver.openOutputStream(uri, "wt")?.bufferedWriter()?.use {
-                    it.write(content)
-                } ?: error("Не удалось записать frame_marks.json")
-                if (inserted) {
-                    resolver.update(
-                        uri,
-                        ContentValues().apply {
-                            put(MediaStore.Files.FileColumns.IS_PENDING, 0)
-                        },
-                        null,
-                        null
-                    )
-                }
-            } catch (exception: Exception) {
-                if (inserted) resolver.delete(uri, null, null)
-                throw exception
-            }
-        } else {
-            val file = legacyFile(session)
-            file.parentFile?.mkdirs()
-            FileOutputStream(file).bufferedWriter().use { it.write(content) }
-        }
+        files.write(session.folderName, encode(marks))
     }
 
-    private fun findMediaStoreUri(session: SessionSummary): Uri? {
+    private fun readLegacyContent(folder: String): String? = runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val uri = findMediaStoreUri(folder) ?: return@runCatching null
+            context.contentResolver.openInputStream(uri)
+                ?.bufferedReader(Charsets.UTF_8)
+                ?.use { it.readText() }
+        } else {
+            legacyFile(folder).takeIf { it.isFile }?.readText(Charsets.UTF_8)
+        }
+    }.getOrNull()
+
+    private fun findMediaStoreUri(folder: String): Uri? {
         val resolver = context.contentResolver
         val collection = MediaStore.Files.getContentUri("external")
         val relativePath =
-            "${Environment.DIRECTORY_PICTURES}/AstroPhoto/${session.folderName}/"
+            "${Environment.DIRECTORY_PICTURES}/AstroPhoto/$folder/"
         return resolver.query(
             collection,
             arrayOf(MediaStore.Files.FileColumns._ID),
@@ -388,13 +360,13 @@ class FrameMarksStore(private val context: Context) {
     }
 
     @Suppress("DEPRECATION")
-    private fun legacyFile(session: SessionSummary): File {
+    private fun legacyFile(folder: String): File {
         val pictures = Environment.getExternalStoragePublicDirectory(
             Environment.DIRECTORY_PICTURES
         )
         return File(
             pictures,
-            "AstroPhoto/${session.folderName}/frame_marks.json"
+            "AstroPhoto/$folder/frame_marks.json"
         )
     }
 
@@ -444,6 +416,8 @@ fun SessionFramesScreen(
     val coroutineScope = rememberCoroutineScope()
     var frames by remember { mutableStateOf<List<SessionFrame>>(emptyList()) }
     var marks by remember { mutableStateOf(FrameMarks()) }
+    var savingMarks by remember { mutableStateOf(false) }
+    var markSaveError by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
     var selectedCategory by remember { mutableStateOf(SessionFrameCategory.LIGHTS_JPEG) }
     var selectedFrame by remember { mutableStateOf<SessionFrame?>(null) }
@@ -483,9 +457,17 @@ fun SessionFramesScreen(
     }
 
     fun updateMarks(updated: FrameMarks) {
-        marks = updated
+        if (savingMarks) return
+        savingMarks = true
+        markSaveError = null
         coroutineScope.launch {
-            marksStore.save(session, updated)
+            try {
+                marksStore.save(session, updated)
+                    .onSuccess { marks = updated }
+                    .onFailure { markSaveError = "Не удалось сохранить отметку. Повтори попытку." }
+            } finally {
+                savingMarks = false
+            }
         }
     }
 
@@ -517,6 +499,7 @@ fun SessionFramesScreen(
         AstroSecondaryButton(
             text = "Автоотбор JPEG",
             onClick = { showingAutoSelection = true },
+            enabled = !loading && !savingMarks,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(bottom = AstroSpacing.Sm)
@@ -536,6 +519,10 @@ fun SessionFramesScreen(
                 color = AstroColors.Warning,
                 style = MaterialTheme.typography.bodySmall
             )
+        }
+        markSaveError?.let {
+            Text(it, color = AstroColors.Error, style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = AstroSpacing.Sm))
         }
 
         when {
@@ -569,6 +556,7 @@ fun SessionFramesScreen(
                         SessionFrameCard(
                             frame = frame,
                             marks = marks,
+                            markingEnabled = !savingMarks,
                             repository = repository,
                             cropEntry = cropEntry,
                             onClick = { selectedFrame = frame },
@@ -610,6 +598,8 @@ fun SessionFramesScreen(
         FrameViewerDialog(
             frame = frame,
             marks = marks,
+            markingEnabled = !savingMarks,
+            markSaveError = markSaveError,
             repository = repository,
             cropEntry = cropEntry,
             hasPrevious = index > 0,
@@ -666,6 +656,7 @@ fun SessionFramesScreen(
 private fun SessionFrameCard(
     frame: SessionFrame,
     marks: FrameMarks,
+    markingEnabled: Boolean,
     repository: SessionFramesRepository,
     cropEntry: CropManifestEntry?,
     onClick: () -> Unit,
@@ -739,6 +730,7 @@ private fun SessionFrameCard(
         FrameActionRow(
             bad = frame.markKey in marks.bad,
             favorite = frame.markKey in marks.favorite,
+            markingEnabled = markingEnabled,
             canCrop = canCrop,
             cropExists = cropEntry != null,
             onToggleBad = onToggleBad,
@@ -767,7 +759,8 @@ fun FrameActionRow(
     onToggleBad: () -> Unit,
     onToggleFavorite: () -> Unit,
     onCrop: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    markingEnabled: Boolean = true
 ) {
     Row(
         modifier = modifier
@@ -777,6 +770,7 @@ fun FrameActionRow(
     ) {
         TextButton(
             onClick = onToggleBad,
+            enabled = markingEnabled,
             contentPadding = PaddingValues(horizontal = 2.dp),
             modifier = Modifier
                 .weight(1f)
@@ -793,6 +787,7 @@ fun FrameActionRow(
         }
         TextButton(
             onClick = onToggleFavorite,
+            enabled = markingEnabled,
             contentPadding = PaddingValues(horizontal = 2.dp),
             modifier = Modifier
                 .weight(1.45f)
@@ -830,6 +825,8 @@ fun FrameActionRow(
 private fun FrameViewerDialog(
     frame: SessionFrame,
     marks: FrameMarks,
+    markingEnabled: Boolean,
+    markSaveError: String?,
     repository: SessionFramesRepository,
     cropEntry: CropManifestEntry?,
     hasPrevious: Boolean,
@@ -877,6 +874,9 @@ private fun FrameViewerDialog(
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
+            markSaveError?.let {
+                Text(it, color = AstroColors.Error, style = MaterialTheme.typography.bodySmall)
+            }
 
             Box(
                 modifier = Modifier
@@ -902,12 +902,14 @@ private fun FrameViewerDialog(
             ) {
                 Button(
                     onClick = onToggleBad,
+                    enabled = markingEnabled,
                     modifier = Modifier.weight(1f)
                 ) {
                     Text(if (frame.markKey in marks.bad) "Снять брак" else "Брак")
                 }
                 Button(
                     onClick = onToggleFavorite,
+                    enabled = markingEnabled,
                     modifier = Modifier.weight(1f)
                 ) {
                     Text(

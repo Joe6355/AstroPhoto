@@ -6,51 +6,23 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import java.io.File
-import java.io.FileOutputStream
-import java.nio.file.AtomicMoveNotSupportedException
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 
 /** Authoritative session metadata. Public legacy sidecars remain readable; ZIP includes this copy. */
 internal class SessionInfoStore(
-    private val filesRoot: File,
-    private val readLegacy: (String) -> String? = { null }
+    filesRoot: File,
+    readLegacy: (String) -> String? = { null }
 ) {
     constructor(context: Context) : this(context.filesDir, { folder -> readLegacyInfo(context, folder) })
 
-    private val root get() = File(filesRoot, "session-info")
+    private val files = SessionSidecarFiles(File(filesRoot, "session-info"), "txt", readLegacy)
 
-    fun read(folder: String, readLegacyIfMissing: Boolean = true): String? = synchronized(lock) {
-        val file = target(folder)
-        if (file.isFile) file.readText(Charsets.UTF_8)
-        else if (readLegacyIfMissing) readLegacy(folder) else null
-    }
+    fun read(folder: String, readLegacyIfMissing: Boolean = true): String? =
+        files.read(folder, readLegacyIfMissing)
 
-    fun folders(): List<String> = synchronized(lock) {
-        root.listFiles().orEmpty().filter { it.isFile && it.name.endsWith(".txt") }
-            .map { it.name.removeSuffix(".txt") }
-    }
+    fun folders(): List<String> = files.folders()
 
-    fun update(folder: String, fallback: String = "", transform: (String) -> String): Unit = synchronized(lock) {
-        val content = transform(read(folder).orEmpty().ifBlank { fallback })
-        val target = target(folder)
-        require(root.isDirectory || root.mkdirs()) { "Не удалось сохранить сведения о сессии" }
-        val temporary = File(root, "${target.name}.tmp")
-        try {
-            FileOutputStream(temporary).use {
-                it.write(content.toByteArray(Charsets.UTF_8))
-                it.fd.sync()
-            }
-            try {
-                Files.move(temporary.toPath(), target.toPath(),
-                    StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-            } catch (_: AtomicMoveNotSupportedException) {
-                Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
-            }
-        } finally {
-            temporary.delete()
-        }
-    }
+    fun update(folder: String, fallback: String = "", transform: (String) -> String) =
+        files.update(folder, fallback, transform)
 
     fun append(session: SessionSummary, block: String) {
         update(session.folderName, session.infoContent.takeUnless { it == "Нет информации" }
@@ -61,32 +33,17 @@ internal class SessionInfoStore(
 
     /** Prepare metadata before moving images; keep the old copy until the caller commits the move. */
     fun prepareRename(oldFolder: String, newFolder: String, fallback: String,
-        transform: (String) -> String = { it }) = synchronized(lock) {
+        transform: (String) -> String = { it }) {
         if (oldFolder == newFolder) {
             update(oldFolder, fallback, transform)
         } else {
-            require(!target(newFolder).exists()) { "Сведения для новой папки уже существуют" }
-            val content = read(oldFolder) ?: fallback
-            update(newFolder) { transform(content) }
+            files.prepareRename(oldFolder, newFolder, fallback, transform)
         }
     }
 
-    fun delete(folder: String): Boolean = synchronized(lock) {
-        val file = target(folder)
-        !file.exists() || file.delete()
-    }
-
-    private fun target(folder: String): File {
-        require(folder.isNotBlank() && folder != "." && folder != ".." &&
-            folder.none { it == '/' || it == '\\' || it == '\u0000' }) { "Недопустимая папка сессии" }
-        return File(root, "$folder.txt").also {
-            require(it.canonicalFile.parentFile == root.canonicalFile) { "Недопустимый путь сессии" }
-        }
-    }
+    fun delete(folder: String): Boolean = files.delete(folder)
 
     companion object {
-        private val lock = Any()
-
         @Suppress("DEPRECATION")
         private fun readLegacyInfo(context: Context, folder: String): String? = runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

@@ -10,6 +10,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import java.util.UUID
 import java.util.zip.ZipInputStream
 import kotlinx.coroutines.runBlocking
+import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Test
@@ -59,6 +60,7 @@ class SessionMetadataDeviceTest {
         }
         try {
             val originalUri = createJpeg(folder, "original.jpg")
+            createJpeg(folder, "favorite.jpg")
             val neighbourUri = createJpeg(neighbour, "neighbour.jpg")
             val session = ShootingSession("QA metadata $suffix", folder, System.currentTimeMillis(), "QA only")
             val metadata = SessionCaptureMetadata("test", 400, 1_000_000_000L, "infinity", "JPEG")
@@ -70,7 +72,18 @@ class SessionMetadataDeviceTest {
             val repository = SessionBrowserRepository(context)
             val summary = repository.loadSessions().single { it.folderName == folder }
             assertEquals(session.sessionName, summary.sessionName)
-            assertEquals(1, summary.lightsJpeg)
+            assertEquals(2, summary.lightsJpeg)
+
+            val expectedMarks = FrameMarks(
+                bad = setOf("Lights/JPEG/original.jpg"),
+                favorite = setOf("Lights/JPEG/favorite.jpg"),
+                autoBad = setOf("Lights/JPEG/original.jpg")
+            )
+            FrameMarksStore(context).save(summary, expectedMarks).getOrThrow()
+            assertEquals(expectedMarks, FrameMarksStore(context).loadOrCreate(summary))
+            val neighbourSummary = repository.loadSessions().single { it.folderName == neighbour }
+            val neighbourMarks = FrameMarks(favorite = setOf("Lights/JPEG/neighbour.jpg"))
+            FrameMarksStore(context).save(neighbourSummary, neighbourMarks).getOrThrow()
 
             val archive = SessionZipExporter(context).export(summary).getOrThrow()
             val archiveUri = Uri.parse(requireNotNull(archive.contentUri)).also { touchedUris += it }
@@ -88,6 +101,13 @@ class SessionMetadataDeviceTest {
                 .value.toString(Charsets.UTF_8))
             assertTrue(entries.keys.any { it.endsWith("/Lights/JPEG/original.jpg") })
             assertFalse(entries.keys.any { it.endsWith("neighbour.jpg") })
+            assertEquals(1, entries.keys.count { it.endsWith("/frame_marks.json") })
+            val archivedMarks = JSONObject(entries.entries.single {
+                it.key.endsWith("/frame_marks.json")
+            }.value.toString(Charsets.UTF_8))
+            assertEquals("Lights/JPEG/original.jpg", archivedMarks.getJSONArray("bad").getString(0))
+            assertEquals("Lights/JPEG/favorite.jpg", archivedMarks.getJSONArray("favorite").getString(0))
+            assertEquals("Lights/JPEG/original.jpg", archivedMarks.getJSONArray("autoBad").getString(0))
 
             val manager = SessionFileManager(context)
             val renamed = manager.renameSession(summary, "QA_renamed_$suffix").getOrThrow()
@@ -98,18 +118,26 @@ class SessionMetadataDeviceTest {
             assertReadable(originalUri)
             assertReadable(neighbourUri)
             val renamedSummary = repository.loadSessions().single { it.folderName == renamed.newFolderName }
-            assertEquals(1, renamedSummary.lightsJpeg)
+            assertEquals(2, renamedSummary.lightsJpeg)
             assertEquals(renamed.newSessionName, renamedSummary.sessionName)
+            assertEquals(expectedMarks, FrameMarksStore(context).loadOrCreate(renamedSummary))
             val deleted = manager.deleteSession(renamedSummary).getOrThrow()
             assertEquals(0, deleted.failedFiles)
             assertFalse(deleted.activeSessionCleared)
             assertNull(store.read(renamed.newFolderName, readLegacyIfMissing = false))
+            assertEquals(FrameMarks(), FrameMarksStore(context).loadOrCreate(renamedSummary))
+            assertEquals(neighbourMarks, FrameMarksStore(context).loadOrCreate(neighbourSummary))
             assertReadable(neighbourUri)
             assertEquals(activeBefore, sessions.load())
         } finally {
             // Exact URIs and unique metadata names created by this test, never a user's session tree.
             touchedUris.forEach { uri -> runCatching { resolver.delete(uri, null, null) } }
-            touchedFolders.forEach { store.delete(it) }
+            touchedFolders.forEach { cleanupFolder ->
+                val cleanupSession = SessionSummary(cleanupFolder, cleanupFolder,
+                    "Pictures/AstroPhoto/$cleanupFolder/", 0L, 0, 0, 0L, "")
+                runCatching { SessionFileManager(context).deleteSession(cleanupSession).getOrThrow() }
+                store.delete(cleanupFolder)
+            }
         }
     }
 }

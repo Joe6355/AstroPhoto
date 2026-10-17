@@ -51,6 +51,13 @@ class SessionFileManager(private val context: Context) {
             infoStore.prepareRename(session.folderName, newFolderName, session.infoContent) {
                 renamedMetadata(it, session.sessionName, safeName)
             }
+            val marksStore = FrameMarksStore(context)
+            try {
+                marksStore.prepareRename(session.folderName, newFolderName)
+            } catch (error: Exception) {
+                if (session.folderName != newFolderName) infoStore.delete(newFolderName)
+                throw error
+            }
             var publicMoved = false
             if (session.folderName != newFolderName) {
                 try {
@@ -63,7 +70,10 @@ class SessionFileManager(private val context: Context) {
                         (error as? SessionMoveFailure)?.rollbackComplete != false
                     }
                     // Preserve both copies when media could not be moved back completely.
-                    if (rolledBack) infoStore.delete(newFolderName)
+                    if (rolledBack) {
+                        infoStore.delete(newFolderName)
+                        marksStore.delete(newFolderName)
+                    }
                     throw IllegalStateException(if (rolledBack) {
                         "Не удалось переименовать сессию. Кадры остались в прежней папке."
                     } else {
@@ -71,7 +81,8 @@ class SessionFileManager(private val context: Context) {
                     }, error)
                 }
             }
-            val metadataUpdated = session.folderName == newFolderName || infoStore.delete(session.folderName)
+            val oldInfoDeleted = session.folderName == newFolderName || infoStore.delete(session.folderName)
+            val oldMarksDeleted = session.folderName == newFolderName || marksStore.delete(session.folderName)
             val active = sessionStore.load()
             if (active?.folderName == session.folderName) {
                 sessionStore.save(
@@ -84,7 +95,7 @@ class SessionFileManager(private val context: Context) {
             SessionRenameResult(
                 newFolderName = newFolderName,
                 newSessionName = safeName,
-                metadataUpdated = metadataUpdated
+                metadataUpdated = oldInfoDeleted && oldMarksDeleted
             )
         }
     }
@@ -101,12 +112,13 @@ class SessionFileManager(private val context: Context) {
             }
             val counts = publicCounts
             val infoDeleted = if (counts.second == 0) SessionInfoStore(context).delete(session.folderName) else true
+            val marksDeleted = if (counts.second == 0) FrameMarksStore(context).delete(session.folderName) else true
             val active = sessionStore.load()
             val activeCleared = active?.folderName == session.folderName
             if (activeCleared) sessionStore.clear()
             SessionDeleteResult(
                 deletedFiles = counts.first,
-                failedFiles = counts.second + if (infoDeleted) 0 else 1,
+                failedFiles = counts.second + (if (infoDeleted) 0 else 1) + (if (marksDeleted) 0 else 1),
                 activeSessionCleared = activeCleared
             )
         }
