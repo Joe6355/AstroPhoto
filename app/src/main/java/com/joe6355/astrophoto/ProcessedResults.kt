@@ -14,9 +14,6 @@ import android.provider.MediaStore
 import android.util.Log
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.rememberTransformableState
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -51,27 +48,20 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
@@ -231,11 +221,7 @@ private data class ComparisonImage(
     val relativePath: String?
 )
 
-private sealed interface ViewerImageState {
-    data object Loading : ViewerImageState
-    data class Loaded(val image: ImageLoadResult.Success) : ViewerImageState
-    data class Error(val error: ImageLoadResult.Error) : ViewerImageState
-}
+
 
 internal fun processedImageExtension(fileName: String): String? =
     fileName.substringAfterLast('.', missingDelimiterValue = "")
@@ -400,28 +386,11 @@ private class ProcessedResultsRepository(private val context: Context) {
             is ImageLoadResult.Error -> null
         }
 
-    suspend fun loadComparisonPreview(
-        image: ComparisonImage,
-        maxSize: Int
-    ): Bitmap? = withContext(Dispatchers.IO) {
-        when (val loaded = loadComparisonImage(image, maxSize)) {
-            is ImageLoadResult.Success -> loaded.bitmap
-            is ImageLoadResult.Error -> null
-        }
-    }
-
     suspend fun loadProcessedImage(
         result: ProcessedResult,
         maxSize: Int = 3072
     ): ImageLoadResult {
         return imageLoader.loadBitmapForViewer(result.imageSource(), maxSize)
-    }
-
-    suspend fun loadComparisonImage(
-        image: ComparisonImage,
-        maxSize: Int = 1400
-    ): ImageLoadResult {
-        return imageLoader.loadBitmapForViewer(image.imageSource(), maxSize)
     }
 
     private fun loadMediaStoreResults(
@@ -946,7 +915,6 @@ fun ProcessedResultsScreen(
         ProcessedResultViewer(
             result = result,
             firstLight = firstLight,
-            repository = repository,
             onCompareWithFirst = { light ->
                 selectedResult = null
                 comparison = light.toComparisonImage() to result.toComparisonImage()
@@ -959,7 +927,6 @@ fun ProcessedResultsScreen(
         ProcessedComparisonViewer(
             first = images.first,
             second = images.second,
-            repository = repository,
             onDismiss = { comparison = null }
         )
     }
@@ -1372,165 +1339,33 @@ fun ProcessedResultActions(
 private fun ProcessedResultViewer(
     result: ProcessedResult,
     firstLight: SessionFrame?,
-    repository: ProcessedResultsRepository,
     onCompareWithFirst: (SessionFrame) -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    var imageState by remember(result.key) {
-        mutableStateOf<ViewerImageState>(ViewerImageState.Loading)
-    }
     var actionError by remember(result.key) { mutableStateOf<String?>(null) }
-    val zoomState = remember(result.key) { ResultImageZoomState() }
-
-    LaunchedEffect(result.key) {
-        imageState = ViewerImageState.Loading
-        imageState = when (val loaded = repository.loadProcessedImage(result, 3072)) {
-            is ImageLoadResult.Success -> ViewerImageState.Loaded(loaded)
-            is ImageLoadResult.Error -> ViewerImageState.Error(loaded)
-        }
-    }
-    val loadedBitmap = (imageState as? ViewerImageState.Loaded)?.image?.bitmap
-    DisposableEffect(loadedBitmap) {
-        onDispose {
-            loadedBitmap
-                ?.takeUnless(Bitmap::isRecycled)
-                ?.recycle()
-        }
-    }
-
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background)
-                .safeDrawingPadding()
-                .padding(16.dp)
-        ) {
-            com.joe6355.astrophoto.ui.AstroTopBar(
-                title = "Просмотр результата",
-                onBack = onDismiss
-            )
-            Text(
-                text = result.fileName,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .padding(vertical = 12.dp)
-                    .background(Color.Black),
-                contentAlignment = Alignment.Center
-            ) {
-                when (val state = imageState) {
-                    ViewerImageState.Loading -> CircularProgressIndicator()
-                    is ViewerImageState.Loaded -> ZoomableResultImage(
-                        bitmap = state.image.bitmap.asImageBitmap(),
-                        contentDescription = result.fileName,
-                        modifier = Modifier.fillMaxSize(),
-                        zoomState = zoomState
-                    )
-                    is ViewerImageState.Error -> Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center,
-                        modifier = Modifier.padding(16.dp)
-                    ) {
-                        Text(
-                            text = state.error.userTitle,
-                            color = AstroColors.Error,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            text = state.error.userMessage,
-                            color = AstroColors.TextSecondary,
-                            modifier = Modifier.padding(top = 6.dp)
-                        )
-                        Button(
-                            onClick = onDismiss,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 14.dp)
-                        ) {
-                            Text("Назад")
-                        }
-                    }
-                }
+    Dialog(onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
+            .safeDrawingPadding().padding(12.dp)) {
+            com.joe6355.astrophoto.ui.AstroTopBar(title = "Просмотр результата", onBack = onDismiss)
+            Text(result.fileName, style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            PhotoViewer(result.imageSource(), Modifier.fillMaxWidth().weight(1f).padding(vertical = 8.dp))
+            actionError?.let { Text(it, color = AstroColors.Error) }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { actionError = openResultInGallery(context, result) },
+                    modifier = Modifier.weight(1f)) { Text("В галерее") }
+                Button(onClick = { actionError = shareResult(context, result) },
+                    modifier = Modifier.weight(1f)) { Text("Поделиться") }
             }
-
-            (imageState as? ViewerImageState.Loaded)?.image?.let { loaded ->
-                if (loaded.warningTitle != null || loaded.warningMessage != null) {
-                    Text(
-                        text = listOfNotNull(
-                            loaded.warningTitle,
-                            loaded.warningMessage
-                        ).joinToString("\n"),
-                        color = AstroColors.Warning
-                    )
-                }
-            }
-            actionError?.let {
-                Text(it, color = AstroColors.Error)
-            }
-            if (imageState is ViewerImageState.Loaded) {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = {
-                            actionError = openResultInGallery(context, result)
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Открыть в галерее")
-                    }
-                    Button(
-                        onClick = {
-                            actionError = shareResult(context, result)
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Поделиться")
-                    }
-                }
-                Button(
-                    onClick = {
-                        firstLight?.let(onCompareWithFirst)
-                    },
-                    enabled = firstLight != null,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp)
-                ) {
-                    Text(
-                        if (firstLight != null) {
-                            "Сравнить с первым light frame"
-                        } else {
-                            "Исходный кадр не найден"
-                        }
-                    )
-                }
+            TextButton(onClick = { firstLight?.let(onCompareWithFirst) }, enabled = firstLight != null,
+                modifier = Modifier.fillMaxWidth()) {
+                Text(if (firstLight != null) "Сравнить с первым light frame" else "Исходный кадр не найден")
             }
             AstroExpandableSection(title = "Технические сведения") {
-                Text(
-                    text = buildString {
-                        appendLine("Файл: ${result.fileName}")
-                        appendLine("Путь MediaStore: ${result.relativePath ?: "не сохранён"}")
-                        appendLine("Сохранённый URI: ${if (result.contentUri.isNullOrBlank()) "нет" else "есть"}")
-                        val failure = (imageState as? ViewerImageState.Error)?.error
-                        if (failure != null) append("Причина: ${failure.technicalMessage}")
-                    }.trim(),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall
-                )
+                Text("Файл: ${result.fileName}\nПуть: ${result.relativePath ?: result.displayPath}",
+                    style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -1540,290 +1375,42 @@ private fun ProcessedResultViewer(
 private fun ProcessedComparisonViewer(
     first: ComparisonImage,
     second: ComparisonImage,
-    repository: ProcessedResultsRepository,
     onDismiss: () -> Unit
 ) {
-    var firstState by remember(first) {
-        mutableStateOf<ViewerImageState>(ViewerImageState.Loading)
-    }
-    var secondState by remember(second) {
-        mutableStateOf<ViewerImageState>(ViewerImageState.Loading)
-    }
-    var loading by remember(first, second) { mutableStateOf(true) }
-    val sharedZoomState = remember(first, second) { ResultImageZoomState() }
-
-    LaunchedEffect(first, second) {
-        loading = true
-        firstState = ViewerImageState.Loading
-        secondState = ViewerImageState.Loading
-        firstState = when (val loaded = repository.loadComparisonImage(first, 1400)) {
-            is ImageLoadResult.Success -> ViewerImageState.Loaded(loaded)
-            is ImageLoadResult.Error -> ViewerImageState.Error(loaded)
-        }
-        secondState = when (val loaded = repository.loadComparisonImage(second, 1400)) {
-            is ImageLoadResult.Success -> ViewerImageState.Loaded(loaded)
-            is ImageLoadResult.Error -> ViewerImageState.Error(loaded)
-        }
-        loading = false
-    }
-    val firstBitmap = (firstState as? ViewerImageState.Loaded)?.image?.bitmap
-    val secondBitmap = (secondState as? ViewerImageState.Loaded)?.image?.bitmap
-    DisposableEffect(firstBitmap) {
-        onDispose(
-            disposeCapturedResource(firstBitmap) { bitmap ->
-                bitmap.takeUnless(Bitmap::isRecycled)?.recycle()
-            }
-        )
-    }
-    DisposableEffect(secondBitmap) {
-        onDispose(
-            disposeCapturedResource(secondBitmap) { bitmap ->
-                bitmap.takeUnless(Bitmap::isRecycled)?.recycle()
-            }
-        )
-    }
-
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background)
-                .safeDrawingPadding()
-                .padding(12.dp)
-        ) {
-            com.joe6355.astrophoto.ui.AstroTopBar(
-                title = "Сравнение",
-                onBack = onDismiss
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Щипок или двойной тап — масштаб обеих фотографий",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f)
-                )
-                if (sharedZoomState.scale > MIN_RESULT_ZOOM) {
-                    TextButton(onClick = sharedZoomState::reset) {
-                        Text("${formatZoomScale(sharedZoomState.scale)}× · Сбросить")
-                    }
-                }
-            }
-            if (loading) {
-                CircularProgressIndicator(
-                    modifier = Modifier.align(Alignment.CenterHorizontally)
-                )
-            }
-            BoxWithConstraints(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-            ) {
+    val sharedState = remember(first, second) { PhotoViewState() }
+    Dialog(onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
+            .safeDrawingPadding().padding(12.dp)) {
+            com.joe6355.astrophoto.ui.AstroTopBar(title = "Сравнение", onBack = onDismiss)
+            Text("Щипок или двойной тап — масштаб обеих фотографий",
+                style = MaterialTheme.typography.bodySmall)
+            PhotoViewControls(sharedState)
+            BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
                 if (maxWidth > maxHeight) {
-                    Row(
-                        modifier = Modifier.fillMaxSize(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        ComparisonPane(
-                            state = firstState,
-                            label = first.label,
-                            modifier = Modifier.weight(1f),
-                            zoomState = sharedZoomState
-                        )
-                        ComparisonPane(
-                            state = secondState,
-                            label = second.label,
-                            modifier = Modifier.weight(1f),
-                            zoomState = sharedZoomState
-                        )
+                    Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ComparisonPane(first, Modifier.weight(1f), sharedState)
+                        ComparisonPane(second, Modifier.weight(1f), sharedState)
                     }
                 } else {
-                    Column(
-                        modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        ComparisonPane(
-                            state = firstState,
-                            label = first.label,
-                            modifier = Modifier.weight(1f),
-                            zoomState = sharedZoomState
-                        )
-                        ComparisonPane(
-                            state = secondState,
-                            label = second.label,
-                            modifier = Modifier.weight(1f),
-                            zoomState = sharedZoomState
-                        )
+                    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ComparisonPane(first, Modifier.weight(1f), sharedState)
+                        ComparisonPane(second, Modifier.weight(1f), sharedState)
                     }
                 }
             }
-            if (!loading && (
-                    firstState is ViewerImageState.Error ||
-                        secondState is ViewerImageState.Error
-                )
-            ) {
-                Text(
-                    text = "Один из файлов не удалось прочитать",
-                    color = AstroColors.Error,
-                    modifier = Modifier.padding(top = 6.dp)
-                )
-            }
         }
     }
 }
 
 @Composable
-private fun ComparisonPane(
-    state: ViewerImageState,
-    label: String,
-    modifier: Modifier,
-    zoomState: ResultImageZoomState
-) {
-    Column(modifier = modifier) {
-        Text(
-            text = label,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .background(Color.Black),
-            contentAlignment = Alignment.Center
-        ) {
-            when (state) {
-                ViewerImageState.Loading -> CircularProgressIndicator()
-                is ViewerImageState.Loaded -> ZoomableResultImage(
-                    bitmap = state.image.bitmap.asImageBitmap(),
-                    contentDescription = label,
-                    modifier = Modifier.fillMaxSize(),
-                    zoomState = zoomState,
-                    showScale = false
-                )
-                is ViewerImageState.Error -> Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(12.dp)
-                ) {
-                    Text(
-                        text = state.error.userTitle,
-                        color = AstroColors.Error,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = state.error.userMessage,
-                        color = AstroColors.TextSecondary,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
-                }
-            }
-        }
+private fun ComparisonPane(image: ComparisonImage, modifier: Modifier, state: PhotoViewState) {
+    Column(modifier) {
+        Text(image.label, fontWeight = FontWeight.SemiBold, maxLines = 1,
+            overflow = TextOverflow.Ellipsis)
+        PhotoViewer(image.imageSource(), Modifier.fillMaxWidth().weight(1f), state, showControls = false)
     }
 }
-
-private class ResultImageZoomState {
-    var scale by mutableFloatStateOf(1f)
-        private set
-    var offset by mutableStateOf(Offset.Zero)
-        private set
-    private var viewportSize = IntSize.Zero
-
-    fun updateViewport(size: IntSize) {
-        viewportSize = size
-        offset = clampZoomOffset(offset, scale, viewportSize)
-    }
-
-    fun transform(zoomChange: Float, panChange: Offset) {
-        val nextScale = (scale * zoomChange).coerceIn(MIN_RESULT_ZOOM, MAX_RESULT_ZOOM)
-        scale = nextScale
-        offset = if (nextScale == MIN_RESULT_ZOOM) {
-            Offset.Zero
-        } else {
-            clampZoomOffset(offset + panChange, nextScale, viewportSize)
-        }
-    }
-
-    fun reset() {
-        scale = MIN_RESULT_ZOOM
-        offset = Offset.Zero
-    }
-
-    fun toggle() {
-        if (scale > MIN_RESULT_ZOOM) {
-            reset()
-        } else {
-            scale = DOUBLE_TAP_RESULT_ZOOM
-            offset = Offset.Zero
-        }
-    }
-}
-
-@Composable
-private fun ZoomableResultImage(
-    bitmap: androidx.compose.ui.graphics.ImageBitmap,
-    contentDescription: String,
-    modifier: Modifier = Modifier,
-    zoomState: ResultImageZoomState = remember { ResultImageZoomState() },
-    showScale: Boolean = true
-) {
-    val gestureState = rememberTransformableState { zoomChange, panChange, _ ->
-        zoomState.transform(zoomChange, panChange)
-    }
-
-    Box(
-        modifier = modifier
-            .clipToBounds()
-            .onSizeChanged(zoomState::updateViewport)
-            .pointerInput(zoomState) {
-                detectTapGestures(onDoubleTap = { zoomState.toggle() })
-            }
-            .transformable(gestureState),
-        contentAlignment = Alignment.Center
-    ) {
-        Image(
-            bitmap = bitmap,
-            contentDescription = contentDescription,
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    scaleX = zoomState.scale
-                    scaleY = zoomState.scale
-                    translationX = zoomState.offset.x
-                    translationY = zoomState.offset.y
-                },
-            contentScale = ContentScale.Fit
-        )
-        if (showScale && zoomState.scale > MIN_RESULT_ZOOM) {
-            TextButton(
-                onClick = zoomState::reset,
-                modifier = Modifier.align(Alignment.TopEnd)
-            ) {
-                Text("${formatZoomScale(zoomState.scale)}×")
-            }
-        }
-    }
-}
-
-internal fun clampZoomOffset(offset: Offset, scale: Float, viewportSize: IntSize): Offset {
-    if (scale <= MIN_RESULT_ZOOM || viewportSize == IntSize.Zero) return Offset.Zero
-    val maxX = viewportSize.width * (scale - 1f) / 2f
-    val maxY = viewportSize.height * (scale - 1f) / 2f
-    return Offset(
-        x = offset.x.coerceIn(-maxX, maxX),
-        y = offset.y.coerceIn(-maxY, maxY)
-    )
-}
-
-private fun formatZoomScale(scale: Float): String = String.format(Locale.US, "%.1f", scale)
-
-private const val MIN_RESULT_ZOOM = 1f
-private const val DOUBLE_TAP_RESULT_ZOOM = 3f
-private const val MAX_RESULT_ZOOM = 6f
 
 private fun ProcessedResult.toComparisonImage(): ComparisonImage =
     ComparisonImage(

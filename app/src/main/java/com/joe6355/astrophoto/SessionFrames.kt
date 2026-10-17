@@ -600,7 +600,6 @@ fun SessionFramesScreen(
             marks = marks,
             markingEnabled = !savingMarks,
             markSaveError = markSaveError,
-            repository = repository,
             cropEntry = cropEntry,
             hasPrevious = index > 0,
             hasNext = index >= 0 && index < categoryFrames.lastIndex,
@@ -827,7 +826,6 @@ private fun FrameViewerDialog(
     marks: FrameMarks,
     markingEnabled: Boolean,
     markSaveError: String?,
-    repository: SessionFramesRepository,
     cropEntry: CropManifestEntry?,
     hasPrevious: Boolean,
     hasNext: Boolean,
@@ -839,10 +837,6 @@ private fun FrameViewerDialog(
     onDeleteCrop: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    var preview by remember(frame.key) { mutableStateOf<Bitmap?>(null) }
-    LaunchedEffect(frame.key) {
-        preview = if (frame.isJpeg) repository.loadPreview(frame, 1800) else null
-    }
     val status = frameStatus(frame, marks)
 
     Dialog(
@@ -878,23 +872,14 @@ private fun FrameViewerDialog(
                 Text(it, color = AstroColors.Error, style = MaterialTheme.typography.bodySmall)
             }
 
-            Box(
+            PhotoViewer(
+                source = imageSourceReference(frame.fileName, frame.displayPath, null,
+                    frame.contentUri, frame.filePath),
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
                     .padding(vertical = 12.dp)
-                    .background(Color.Black),
-                contentAlignment = Alignment.Center
-            ) {
-                preview?.let {
-                    Image(
-                        bitmap = it.asImageBitmap(),
-                        contentDescription = frame.fileName,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Fit
-                    )
-                } ?: CircularProgressIndicator()
-            }
+            )
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
