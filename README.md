@@ -24,6 +24,18 @@ checkpoint-моделей: `app/src/main/keepRules/checkpoints.keep`.
 Используется [DSL optimization для AGP 9.3+](https://developer.android.com/topic/performance/app-optimization/enable-app-optimization).
 CI сохраняет отчёты, APK и mapping R8; без локального ключа release APK не подписан.
 
+Если ключ установленного приложения остался на другом компьютере, для проверок
+можно собрать отдельный пакет с заметным именем, сохранив прежнюю установку и её данные:
+
+```powershell
+.\gradlew.bat assembleDebug '-Pastrophoto.installApplicationId=com.joe6355.astrophoto.qa' '-Pastrophoto.installAppLabel=AstroPhoto QA'
+```
+
+`astrophoto.installAppLabel` меняет только отображаемое имя этой сборки; по умолчанию
+сохраняется `@string/app_name`. Отдельный пакет после разрешения доступа к изображениям
+читает общие сессии `Pictures/AstroPhoto`, но его внутренние настройки и метаданные
+отдельны. Такая установка не заменяет проверку совместимого обновления прежним ключом.
+
 ## Восстановление обработки
 
 Deep Sky сохраняет завершённый анализ кадров, регистрацию, полноразмерное
@@ -59,6 +71,6 @@ ETA показывает оставшееся время **текущего эт
 в резервной копии: без него нельзя публиковать обновления существующего приложения.
 
 Автоматические проверки не заменяют запуск оптимизированного APK на Android.
-Проверки на телефоне и новый crash logging в текущий объём работ не входят.
+Актуальные результаты проверок на телефоне и оставшиеся сценарии: [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).
 
 Подробная инструкция пользователя: [README_ASTROPHOTO.md](README_ASTROPHOTO.md).

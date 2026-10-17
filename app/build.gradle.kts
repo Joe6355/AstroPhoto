@@ -34,6 +34,9 @@ android {
         versionCode = 3
         versionName = "0.9.0-beta.2"
 
+        manifestPlaceholders["astrophotoAppLabel"] = providers
+            .gradleProperty("astrophoto.installAppLabel").getOrElse("@string/app_name")
+
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
