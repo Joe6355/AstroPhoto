@@ -77,6 +77,17 @@ class JpegV2Stage12Test {
         assertEquals(0f, failedVerification.refinedTransform.rotationRadians, 0f)
     }
 
+    @Test fun aCorrectPriorCannotAcceptTheFrameWhenOnlyTwoFullResolutionStarsRemain() {
+        val fixture = frameFixture(0f, 0f)
+        val sparse = STARS.take(2).map { star ->
+            star.copy(x = star.x + fixture.initial.dx, y = star.y + fixture.initial.dy)
+        }
+        val result = refine(fixture.copy(candidate = render(sparse)))
+        assertFalse(result.toString(), result.accepted)
+        assertTrue(result.toString(), result.acceptedStarCount <= 2)
+        assertFalse(StellarCentroidRefinementPolicy().decideVerifiedIdentity(result.verification).accepted)
+    }
+
     @Test fun rejectsFiniteButMisalignedCentroidSolution() {
         assertEquals("centroid_median_residual_high", residualDecision(2.78f, 3.5f).rejectionReason)
         assertEquals("centroid_p90_residual_high", residualDecision(0.2f, 1.2f).rejectionReason)

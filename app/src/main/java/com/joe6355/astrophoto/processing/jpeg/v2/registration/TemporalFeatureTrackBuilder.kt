@@ -1,6 +1,7 @@
 package com.joe6355.astrophoto.processing.jpeg.v2.registration
 
 import com.joe6355.astrophoto.processing.jpeg.v2.model.DetectedStar
+import kotlin.math.abs
 import kotlin.math.hypot
 
 class TemporalFeatureTrackBuilder {
@@ -9,12 +10,48 @@ class TemporalFeatureTrackBuilder {
         cancellationCheck: () -> Unit = {}
     ): TemporalTrackAnalysis {
         val ordered = frames.sortedBy { it.captureIndex }
-        if (ordered.size < 3 || ordered.first().stars.isEmpty()) {
+        if (ordered.size < 3) {
             return TemporalTrackAnalysis(emptyList(), false, 0f, 0f)
         }
         val first = ordered.first()
         val anchor = ordered.lastOrNull { it.captureIndex > first.captureIndex && it.stars.isNotEmpty() }
-            ?: return TemporalTrackAnalysis(emptyList(), false, 0f, 0f)
+            ?: ordered.last()
+        val primary = buildFromEndpoints(ordered, first, anchor, cancellationCheck)
+        if (primary.motionObservable || ordered.size < 5) return primary
+
+        // A moved/obscured boundary frame must not hide a coherent interior sequence.
+        // Keep the same observation, residual, velocity and spatial-support requirements.
+        val populated = ordered.filter { it.stars.isNotEmpty() }
+        if (populated.size < 3) return primary
+        val seed = populated[populated.size / 2]
+        val anchors = listOf(populated[populated.lastIndex / 4], populated[populated.lastIndex * 3 / 4])
+            .distinctBy { it.frameId }.filter { it.frameId != seed.frameId }
+        // Trying extra anchors increases ambiguous coincidences in sparse catalogs.
+        // Demand stronger independent support before replacing the original explanation.
+        return anchors.map { interiorAnchor ->
+            cancellationCheck()
+            buildFromEndpoints(ordered, seed, interiorAnchor, cancellationCheck)
+        }.filter { it.motionObservable && it.movingTrackCount >= MIN_INTERIOR_MOVING_TRACKS }.maxWithOrNull(
+            compareBy<TemporalTrackAnalysis> { it.movingTrackCount }
+                .thenBy { analysis -> analysis.tracks.filter {
+                    it.cluster == TemporalMotionCluster.COHERENT_MOVING_SKY
+                }.sumOf { it.presenceRatio.toDouble() } }
+                .thenByDescending { analysis -> median(analysis.tracks.filter {
+                    it.cluster == TemporalMotionCluster.COHERENT_MOVING_SKY
+                }.map { it.fitResidual }) }
+        ) ?: primary
+    }
+
+    private fun buildFromEndpoints(
+        ordered: List<TemporalFeatureFrame>,
+        first: TemporalFeatureFrame,
+        anchor: TemporalFeatureFrame,
+        cancellationCheck: () -> Unit
+    ): TemporalTrackAnalysis {
+        val delta = anchor.motionTime - first.motionTime
+        if (first.stars.isEmpty() || anchor.stars.isEmpty() || !delta.isFinite() || abs(delta) < 0.001f) {
+            return TemporalTrackAnalysis(emptyList(), false, 0f, 0f)
+        }
         val usedByFrame = ordered.associate { it.frameId to BooleanArray(it.stars.size) }
         val tracks = first.stars
             .withIndex()
@@ -24,7 +61,6 @@ class TemporalFeatureTrackBuilder {
                 cancellationCheck()
                 if (usedByFrame.getValue(first.frameId)[indexed.index]) return@mapNotNull null
                 val seed = indexed.value
-                val delta = (anchor.motionTime - first.motionTime).coerceAtLeast(0.001f)
                 val velocities = buildList {
                     add(0f to 0f)
                     anchor.stars.take(MAX_ANCHOR_STARS).forEach { candidate ->
@@ -67,7 +103,7 @@ class TemporalFeatureTrackBuilder {
                 hypot(it.velocityX, it.velocityY) * captureSpan >= MIN_OBSERVABLE_TOTAL_MOVEMENT &&
                 it.fitResidual <= MAX_TRACK_RESIDUAL
         }
-        val coherentVelocity = dominantMovingVelocity(movingCandidates, ordered.first())
+        val coherentVelocity = dominantMovingVelocity(movingCandidates, first)
         val coherentMoving = if (coherentVelocity == null) emptySet() else movingCandidates.filter {
             hypot(
                 it.velocityX - coherentVelocity.first,
@@ -75,7 +111,7 @@ class TemporalFeatureTrackBuilder {
             ) <= MOVING_VELOCITY_TOLERANCE
         }.toSet()
         val occupiedSectors = coherentMoving.mapNotNull { it.observations.firstOrNull()?.star }
-            .map { sector(it, ordered.first()) }
+            .map { sector(it, first) }
             .distinct()
             .size
         val observable = coherentMoving.size >= MIN_COHERENT_MOVING_TRACKS &&
@@ -209,6 +245,7 @@ class TemporalFeatureTrackBuilder {
         private const val MAX_TRACK_RESIDUAL = 0.85f
         private const val MOVING_VELOCITY_TOLERANCE = 0.35f
         private const val MIN_COHERENT_MOVING_TRACKS = 3
+        private const val MIN_INTERIOR_MOVING_TRACKS = MIN_COHERENT_MOVING_TRACKS * 2
         private const val MIN_MOVING_SECTORS = 2
     }
 }
