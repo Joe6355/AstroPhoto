@@ -85,7 +85,7 @@ class ProfileRegistrationCheckpointStore private constructor(
     companion object {
         private const val ROOT_NAME = "jpeg-profile-registration-checkpoints"
         private const val MAGIC = 0x52504350
-        private const val VERSION = 11
+        private const val VERSION = 12
         private const val MAX_CHECKPOINT_BYTES = 64L * 1024L * 1024L
 
         fun open(

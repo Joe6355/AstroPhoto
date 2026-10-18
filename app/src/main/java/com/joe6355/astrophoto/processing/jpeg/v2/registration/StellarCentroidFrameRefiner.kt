@@ -141,11 +141,10 @@ class StellarCentroidFrameRefiner(
         val translationTransform = initialTransform.copy(
             dx = translationAggregation.dx, dy = translationAggregation.dy
         )
-        // Reuse the automatic registrar's fixed-scale rotation gates at full resolution.
+        // Preserve measured identities while reusing the automatic registrar's rotation gates.
         // Fit before translation MAD rejection: real rotation produces spatially varying shifts.
-        val rigidRegistration = StarSimilarityRegistrar().registerAutomatic(
-            evidenceMatches.map { it.reference.asDetectedStar() },
-            evidenceMatches.map { it.candidate.asDetectedStar() },
+        val rigidRegistration = StarSimilarityRegistrar().registerPairedRigid(
+            evidenceMatches.map { it.reference.asDetectedStar() to it.candidate.asDetectedStar() },
             reference.width, reference.height,
             // Translation-only has no measured rotation prior; keep the registrar's normal
             // physical angle limit instead of treating the missing estimate as an exact zero.

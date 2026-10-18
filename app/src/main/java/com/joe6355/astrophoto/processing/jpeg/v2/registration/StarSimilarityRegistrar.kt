@@ -203,20 +203,7 @@ class StarSimilarityRegistrar(
             imageWidth,
             imageHeight
         )
-        val inlierRatio = rigid.inliers.toFloat() / rigid.matches.coerceAtLeast(1)
-        val rotationRejection = when {
-            rigid.matches < MIN_ROTATION_MATCHED_STARS -> "rotation_requires_12_matches"
-            rigid.inliers < MIN_ROTATION_INLIERS -> "rotation_requires_10_inliers"
-            inlierRatio < MIN_ROTATION_INLIER_RATIO -> "rotation_inlier_ratio_below_0_75"
-            !distribution.rotationAllowed -> distribution.rejectionReason
-            rigid.residual > MAX_ROTATION_RESIDUAL -> "rotation_residual_above_0_45"
-            abs(rigid.transform.rotation) > MAX_AUTOMATIC_ROTATION_RADIANS ->
-                "rotation_is_not_physically_plausible"
-            expectedRotationRadians != null &&
-                abs(normalizeAngle(rigid.transform.rotation - expectedRotationRadians)) >
-                MAX_SEQUENCE_ROTATION_DISAGREEMENT -> "rotation_disagrees_with_sequence_model"
-            else -> null
-        }
+        val rotationRejection = rotationRejection(rigid, distribution, expectedRotationRadians)
         val rotationImprovesFit = !translationResult.isReliable ||
             rigid.residual + MIN_ROTATION_RESIDUAL_IMPROVEMENT < translationResult.residualError
         if (rotationRejection != null || !rotationImprovesFit) {
@@ -242,6 +229,117 @@ class StarSimilarityRegistrar(
             rotationRejectionReason = null,
             distribution = distribution
         )
+    }
+
+    /** Full-resolution centroids already have one-to-one identities; never rematch their catalogs. */
+    fun registerPairedRigid(
+        starPairs: List<Pair<DetectedStar, DetectedStar>>,
+        imageWidth: Int,
+        imageHeight: Int,
+        expectedRotationRadians: Float? = null
+    ): RegistrationResult {
+        require(imageWidth > 0 && imageHeight > 0)
+        val unique = starPairs.filter { (reference, candidate) ->
+            reference.confidence > 0f && candidate.confidence > 0f &&
+                reference.x.isFinite() && reference.y.isFinite() &&
+                candidate.x.isFinite() && candidate.y.isFinite()
+        }.distinctBy { (reference, candidate) ->
+            (reference.x to reference.y) to (candidate.x to candidate.y)
+        }
+        val referenceUses = unique.groupingBy { it.first.x to it.first.y }.eachCount()
+        val candidateUses = unique.groupingBy { it.second.x to it.second.y }.eachCount()
+        // Ambiguous or repeated measurements cannot supply additional independent stars.
+        val usable = unique.filter { (reference, candidate) ->
+            referenceUses[reference.x to reference.y] == 1 &&
+                candidateUses[candidate.x to candidate.y] == 1
+        }.sortedWith(compareByDescending<Pair<DetectedStar, DetectedStar>> {
+            minOf(it.first.confidence, it.second.confidence)
+        }.thenBy { it.first.y }.thenBy { it.first.x }.thenBy { it.second.y }.thenBy { it.second.x })
+        val compared = usable.take(MAX_AUTOMATIC_EVALUATION_STARS)
+        fun rejected(reason: String) = RegistrationResult.rejected(usable.size, usable.size, reason)
+            .copy(registrationModel = "PAIRED_FIXED_SCALE_RIGID", scaleFixed = true,
+                rotationRejectionReason = reason)
+        if (compared.size < MIN_ROTATION_MATCHED_STARS) return rejected("rotation_requires_12_matches")
+        val rigid = bestPairedRigid(compared) ?: return rejected("no_plausible_paired_rotation")
+        val distribution = distributionValidator.evaluate(rigid.inlierPairs.map { it.first }, imageWidth, imageHeight)
+        val result = automaticResult(rigid, usable.size, usable.size, compared.size, compared.size,
+            imageWidth, imageHeight, "PAIRED_FIXED_SCALE_RIGID", true, null, distribution)
+        val translation = checkNotNull(refineTranslation(compared)).let { transform ->
+            automaticResult(evaluatePaired(transform, compared, AUTOMATIC_TRANSLATION_INLIER_TOLERANCE,
+                AUTOMATIC_TRANSLATION_MATCH_TOLERANCE), usable.size, usable.size,
+                compared.size, compared.size, imageWidth, imageHeight, "TRANSLATION_ONLY", false,
+                null, null)
+        }
+        val reason = rotationRejection(rigid, distribution, expectedRotationRadians) ?:
+            result.rejectionReason ?: if (translation.isReliable &&
+                rigid.residual + MIN_ROTATION_RESIDUAL_IMPROVEMENT >= translation.residualError
+            ) "rotation_did_not_materially_improve_fit" else null
+        return result.copy(isReliable = reason == null, rejectionReason = reason,
+            rotationAllowed = reason == null, rotationRejectionReason = reason)
+    }
+
+    private fun rotationRejection(
+        rigid: Evaluation,
+        distribution: SpatialStarDistribution,
+        expectedRotationRadians: Float?
+    ): String? = when {
+        rigid.matches < MIN_ROTATION_MATCHED_STARS -> "rotation_requires_12_matches"
+        rigid.inliers < MIN_ROTATION_INLIERS -> "rotation_requires_10_inliers"
+        rigid.inliers.toFloat() / rigid.matches.coerceAtLeast(1) < MIN_ROTATION_INLIER_RATIO ->
+            "rotation_inlier_ratio_below_0_75"
+        !distribution.rotationAllowed -> distribution.rejectionReason
+        rigid.residual > MAX_ROTATION_RESIDUAL -> "rotation_residual_above_0_45"
+        abs(rigid.transform.rotation) > MAX_AUTOMATIC_ROTATION_RADIANS ->
+            "rotation_is_not_physically_plausible"
+        expectedRotationRadians != null &&
+            abs(normalizeAngle(rigid.transform.rotation - expectedRotationRadians)) >
+            MAX_SEQUENCE_ROTATION_DISAGREEMENT -> "rotation_disagrees_with_sequence_model"
+        else -> null
+    }
+
+    private fun bestPairedRigid(pairs: List<Pair<DetectedStar, DetectedStar>>): Evaluation? {
+        var best: Evaluation? = null
+        for (first in 0 until pairs.lastIndex) for (second in first + 1 until pairs.size) {
+            val referenceDistance = hypot(pairs[second].first.x - pairs[first].first.x,
+                pairs[second].first.y - pairs[first].first.y)
+            val candidateDistance = hypot(pairs[second].second.x - pairs[first].second.x,
+                pairs[second].second.y - pairs[first].second.y)
+            if (referenceDistance < MIN_PAIR_DISTANCE ||
+                abs(referenceDistance - candidateDistance) > MAX_RIGID_PAIR_DISTANCE_ERROR) continue
+            val transform = rigidTransformFromPairs(pairs[first].first, pairs[second].first,
+                pairs[first].second, pairs[second].second)
+            if (abs(transform.rotation) > MAX_AUTOMATIC_ROTATION_RADIANS) continue
+            val evaluation = evaluatePaired(transform, pairs,
+                AUTOMATIC_ROTATION_INLIER_TOLERANCE, AUTOMATIC_ROTATION_MATCH_TOLERANCE)
+            if (evaluation.isBetterThan(best)) best = evaluation
+        }
+        repeat(2) {
+            val initial = best ?: return null
+            val refined = refineRigid(initial.inlierPairs)?.let { transform ->
+                evaluatePaired(transform, pairs, AUTOMATIC_ROTATION_INLIER_TOLERANCE,
+                    AUTOMATIC_ROTATION_MATCH_TOLERANCE)
+            }
+            if (refined != null && refined.isBetterThan(best)) best = refined
+        }
+        return best
+    }
+
+    private fun evaluatePaired(
+        transform: Transform,
+        pairs: List<Pair<DetectedStar, DetectedStar>>,
+        inlierTolerance: Float,
+        matchTolerance: Float
+    ): Evaluation {
+        var matches = 0
+        var squaredResidual = 0f
+        val inliers = pairs.filter { (reference, candidate) ->
+            val predicted = transform.apply(reference)
+            val error = hypot(candidate.x - predicted.first, candidate.y - predicted.second)
+            if (error <= matchTolerance) matches++
+            (error <= inlierTolerance).also { if (it) squaredResidual += error * error }
+        }
+        return Evaluation(transform, matches, inliers.size,
+            if (inliers.isEmpty()) Float.POSITIVE_INFINITY else sqrt(squaredResidual / inliers.size), inliers)
     }
 
     /** Refines a translation already selected from independent temporal and verification evidence. */

@@ -17,6 +17,7 @@ import com.joe6355.astrophoto.processing.jpeg.v2.integration.LinearWeightedInteg
 import com.joe6355.astrophoto.processing.jpeg.v2.integration.WeightedIntegrationFrame
 import com.joe6355.astrophoto.processing.jpeg.v2.model.RegistrationResult
 import com.joe6355.astrophoto.processing.jpeg.v2.model.DetectedStar
+import com.joe6355.astrophoto.processing.jpeg.v2.model.ReferenceToSourceTransform
 import com.joe6355.astrophoto.processing.jpeg.v2.color.LinearRgb16
 import com.joe6355.astrophoto.processing.jpeg.v2.quality.ReferenceStarRetentionValidator
 import com.joe6355.astrophoto.processing.jpeg.v2.quality.LineArtifactDetector
@@ -39,6 +40,15 @@ class LocalFullResolutionCorrespondenceAuditTest {
         val onlySession = System.getenv("ASTROPHOTO_CORRESPONDENCE_SESSION")
         val sampleCount = System.getenv("ASTROPHOTO_CORRESPONDENCE_SAMPLE_COUNT")?.toInt() ?: 10
         require(sampleCount in 3..60)
+        // Optional known transforms isolate centroid refinement from thumbnail registration.
+        val diagnosticSeeds = System.getenv("ASTROPHOTO_CORRESPONDENCE_SEEDS")
+            ?.takeIf { it.isNotBlank() }?.let { file -> File(file).readLines().filter { it.isNotBlank() }
+                .associate { line ->
+                    val fields = line.split(',')
+                    require(fields.size == 4)
+                    fields[0] to ReferenceToSourceTransform(fields[1].toFloat(), fields[2].toFloat(),
+                        fields[3].toFloat())
+                } }.orEmpty()
         for (session in sessions.filter { onlySession == null || it == onlySession }) {
             val inputDirectory = directInputs?.let(::File) ?: File(requireNotNull(root), "$session/Lights/JPEG")
             val inputs = inputDirectory.listFiles().orEmpty()
@@ -64,7 +74,10 @@ class LocalFullResolutionCorrespondenceAuditTest {
                 println("FULL_CORRESPONDENCE session=$session frame=${file.name} stars=${stars.size} compact=${verified.size}")
                 verified
             }
-            val reference = frames.indices.maxBy { frames[it].size }
+            val requestedReference = System.getenv("ASTROPHOTO_CORRESPONDENCE_REFERENCE_INDEX")
+                ?.takeIf { it.isNotBlank() }?.toInt()?.minus(1)
+            val reference = requestedReference ?: frames.indices.maxBy { frames[it].size }
+            require(reference in frames.indices) { "Reference index must address the sampled frames" }
             var reliable = 1
             var centroidVerified = 1
             var identityVerified = 1
@@ -84,14 +97,17 @@ class LocalFullResolutionCorrespondenceAuditTest {
             ) }
             frames.indices.filter { it != reference }.forEach { index ->
                 val result = StarSimilarityRegistrar().registerAutomatic(frames[reference], frames[index], width, height)
+                val initial = diagnosticSeeds[sample[index].name] ?: result.referenceToSourceTransform()
                 if (result.isReliable) reliable++
-                if (result.isReliable) {
+                if (result.isReliable || sample[index].name in diagnosticSeeds) {
+                    if (sample[index].name in diagnosticSeeds) println(
+                        "FULL_DIAGNOSTIC_SEED frame=${sample[index].name} transform=$initial")
                     val refined = StellarCentroidFrameRefiner(rotationDiagnostic = {
                         println("FULL_RIGID session=$session $it")
                     }).refine(
                         frameId = sample[index].name, isReference = false, reference = referenceSource,
-                        candidate = source(sample[index]), initialTransform = result.referenceToSourceTransform(),
-                        znccTransform = result.referenceToSourceTransform(), patches = patches,
+                        candidate = source(sample[index]), initialTransform = initial,
+                        znccTransform = initial, patches = patches,
                         analysisScaleUncertainty = 0f, stage10Residual = result.residualError,
                         sequenceResidual = 0f, stage10Confidence = result.confidence)
                     if (refined.accepted) centroidVerified++
@@ -112,6 +128,22 @@ class LocalFullResolutionCorrespondenceAuditTest {
                             "candidate=${match.candidate.x},${match.candidate.y} " +
                             "accepted=${match.accepted} reason=${match.rejectionReason} " +
                             "snr=${minOf(match.reference.snr, match.candidate.snr)}")
+                    }
+                    // Recover every measured pair, including robust outliers, from its diagnostic
+                    // displacement. Re-detect the reference exactly as the refiner did (radius 4).
+                    refined.diagnostics.filter {
+                        it.rejectionReason == null || it.rejectionReason == "centroid_mad_outlier" ||
+                            it.rejectionReason == "centroid_rigid_outlier"
+                    }.forEach { diagnostic ->
+                        val measuredReference = checkNotNull(FullResolutionStarCentroidDetector()
+                            .detect(referenceSource, diagnostic.x, diagnostic.y, 4f).measurement)
+                        val predicted = initial
+                            .mapOutputToSource(measuredReference.x, measuredReference.y)
+                        println("FULL_MEASURED_PAIR frame=${sample[index].name} " +
+                            "reference=${measuredReference.x},${measuredReference.y} " +
+                            "candidate=${predicted.x + diagnostic.measuredDx - initial.dx}," +
+                            "${predicted.y + diagnostic.measuredDy - initial.dy} " +
+                            "sector=${diagnostic.sector} accepted=${diagnostic.accepted}")
                     }
                 }
                 println("FULL_CORRESPONDENCE session=$session reference=${sample[reference].name} candidate=${sample[index].name} " +
