@@ -117,7 +117,9 @@ class LocalFullResolutionCorrespondenceAuditTest {
                         identityFrames += sample[index]
                     }
                     println("FULL_CENTROID session=$session candidate=${sample[index].name} " +
-                        "accepted=${refined.accepted} matches=${refined.acceptedStarCount} " +
+                        "accepted=${refined.accepted} projective=${refined.refinedTransform.projective != null} " +
+                        "validationMedian=${refined.projectiveValidationMedian} validationP90=${refined.projectiveValidationP90} " +
+                        "matches=${refined.acceptedStarCount} " +
                         "median=${refined.medianResidual} p90=${refined.percentile90Residual} reason=${refined.rejectionReason} " +
                         "identityAccepted=${identity.accepted} identityReason=${identity.rejectionReason} " +
                         "dx=${refined.refinedTransform.dx} dy=${refined.refinedTransform.dy} " +
@@ -133,7 +135,8 @@ class LocalFullResolutionCorrespondenceAuditTest {
                     // displacement. Re-detect the reference exactly as the refiner did (radius 4).
                     refined.diagnostics.filter {
                         it.rejectionReason == null || it.rejectionReason == "centroid_mad_outlier" ||
-                            it.rejectionReason == "centroid_rigid_outlier"
+                            it.rejectionReason == "centroid_rigid_outlier" ||
+                            it.rejectionReason == "centroid_projective_outlier"
                     }.forEach { diagnostic ->
                         val measuredReference = checkNotNull(FullResolutionStarCentroidDetector()
                             .detect(referenceSource, diagnostic.x, diagnostic.y, 4f).measurement)

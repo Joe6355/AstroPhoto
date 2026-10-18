@@ -29,6 +29,18 @@ class ProfileIntegrationCheckpointStoreTest {
     @get:Rule
     val temporaryFolder = TemporaryFolder()
 
+    @Test fun perspectiveCoefficientsInvalidateCachedPixelsEvenWhenRigidMetadataIsIdentical() {
+        val first = ProjectiveTransform(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1e-6, 0.0)
+        val second = first.copy(px = 2e-6)
+        TemporaryPipelineFiles.create(temporaryFolder.newFolder("projective-source")).use { source ->
+            openStore(first).write(integrationRun(source, ByteArray(16) { 42 }, ByteArray(16)))
+            TemporaryPipelineFiles.create(temporaryFolder.newFolder("projective-restored")).use { restored ->
+                assertNull(openStore(second).readInto(restored))
+                assertArrayEquals(ByteArray(16) { 42 }, openStore(first).readInto(restored)?.stackedSky?.file?.readBytes())
+            }
+        }
+    }
+
     @Test fun rgb16FormatAndSubByteDataSurviveCheckpointRestore() {
         TemporaryPipelineFiles.create(temporaryFolder.newFolder("rgb16-source")).use { source ->
             val precise = FileBackedImageWriter(source.file("precise.rgb16"), 2, 2,
@@ -201,7 +213,7 @@ class ProfileIntegrationCheckpointStoreTest {
         )
     }
 
-    private fun openStore() = ProfileIntegrationCheckpointStore.open(
+    private fun openStore(projective: ProjectiveTransform? = null) = ProfileIntegrationCheckpointStore.open(
         filesRoot = temporaryFolder.root,
         sessionFolder = "session",
         profile = AstroProcessingProfile.DEEP_SKY,
@@ -224,7 +236,8 @@ class ProfileIntegrationCheckpointStoreTest {
                     residualError = 0f,
                     confidence = 1f,
                     isReliable = true,
-                    rejectionReason = null
+                    rejectionReason = null,
+                    projective = projective
                 ),
                 normalizedWeight = 1f
             )

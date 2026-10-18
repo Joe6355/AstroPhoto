@@ -1450,7 +1450,7 @@ class JpegStacker internal constructor(
                     analysisToFullScaleY = scaleY,
                     referenceIdentityVerified = allRegistrationsByKey
                         .getValue(selectedReference.frame.key)
-                        .let { it.dx == 0f && it.dy == 0f && it.rotationRadians == 0f && it.scale == 1f },
+                        .let { it.projective == null && it.dx == 0f && it.dy == 0f && it.rotationRadians == 0f && it.scale == 1f },
                     inverseTransformVerificationScore = registrationDiagnostics.verification
                         .inverseModel.score,
                     canonicalTransformVerificationScore = registrationDiagnostics.verification
@@ -2997,7 +2997,8 @@ internal fun RegistrationResult.toReport(frameName: String): FrameRegistrationRe
         transformSequenceScore = transformSequenceScore,
         transformSequenceDeviation = transformSequenceDeviation,
         neighborTransformDelta = neighborTransformDelta,
-        transformRetryUsed = transformRetryUsed
+        transformRetryUsed = transformRetryUsed,
+        projectiveMatrix = projective?.coefficients().orEmpty()
     )
 
 internal fun qualityFallbackWarning(

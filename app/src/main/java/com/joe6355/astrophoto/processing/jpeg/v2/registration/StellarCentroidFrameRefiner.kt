@@ -34,7 +34,10 @@ data class StellarCentroidRefinementResult(
     val accepted: Boolean,
     val rejectionReason: String?,
     val matches: List<StellarCentroidMatch>,
-    val diagnostics: List<StellarCentroidMatchDiagnostic>
+    val diagnostics: List<StellarCentroidMatchDiagnostic>,
+    val projectiveRefinementAttempted: Boolean = false,
+    val projectiveValidationMedian: Float = 0f,
+    val projectiveValidationP90: Float = 0f
 ) : java.io.Serializable
 
 class StellarCentroidFrameRefiner(
@@ -236,7 +239,7 @@ class StellarCentroidFrameRefiner(
         val selectedResiduals = residuals(aggregation.inliers, refined)
         val decision = decideTransform(initialTransform, refined, znccTransform,
             aggregation.inliers, availableSectors, searchRadius, verification)
-        return StellarCentroidRefinementResult(
+        val primary = StellarCentroidRefinementResult(
             frameId = frameId,
             initialTransform = initialTransform,
             znccTransform = znccTransform,
@@ -266,6 +269,56 @@ class StellarCentroidFrameRefiner(
             rejectionReason = decision.rejectionReason,
             matches = aggregation.inliers,
             diagnostics = diagnostics.sortedWith(compareBy({ it.y }, { it.x }, { it.rejectionReason.orEmpty() }))
+        )
+        // Preserve every accepted primary result. Perspective is an independently validated
+        // fallback for geometric failure, never a way to bypass photometry or smear gates.
+        if (primary.accepted || primary.rejectionReason !in setOf(
+                "centroid_median_residual_high", "centroid_p90_residual_high"
+            )) return primary
+        cancellationCheck()
+        val projective = ProjectiveStarRegistrar().register(evidenceMatches, initialTransform,
+            reference.width, reference.height, searchRadius, cancellationCheck)
+        if (projective == null) {
+            rotationDiagnostic("frame=$frameId fullResolutionProjective accepted=false reason=unsupported_model")
+            return primary.copy(projectiveRefinementAttempted = true)
+        }
+        val projectiveVerification = verifier.verifyCentroids(projective.inliers, initialTransform,
+            znccTransform, projective.transform)
+        val projectiveDecision = decideTransform(initialTransform, projective.transform, znccTransform,
+            projective.inliers, availableSectors, searchRadius, projectiveVerification)
+        rotationDiagnostic("frame=$frameId fullResolutionProjective accepted=${projectiveDecision.accepted} " +
+            "reason=${projectiveDecision.rejectionReason} inliers=${projective.inliers.size} " +
+            "validationMedian=${projective.validationMedian} validationP90=${projective.validationP90}")
+        if (!projectiveDecision.accepted) return primary.copy(projectiveRefinementAttempted = true,
+            projectiveValidationMedian = projective.validationMedian,
+            projectiveValidationP90 = projective.validationP90)
+        val projectiveKeys = projective.inliers.map { patchKey(it.patch) }.toSet()
+        val projectiveDiagnostics = primary.diagnostics.map { diagnostic ->
+            val key = patchKey(diagnostic.x, diagnostic.y)
+            when (key) {
+                in projectiveKeys -> diagnostic.copy(accepted = true, rejectionReason = null)
+                in evidenceKeys -> diagnostic.copy(accepted = false, rejectionReason = "centroid_projective_outlier")
+                else -> diagnostic
+            }
+        }
+        val projectiveResiduals = residuals(projective.inliers, projective.transform)
+        return primary.copy(
+            refinedTransform = projective.transform,
+            correctionDx = projective.transform.dx - initialTransform.dx,
+            correctionDy = projective.transform.dy - initialTransform.dy,
+            acceptedStarCount = projective.inliers.size,
+            rejectedStarCount = projectiveDiagnostics.count { !it.accepted },
+            spatialSectorCount = projective.inliers.map { it.patch.sector }.distinct().size,
+            medianResidual = median(projectiveResiduals),
+            percentile90Residual = percentile(projectiveResiduals, 0.9f),
+            medianSnr = median(projective.inliers.map { minOf(it.reference.snr, it.candidate.snr) }),
+            medianFitResidual = median(projective.inliers.map { maxOf(it.reference.fitResidual, it.candidate.fitResidual) }),
+            confidence = median(projective.inliers.map { it.confidence }),
+            verification = projectiveVerification, accepted = true, rejectionReason = null,
+            matches = projective.inliers, diagnostics = projectiveDiagnostics,
+            projectiveRefinementAttempted = true,
+            projectiveValidationMedian = projective.validationMedian,
+            projectiveValidationP90 = projective.validationP90
         )
     }
 

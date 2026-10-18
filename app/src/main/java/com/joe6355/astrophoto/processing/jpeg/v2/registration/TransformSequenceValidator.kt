@@ -373,7 +373,7 @@ class TransformSequenceValidator {
     /** Origin offsets of a rotating transform are not its displacement at the model's anchor. */
     private fun displacement(value: OrderedRegistration, point: TransformPoint): TransformPoint {
         val registration = value.registration
-        if (registration.rotationRadians == 0f && registration.scale == 1f) {
+        if (registration.projective == null && registration.rotationRadians == 0f && registration.scale == 1f) {
             return TransformPoint(registration.dx, registration.dy)
         }
         val mapped = registration.referenceToSourceTransform().mapOutputToSource(point.x, point.y)

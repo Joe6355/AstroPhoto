@@ -37,7 +37,8 @@ data class FrameRegistrationReport(
     val transformSequenceScore: Float = 1f,
     val transformSequenceDeviation: Float = 0f,
     val neighborTransformDelta: Float = 0f,
-    val transformRetryUsed: Boolean = false
+    val transformRetryUsed: Boolean = false,
+    val projectiveMatrix: List<Double> = emptyList()
 )
 
 data class FrameWeightReport(
@@ -228,6 +229,10 @@ data class ProcessingReport(
     val stellarCentroidRefinementEnabled: Boolean = false,
     val stellarCentroidSchemaVersion: String = "astrophoto.jpeg.stellar-centroid/1",
     val centroidPrimaryUsedPerFrame: Map<String, Boolean> = emptyMap(),
+    val centroidProjectiveAttemptedPerFrame: Map<String, Boolean> = emptyMap(),
+    val centroidProjectiveUsedPerFrame: Map<String, Boolean> = emptyMap(),
+    val centroidProjectiveValidationMedianPerFrame: Map<String, Float> = emptyMap(),
+    val centroidProjectiveValidationP90PerFrame: Map<String, Float> = emptyMap(),
     val znccSecondaryUsedPerFrame: Map<String, Boolean> = emptyMap(),
     val znccFallbackUsedPerFrame: Map<String, Boolean> = emptyMap(),
     val referenceCentroidCount: Int = 0,
@@ -453,6 +458,10 @@ data class ProcessingReport(
         property("stellarCentroidRefinementEnabled", stellarCentroidRefinementEnabled)
         property("stellarCentroidSchemaVersion", stellarCentroidSchemaVersion)
         append("  \"centroidPrimaryUsedPerFrame\": ${booleanMapJson(centroidPrimaryUsedPerFrame)},\n")
+        append("  \"centroidProjectiveAttemptedPerFrame\": ${booleanMapJson(centroidProjectiveAttemptedPerFrame)},\n")
+        append("  \"centroidProjectiveUsedPerFrame\": ${booleanMapJson(centroidProjectiveUsedPerFrame)},\n")
+        append("  \"centroidProjectiveValidationMedianPerFrame\": ${floatMapJson(centroidProjectiveValidationMedianPerFrame)},\n")
+        append("  \"centroidProjectiveValidationP90PerFrame\": ${floatMapJson(centroidProjectiveValidationP90PerFrame)},\n")
         append("  \"znccSecondaryUsedPerFrame\": ${booleanMapJson(znccSecondaryUsedPerFrame)},\n")
         append("  \"znccFallbackUsedPerFrame\": ${booleanMapJson(znccFallbackUsedPerFrame)},\n")
         property("referenceCentroidCount", referenceCentroidCount)
@@ -573,6 +582,7 @@ data class ProcessingReport(
             "rotationRadians":${number(value.rotationRadians)},"scale":${number(value.scale)},
             "residualError":${number(value.residualError)},"confidence":${number(value.confidence)},
             "registrationModel":"${escape(value.registrationModel)}","scaleFixed":${value.scaleFixed},
+            "projectiveMatrix":[${value.projectiveMatrix.joinToString(",")}],
             "rotationAllowed":${value.rotationAllowed},
             "rotationRejectionReason":${nullableString(value.rotationRejectionReason)},
             "occupiedDistributionCells":${value.occupiedDistributionCells},

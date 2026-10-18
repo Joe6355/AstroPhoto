@@ -11,6 +11,8 @@ data class TransformPoint(val x: Float, val y: Float)
  *
  * Maps an output/reference coordinate to the coordinate sampled in a candidate/source image.
  * Rotation and scale are applied around the explicit [rotationCenterX], [rotationCenterY].
+ * When [projective] is present its matrix is the sampling authority; the rigid fields describe
+ * the origin offset and central roll for sequence diagnostics, not a second applied transform.
  */
 data class ReferenceToSourceTransform(
     val dx: Float,
@@ -18,7 +20,8 @@ data class ReferenceToSourceTransform(
     val rotationRadians: Float = 0f,
     val scale: Float = 1f,
     val rotationCenterX: Float = 0f,
-    val rotationCenterY: Float = 0f
+    val rotationCenterY: Float = 0f,
+    val projective: ProjectiveTransform? = null
 ) : java.io.Serializable {
     init {
         require(
@@ -29,6 +32,7 @@ data class ReferenceToSourceTransform(
     }
 
     fun mapOutputToSource(outputX: Float, outputY: Float): TransformPoint {
+        projective?.let { return it.map(outputX, outputY) }
         val relativeX = outputX - rotationCenterX
         val relativeY = outputY - rotationCenterY
         val cosine = cos(rotationRadians)
@@ -50,7 +54,8 @@ data class ReferenceToSourceTransform(
             dx = dx * scaleX,
             dy = dy * scaleY,
             rotationCenterX = rotationCenterX * scaleX,
-            rotationCenterY = rotationCenterY * scaleY
+            rotationCenterY = rotationCenterY * scaleY,
+            projective = projective?.scaled(scaleX, scaleY)
         )
     }
 
@@ -64,7 +69,8 @@ data class ReferenceToSourceTransform(
             dx = scale * (cosine * dx - sine * dy) + dx,
             dy = scale * (sine * dx + cosine * dy) + dy,
             rotationRadians = rotationRadians * 2f,
-            scale = scale * scale
+            scale = scale * scale,
+            projective = projective?.composedWith(projective)
         )
     }
 
@@ -77,7 +83,10 @@ data class ReferenceToSourceTransform(
 class SourceToReferenceTransform internal constructor(
     private val forward: ReferenceToSourceTransform
 ) {
+    private val inverseProjective = forward.projective?.inverse()
+
     fun mapSourceToOutput(sourceX: Float, sourceY: Float): TransformPoint {
+        inverseProjective?.let { return it.map(sourceX, sourceY) }
         val translatedX = sourceX - forward.rotationCenterX - forward.dx
         val translatedY = sourceY - forward.rotationCenterY - forward.dy
         val cosine = cos(forward.rotationRadians)
@@ -102,7 +111,8 @@ class SourceToReferenceTransform internal constructor(
             rotationRadians = -forward.rotationRadians,
             scale = 1f / forward.scale,
             rotationCenterX = forward.rotationCenterX,
-            rotationCenterY = forward.rotationCenterY
+            rotationCenterY = forward.rotationCenterY,
+            projective = inverseProjective
         )
     }
 }

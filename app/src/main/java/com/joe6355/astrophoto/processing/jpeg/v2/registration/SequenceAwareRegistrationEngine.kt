@@ -458,7 +458,7 @@ class SequenceAwareRegistrationEngine(
 fun RegistrationResult.scaledToFullResolution(scaleX: Float, scaleY: Float): RegistrationResult {
     val scaled = referenceToSourceTransform().scaledToFullResolution(scaleX, scaleY)
     return withTransform(scaled).copy(
-        scaleFixed = true,
+        scaleFixed = scaled.projective == null,
         rawDx = rawDx * scaleX,
         rawDy = rawDy * scaleY,
         transformSequenceDeviation = transformSequenceDeviation * ((scaleX + scaleY) * 0.5f),

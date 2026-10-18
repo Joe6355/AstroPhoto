@@ -41,6 +41,7 @@ class PreparedReferenceToSourceTransform(
     transform: ReferenceToSourceTransform,
     private val preserveMappingOperationOrder: Boolean = false
 ) {
+    private val projective = transform.projective
     private val scale = transform.scale
     private val cosine = cos(transform.rotationRadians)
     private val sine = sin(transform.rotationRadians)
@@ -52,6 +53,7 @@ class PreparedReferenceToSourceTransform(
     private val dy = transform.dy
 
     fun sourceX(outputX: Float, outputY: Float): Float {
+        projective?.let { return it.sourceX(outputX, outputY) }
         val relativeX = outputX - centerX
         val relativeY = outputY - centerY
         if (preserveMappingOperationOrder) return scale * (cosine * relativeX - sine * relativeY) + centerX + dx
@@ -59,6 +61,7 @@ class PreparedReferenceToSourceTransform(
     }
 
     fun sourceY(outputX: Float, outputY: Float): Float {
+        projective?.let { return it.sourceY(outputX, outputY) }
         val relativeX = outputX - centerX
         val relativeY = outputY - centerY
         if (preserveMappingOperationOrder) return scale * (sine * relativeX + cosine * relativeY) + centerY + dy

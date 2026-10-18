@@ -27,13 +27,15 @@ data class RegistrationResult(
     val neighborTransformDelta: Float = 0f,
     val rawDx: Float = dx,
     val rawDy: Float = dy,
-    val rawRotationRadians: Float = rotationRadians
+    val rawRotationRadians: Float = rotationRadians,
+    val projective: ProjectiveTransform? = null
 ) : java.io.Serializable {
     fun referenceToSourceTransform(): ReferenceToSourceTransform = ReferenceToSourceTransform(
         dx = dx,
         dy = dy,
         rotationRadians = rotationRadians,
-        scale = scale
+        scale = scale,
+        projective = projective
     )
 
     fun transform(x: Float, y: Float): Pair<Float, Float> =
@@ -43,7 +45,8 @@ data class RegistrationResult(
         dx = transform.dx,
         dy = transform.dy,
         rotationRadians = transform.rotationRadians,
-        scale = transform.scale
+        scale = transform.scale,
+        projective = transform.projective
     )
 
     companion object {

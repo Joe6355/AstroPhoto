@@ -231,7 +231,11 @@ internal suspend fun JpegStacker.savePrimaryAndAncillaryEnhanced(
         enhanced = enhanced.saved
     )
     if (enhanced.saved != null) {
-        warnings += "Enhanced выбран как основной результат; чистый стек сохранён отдельно"
+        warnings += if (primary.selected.type == ResultCandidateType.CLEAN_STACK) {
+            "Enhanced выбран как основной результат; чистый стек сохранён отдельно"
+        } else {
+            "Enhanced выбран как основной результат; обработанный PNG сохранён отдельно"
+        }
     }
     val effectiveReport = if (primary.fallbackUsed) {
         val cleanStage = processingReport.sensorDefectFiltering.referenceStarRetentionStages
@@ -434,7 +438,9 @@ internal suspend fun JpegStacker.publishAncillaryEnhanced(
     timestamp: String,
     pipelineTiming: PipelineTimingCollector
 ): AncillaryEnhancedPublication {
-    if (selected.type != ResultCandidateType.CLEAN_STACK) {
+    // A validated processed stack also needs the optional visual finish. Otherwise improving
+    // registration can switch selection from CLEAN_STACK to PROCESSED and silently lose it.
+    if (selected.type != ResultCandidateType.CLEAN_STACK && selected.type != ResultCandidateType.PROCESSED) {
         return AncillaryEnhancedPublication(
             attempted = false,
             status = "NOT_ATTEMPTED"

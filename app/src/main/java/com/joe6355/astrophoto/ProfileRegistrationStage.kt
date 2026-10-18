@@ -501,13 +501,16 @@ internal suspend fun JpegStacker.prepareAndRefineFullResolutionFrames(
                         FrameAcceptanceDecision.PATH_STATIONARY_PROVISIONAL &&
                         centroidResult.refinedTransform == com.joe6355.astrophoto.processing.jpeg.v2.model
                             .ReferenceToSourceTransform.Identity -> "VERIFIED_IDENTITY"
+                    centroidResult.refinedTransform.projective != null -> "VALIDATED_PROJECTIVE_REFINED"
                     rotationFallbackUsed -> "TRANSLATION_FALLBACK_FULL_RESOLUTION"
                     centroidResult.refinedTransform.rotationRadians != 0f -> "FIXED_SCALE_RIGID_REFINED"
                     else -> "STELLAR_CENTROID_REFINED"
                 },
-                scaleFixed = true,
-                rotationAllowed = centroidResult.refinedTransform.rotationRadians != 0f,
+                scaleFixed = centroidResult.refinedTransform.projective == null,
+                rotationAllowed = centroidResult.refinedTransform.projective != null ||
+                    centroidResult.refinedTransform.rotationRadians != 0f,
                 rotationRejectionReason = when {
+                    centroidResult.refinedTransform.projective != null -> null
                     rotationFallbackUsed -> "rotation_failed_full_resolution_verification"
                     centroidResult.refinedTransform.rotationRadians != 0f -> null
                     else -> accepted.registration.rotationRejectionReason
@@ -683,7 +686,8 @@ internal fun ProcessingReport.withFullResolutionRefinement(
             it.znccTransform == com.joe6355.astrophoto.processing.jpeg.v2.model.ReferenceToSourceTransform.Identity
     }
     return copy(
-        registrationSchemaVersion = "astrophoto.jpeg.registration/4",
+        registrationSchemaVersion = if (centroidResultsByKey.values.any { it.refinedTransform.projective != null })
+            "astrophoto.jpeg.registration/5" else "astrophoto.jpeg.registration/4",
         verificationCoordinateSpace = "ANALYSIS_THUMBNAIL_AND_FULL_RESOLUTION_STELLAR_CENTROID_PX",
         fullResolutionRefinementEnabled = true,
         provisionalAcceptedFrameCount = provisionalAcceptedFrameCount,
@@ -711,8 +715,13 @@ internal fun ProcessingReport.withFullResolutionRefinement(
         fullResolutionPatchWidthGrowthPerFrame = named { it.verification.refined.widthGrowth },
         fullResolutionPatchSmearPerFrame = named { it.verification.refined.smear },
         stellarCentroidRefinementEnabled = true,
-        stellarCentroidSchemaVersion = "astrophoto.jpeg.stellar-centroid/1",
+        stellarCentroidSchemaVersion = if (centroidResultsByKey.values.any { it.refinedTransform.projective != null })
+            "astrophoto.jpeg.stellar-centroid/2" else "astrophoto.jpeg.stellar-centroid/1",
         centroidPrimaryUsedPerFrame = centroidNamed { it.centroidPrimaryUsed },
+        centroidProjectiveAttemptedPerFrame = centroidNamed { it.projectiveRefinementAttempted },
+        centroidProjectiveUsedPerFrame = centroidNamed { it.refinedTransform.projective != null },
+        centroidProjectiveValidationMedianPerFrame = centroidNamed { it.projectiveValidationMedian },
+        centroidProjectiveValidationP90PerFrame = centroidNamed { it.projectiveValidationP90 },
         znccSecondaryUsedPerFrame = centroidNamed { it.znccSecondaryUsed },
         znccFallbackUsedPerFrame = centroidNamed { it.znccFallbackUsed },
         referenceCentroidCount = referenceCentroids?.referenceCentroidCount ?: 0,
