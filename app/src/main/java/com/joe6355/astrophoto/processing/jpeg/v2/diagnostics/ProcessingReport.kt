@@ -133,6 +133,9 @@ data class ProcessingReport(
     val estimatedVelocityYAnalysisPxPerFrame: Float = 0f,
     val estimatedVelocityXFullPxPerFrame: Float = 0f,
     val estimatedVelocityYFullPxPerFrame: Float = 0f,
+    val motionTimingSource: String = "CAPTURE_INDEX",
+    val nominalCaptureIntervalMillis: Float = 0f,
+    val normalizedCaptureTimePerFrame: Map<String, Float> = emptyMap(),
     val sequenceModelScore: Float = 0f,
     val sequenceModelResidual: Float = 0f,
     val zeroModelScore: Float = 0f,
@@ -355,6 +358,9 @@ data class ProcessingReport(
         property("estimatedVelocityYAnalysisPxPerFrame", estimatedVelocityYAnalysisPxPerFrame)
         property("estimatedVelocityXFullPxPerFrame", estimatedVelocityXFullPxPerFrame)
         property("estimatedVelocityYFullPxPerFrame", estimatedVelocityYFullPxPerFrame)
+        property("motionTimingSource", motionTimingSource)
+        property("nominalCaptureIntervalMillis", nominalCaptureIntervalMillis)
+        append("  \"normalizedCaptureTimePerFrame\": ${floatMapJson(normalizedCaptureTimePerFrame)},\n")
         property("sequenceModelScore", sequenceModelScore)
         property("sequenceModelResidual", sequenceModelResidual)
         property("zeroModelScore", zeroModelScore)

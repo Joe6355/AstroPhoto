@@ -85,7 +85,7 @@ class ProfileRegistrationCheckpointStore private constructor(
     companion object {
         private const val ROOT_NAME = "jpeg-profile-registration-checkpoints"
         private const val MAGIC = 0x52504350
-        private const val VERSION = 12
+        private const val VERSION = 13
         private const val MAX_CHECKPOINT_BYTES = 64L * 1024L * 1024L
 
         fun open(
@@ -95,7 +95,8 @@ class ProfileRegistrationCheckpointStore private constructor(
             frames: List<SessionFrame>,
             selectedFrameKeys: List<String>,
             analysisWidth: Int,
-            analysisHeight: Int
+            analysisHeight: Int,
+            captureTimeByFrameKey: Map<String, Float> = emptyMap()
         ): ProfileRegistrationCheckpointStore = openAt(
             context.filesDir,
             sessionFolder,
@@ -103,7 +104,8 @@ class ProfileRegistrationCheckpointStore private constructor(
             frames,
             selectedFrameKeys,
             analysisWidth,
-            analysisHeight
+            analysisHeight,
+            captureTimeByFrameKey
         )
 
         internal fun open(
@@ -114,7 +116,8 @@ class ProfileRegistrationCheckpointStore private constructor(
             selectedFrameKeys: List<String>,
             analysisWidth: Int,
             analysisHeight: Int,
-            @Suppress("UNUSED_PARAMETER") forTesting: Boolean
+            @Suppress("UNUSED_PARAMETER") forTesting: Boolean,
+            captureTimeByFrameKey: Map<String, Float> = emptyMap()
         ): ProfileRegistrationCheckpointStore = openAt(
             filesRoot,
             sessionFolder,
@@ -122,7 +125,8 @@ class ProfileRegistrationCheckpointStore private constructor(
             frames,
             selectedFrameKeys,
             analysisWidth,
-            analysisHeight
+            analysisHeight,
+            captureTimeByFrameKey
         )
 
         private fun openAt(
@@ -132,7 +136,8 @@ class ProfileRegistrationCheckpointStore private constructor(
             frames: List<SessionFrame>,
             selectedFrameKeys: List<String>,
             analysisWidth: Int,
-            analysisHeight: Int
+            analysisHeight: Int,
+            captureTimeByFrameKey: Map<String, Float> = emptyMap()
         ): ProfileRegistrationCheckpointStore {
             val fingerprint = fingerprint(
                 sessionFolder,
@@ -140,7 +145,8 @@ class ProfileRegistrationCheckpointStore private constructor(
                 frames,
                 selectedFrameKeys,
                 analysisWidth,
-                analysisHeight
+                analysisHeight,
+                captureTimeByFrameKey
             )
             val root = File(filesRoot, ROOT_NAME)
             require(root.isDirectory || root.mkdirs())
@@ -161,7 +167,8 @@ class ProfileRegistrationCheckpointStore private constructor(
             frames: List<SessionFrame>,
             selectedFrameKeys: List<String>,
             width: Int,
-            height: Int
+            height: Int,
+            captureTimeByFrameKey: Map<String, Float>
         ): String {
             val digest = MessageDigest.getInstance("SHA-256")
             fun add(value: String) {
@@ -178,6 +185,10 @@ class ProfileRegistrationCheckpointStore private constructor(
                 add(frame.fileName)
                 add(frame.sizeBytes.toString())
                 add(frame.createdAtMillis.toString())
+            }
+            captureTimeByFrameKey.toSortedMap().forEach { (frameKey, time) ->
+                add(frameKey)
+                add(time.toBits().toString())
             }
             return digest.digest().joinToString("") { "%02x".format(it) }
         }

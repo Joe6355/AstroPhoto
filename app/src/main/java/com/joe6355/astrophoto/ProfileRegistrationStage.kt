@@ -103,7 +103,8 @@ internal fun prepareProvisionalProfileRegistration(
             referenceIndex = diagnostics.model.referenceIndex,
             residual = diagnostics.model.residual * fullVelocityScale,
             motionObservable = diagnostics.model.motionObservable,
-            verificationScore = diagnostics.verification.selectedModel.score
+            verificationScore = diagnostics.verification.selectedModel.score,
+            timeCoordinateByCaptureIndex = diagnostics.model.timeCoordinateByCaptureIndex
         ),
         comparisonPoint = TransformPoint(selection.targetWidth * 0.5f, selection.targetHeight * 0.5f)
     )
@@ -141,6 +142,7 @@ internal suspend fun JpegStacker.prepareFullResolutionWithReferenceRecovery(
     startingProvisional: ProvisionalProfileRegistrationResult,
     dimensionsByFrameKey: Map<String, Pair<Int, Int>>,
     captureIndexByFrameKey: Map<String, Int>,
+    captureTimeByFrameKey: Map<String, Float>,
     profile: AstroProcessingProfile,
     userApprovedInsufficientFrames: Boolean,
     temporaryFiles: TemporaryPipelineFiles,
@@ -202,7 +204,8 @@ internal suspend fun JpegStacker.prepareFullResolutionWithReferenceRecovery(
     val featureFrames = buildTemporalFeatureFrames(
         initialSelection.selectedFrames,
         initialSelection.analysesByFrameKey,
-        captureIndexByFrameKey
+        captureIndexByFrameKey,
+        captureTimeByFrameKey
     )
     val candidates = rankedReferenceRecoveryCandidates(
         initialSelection.selectedFrames.map {

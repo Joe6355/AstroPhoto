@@ -11,12 +11,14 @@ import kotlin.math.abs
 internal fun buildTemporalFeatureFrames(
     selectedFrames: List<SessionFrame>,
     analysesByFrameKey: Map<String, FrameAnalysis>,
-    captureIndexByFrameKey: Map<String, Int>
+    captureIndexByFrameKey: Map<String, Int>,
+    captureTimeByFrameKey: Map<String, Float> = emptyMap()
 ): List<TemporalFeatureFrame> = selectedFrames.map { frame ->
     TemporalFeatureFrame(
         frameId = frame.key,
         captureIndex = captureIndexByFrameKey.getValue(frame.key),
-        stars = analysesByFrameKey.getValue(frame.key).stars
+        stars = analysesByFrameKey.getValue(frame.key).stars,
+        captureTimeCoordinate = captureTimeByFrameKey[frame.key]
     )
 }
 

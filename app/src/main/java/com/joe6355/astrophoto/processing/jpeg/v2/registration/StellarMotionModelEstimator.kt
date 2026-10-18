@@ -6,30 +6,33 @@ class StellarMotionModelEstimator {
     fun fit(
         candidates: List<SequenceRegistrationCandidate>,
         referenceIndex: Int,
-        trackAnalysis: TemporalTrackAnalysis
+        trackAnalysis: TemporalTrackAnalysis,
+        timeCoordinateByCaptureIndex: Map<Int, Float> = emptyMap()
     ): StellarSequenceMotionModel {
         val ordered = candidates.sortedBy { it.captureIndex }
         if (ordered.isEmpty()) return emptyModel(referenceIndex)
+        fun timeAt(index: Int) = timeCoordinateByCaptureIndex[index] ?: index.toFloat()
         val velocitySeeds = buildList {
             add(0f to 0f)
             if (trackAnalysis.motionObservable) {
                 add(trackAnalysis.coherentVelocityX to trackAnalysis.coherentVelocityY)
             }
             ordered.filterNot { it.isReference }.forEach { frame ->
-                val delta = frame.captureIndex - referenceIndex
-                if (delta != 0) frame.hypotheses.forEach { hypothesis ->
+                val delta = timeAt(frame.captureIndex) - timeAt(referenceIndex)
+                if (delta != 0f) frame.hypotheses.forEach { hypothesis ->
                     add(hypothesis.dx / delta to hypothesis.dy / delta)
                 }
             }
         }.filter { hypot(it.first, it.second) <= MAX_VELOCITY }
             .distinctBy { velocityKey(it.first, it.second) }
 
-        val evaluated = velocitySeeds.map { evaluate(it.first, it.second, ordered, referenceIndex) }
+        val evaluated = velocitySeeds.map { evaluate(it.first, it.second, ordered, referenceIndex, timeCoordinateByCaptureIndex) }
         val zero = evaluate(
             0f,
             0f,
             ordered,
             referenceIndex,
+            timeCoordinateByCaptureIndex,
             maximumDeviation = ZERO_MODEL_MAX_DISPLACEMENT
         )
         val nonZero = evaluated.filter { hypot(it.velocityX, it.velocityY) >= MIN_NON_ZERO_VELOCITY }
@@ -37,14 +40,15 @@ class StellarMotionModelEstimator {
         val nonZeroRefined = nonZero?.let { initial ->
             val ratios = initial.selected.entries.mapNotNull { (frameId, hypothesis) ->
                 val frame = ordered.firstOrNull { it.frameId == frameId } ?: return@mapNotNull null
-                val delta = frame.captureIndex - referenceIndex
-                if (delta == 0) null else hypothesis.dx / delta to hypothesis.dy / delta
+                val delta = timeAt(frame.captureIndex) - timeAt(referenceIndex)
+                if (delta == 0f) null else hypothesis.dx / delta to hypothesis.dy / delta
             }
             if (ratios.isEmpty()) initial else evaluate(
                 median(ratios.map { it.first }),
                 median(ratios.map { it.second }),
                 ordered,
-                referenceIndex
+                referenceIndex,
+                timeCoordinateByCaptureIndex
             )
         }
         val bestNonZero = listOfNotNull(nonZero, nonZeroRefined).maxWithOrNull(modelComparator())
@@ -55,7 +59,7 @@ class StellarMotionModelEstimator {
         val selected = if (nonZeroHasEvidence) bestNonZero!! else zero
         val residual = selected.residual
         val motionObservable = nonZeroHasEvidence &&
-            hypot(selected.velocityX, selected.velocityY) * captureSpan(ordered) >=
+            hypot(selected.velocityX, selected.velocityY) * captureSpan(ordered, timeCoordinateByCaptureIndex) >=
             MIN_OBSERVABLE_SEQUENCE_MOVEMENT
         return StellarSequenceMotionModel(
             velocityX = selected.velocityX,
@@ -70,7 +74,8 @@ class StellarMotionModelEstimator {
             nonZeroModelScore = bestNonZero?.score ?: 0f,
             selectedMotionModel = if (motionObservable) "NON_ZERO_STELLAR" else "ZERO_OR_UNOBSERVABLE",
             zeroFrameHypotheses = zero.selected,
-            nonZeroFrameHypotheses = bestNonZero?.selected.orEmpty()
+            nonZeroFrameHypotheses = bestNonZero?.selected.orEmpty(),
+            timeCoordinateByCaptureIndex = timeCoordinateByCaptureIndex
         )
     }
 
@@ -79,8 +84,10 @@ class StellarMotionModelEstimator {
         velocityY: Float,
         candidates: List<SequenceRegistrationCandidate>,
         referenceIndex: Int,
+        timeCoordinateByCaptureIndex: Map<Int, Float>,
         maximumDeviation: Float = MAX_MODEL_DEVIATION
     ): EvaluatedModel {
+        fun timeAt(index: Int) = timeCoordinateByCaptureIndex[index] ?: index.toFloat()
         val selected = linkedMapOf<String, TranslationHypothesis>()
         val normalizedEvidence = mutableListOf<Float>()
         val deviations = mutableListOf<Float>()
@@ -91,7 +98,7 @@ class StellarMotionModelEstimator {
                 deviations += 0f
                 return@forEach
             }
-            val delta = frame.captureIndex - referenceIndex
+            val delta = timeAt(frame.captureIndex) - timeAt(referenceIndex)
             val predictedX = velocityX * delta
             val predictedY = velocityY * delta
             val best = frame.hypotheses.mapIndexed { rank, hypothesis ->
@@ -153,9 +160,11 @@ class StellarMotionModelEstimator {
     private fun velocityKey(x: Float, y: Float): Pair<Int, Int> =
         (x / VELOCITY_BIN).toInt() to (y / VELOCITY_BIN).toInt()
 
-    private fun captureSpan(values: List<SequenceRegistrationCandidate>): Int =
-        ((values.maxOfOrNull { it.captureIndex } ?: 0) -
-            (values.minOfOrNull { it.captureIndex } ?: 0)).coerceAtLeast(1)
+    private fun captureSpan(values: List<SequenceRegistrationCandidate>, times: Map<Int, Float>): Float {
+        fun time(frame: SequenceRegistrationCandidate) = times[frame.captureIndex] ?: frame.captureIndex.toFloat()
+        return ((values.maxOfOrNull(::time) ?: 0f) -
+            (values.minOfOrNull(::time) ?: 0f)).coerceAtLeast(0.001f)
+    }
 
     private fun rootMeanSquare(values: List<Float>): Float {
         if (values.isEmpty()) return Float.POSITIVE_INFINITY

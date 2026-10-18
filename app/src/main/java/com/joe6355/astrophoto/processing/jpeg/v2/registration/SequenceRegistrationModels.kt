@@ -7,8 +7,13 @@ import com.joe6355.astrophoto.processing.jpeg.v2.model.RegistrationResult
 data class TemporalFeatureFrame(
     val frameId: String,
     val captureIndex: Int,
-    val stars: List<DetectedStar>
-) : java.io.Serializable
+    val stars: List<DetectedStar>,
+    /** Elapsed capture time in nominal frame intervals; ordinal identities remain unchanged. */
+    val captureTimeCoordinate: Float? = null
+) : java.io.Serializable {
+    val motionTime: Float
+        get() = captureTimeCoordinate?.takeIf { it.isFinite() } ?: captureIndex.toFloat()
+}
 
 data class TemporalTrackObservation(
     val frameId: String,
@@ -115,13 +120,17 @@ data class StellarSequenceMotionModel(
     val nonZeroModelScore: Float,
     val selectedMotionModel: String,
     val zeroFrameHypotheses: Map<String, TranslationHypothesis> = emptyMap(),
-    val nonZeroFrameHypotheses: Map<String, TranslationHypothesis> = emptyMap()
+    val nonZeroFrameHypotheses: Map<String, TranslationHypothesis> = emptyMap(),
+    val timeCoordinateByCaptureIndex: Map<Int, Float> = emptyMap()
 ) : java.io.Serializable {
     fun predictedTransform(captureIndex: Int): ReferenceToSourceTransform {
-        val delta = captureIndex - referenceIndex
-        if (delta == 0) return ReferenceToSourceTransform.Identity
+        val delta = timeAt(captureIndex) - timeAt(referenceIndex)
+        if (delta == 0f) return ReferenceToSourceTransform.Identity
         return ReferenceToSourceTransform(velocityX * delta, velocityY * delta)
     }
+
+    fun timeAt(captureIndex: Int): Float =
+        timeCoordinateByCaptureIndex[captureIndex] ?: captureIndex.toFloat()
 
     fun predicted(captureIndex: Int): Pair<Float, Float> {
         val transform = predictedTransform(captureIndex)
@@ -187,13 +196,17 @@ data class ExpectedSequenceMotionModel(
     val referenceIndex: Int,
     val residual: Float,
     val motionObservable: Boolean,
-    val verificationScore: Float
+    val verificationScore: Float,
+    val timeCoordinateByCaptureIndex: Map<Int, Float> = emptyMap()
 ) : java.io.Serializable {
     fun predictedTransform(captureIndex: Int): ReferenceToSourceTransform {
-        val delta = captureIndex - referenceIndex
-        if (delta == 0) return ReferenceToSourceTransform.Identity
+        val delta = timeAt(captureIndex) - timeAt(referenceIndex)
+        if (delta == 0f) return ReferenceToSourceTransform.Identity
         return ReferenceToSourceTransform(velocityX * delta, velocityY * delta)
     }
+
+    fun timeAt(captureIndex: Int): Float =
+        timeCoordinateByCaptureIndex[captureIndex] ?: captureIndex.toFloat()
 
     fun predicted(captureIndex: Int): Pair<Float, Float> {
         val transform = predictedTransform(captureIndex)

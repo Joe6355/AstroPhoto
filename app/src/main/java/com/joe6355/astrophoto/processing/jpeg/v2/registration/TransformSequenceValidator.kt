@@ -72,10 +72,12 @@ class TransformSequenceValidator {
         }
 
         val stepDx = reliable.zipWithNext { first, second ->
-            displacement(second, comparisonPoint).x - displacement(first, comparisonPoint).x
+            (displacement(second, comparisonPoint).x - displacement(first, comparisonPoint).x) /
+                interval(first, second, expectedMotionModel)
         }
         val stepDy = reliable.zipWithNext { first, second ->
-            displacement(second, comparisonPoint).y - displacement(first, comparisonPoint).y
+            (displacement(second, comparisonPoint).y - displacement(first, comparisonPoint).y) /
+                interval(first, second, expectedMotionModel)
         }
         val medianStepDx = median(stepDx)
         val medianStepDy = median(stepDy)
@@ -86,7 +88,8 @@ class TransformSequenceValidator {
         val translationFloor = maxOf(MIN_TRANSLATION_DEVIATION_PX, medianStep * 0.20f)
         val translationLimit = maxOf(translationFloor, stepMad * MAD_MULTIPLIER + translationFloor)
         val rotationSteps = reliable.zipWithNext { first, second ->
-            second.registration.rotationRadians - first.registration.rotationRadians
+            (second.registration.rotationRadians - first.registration.rotationRadians) /
+                interval(first, second, expectedMotionModel)
         }
         val medianRotationStep = median(rotationSteps)
         val rotationMad = lowerMedian(rotationSteps.map { abs(it - medianRotationStep) })
@@ -108,9 +111,10 @@ class TransformSequenceValidator {
                 next,
                 medianStepDx,
                 medianStepDy,
-                comparisonPoint
+                comparisonPoint,
+                expectedMotionModel
             )
-            val rotationDeviation = localRotationDeviation(entry, previous, next, medianRotationStep)
+            val rotationDeviation = localRotationDeviation(entry, previous, next, medianRotationStep, expectedMotionModel)
             val currentNeighborDelta = neighborDelta(entry, previous, comparisonPoint)
             val directionReversal = hasUnsupportedDirectionReversal(
                 previous,
@@ -118,7 +122,8 @@ class TransformSequenceValidator {
                 next,
                 medianStepDx,
                 medianStepDy,
-                comparisonPoint
+                comparisonPoint,
+                expectedMotionModel
             )
             val priorDeviation = motionPriorDeviation(entry, expectedMotionModel, comparisonPoint)
             val priorLimit = motionPriorLimit(expectedMotionModel)
@@ -157,9 +162,10 @@ class TransformSequenceValidator {
                     next,
                     medianStepDx,
                     medianStepDy,
-                    comparisonPoint
+                    comparisonPoint,
+                    expectedMotionModel
                 )
-                val retryRotationDeviation = localRotationDeviation(retryEntry, previous, next, medianRotationStep)
+                val retryRotationDeviation = localRotationDeviation(retryEntry, previous, next, medianRotationStep, expectedMotionModel)
                 val retryPriorDeviation = motionPriorDeviation(retryEntry, expectedMotionModel, comparisonPoint)
                 if (
                     retryDeviation <= translationLimit &&
@@ -256,29 +262,32 @@ class TransformSequenceValidator {
         next: OrderedRegistration?,
         medianStepDx: Float,
         medianStepDy: Float,
-        comparisonPoint: TransformPoint
+        comparisonPoint: TransformPoint,
+        timing: ExpectedSequenceMotionModel?
     ): Float {
         val currentPoint = displacement(current, comparisonPoint)
         val previousPoint = previous?.let { displacement(it, comparisonPoint) }
         val nextPoint = next?.let { displacement(it, comparisonPoint) }
+        val previousInterval = previous?.let { interval(it, current, timing) } ?: 1f
+        val nextInterval = next?.let { interval(current, it, timing) } ?: 1f
         return when {
             previousPoint != null && nextPoint != null -> minOf(
                 hypot(
-                    currentPoint.x - previousPoint.x - medianStepDx,
-                    currentPoint.y - previousPoint.y - medianStepDy
+                    currentPoint.x - previousPoint.x - medianStepDx * previousInterval,
+                    currentPoint.y - previousPoint.y - medianStepDy * previousInterval
                 ),
                 hypot(
-                    nextPoint.x - currentPoint.x - medianStepDx,
-                    nextPoint.y - currentPoint.y - medianStepDy
+                    nextPoint.x - currentPoint.x - medianStepDx * nextInterval,
+                    nextPoint.y - currentPoint.y - medianStepDy * nextInterval
                 )
             )
             previousPoint != null -> hypot(
-                currentPoint.x - previousPoint.x - medianStepDx,
-                currentPoint.y - previousPoint.y - medianStepDy
+                currentPoint.x - previousPoint.x - medianStepDx * previousInterval,
+                currentPoint.y - previousPoint.y - medianStepDy * previousInterval
             )
             nextPoint != null -> hypot(
-                nextPoint.x - currentPoint.x - medianStepDx,
-                nextPoint.y - currentPoint.y - medianStepDy
+                nextPoint.x - currentPoint.x - medianStepDx * nextInterval,
+                nextPoint.y - currentPoint.y - medianStepDy * nextInterval
             )
             else -> 0f
         }
@@ -288,23 +297,24 @@ class TransformSequenceValidator {
         current: OrderedRegistration,
         previous: OrderedRegistration?,
         next: OrderedRegistration?,
-        medianStep: Float
+        medianStep: Float,
+        timing: ExpectedSequenceMotionModel?
     ): Float = when {
         previous != null && next != null -> minOf(
             abs(
                 current.registration.rotationRadians -
-                    previous.registration.rotationRadians - medianStep
+                    previous.registration.rotationRadians - medianStep * interval(previous, current, timing)
             ),
             abs(
                 next.registration.rotationRadians -
-                    current.registration.rotationRadians - medianStep
+                    current.registration.rotationRadians - medianStep * interval(current, next, timing)
             )
         )
         previous != null -> abs(
-            current.registration.rotationRadians - previous.registration.rotationRadians - medianStep
+            current.registration.rotationRadians - previous.registration.rotationRadians - medianStep * interval(previous, current, timing)
         )
         next != null -> abs(
-            next.registration.rotationRadians - current.registration.rotationRadians - medianStep
+            next.registration.rotationRadians - current.registration.rotationRadians - medianStep * interval(current, next, timing)
         )
         else -> 0f
     }
@@ -315,7 +325,8 @@ class TransformSequenceValidator {
         next: OrderedRegistration?,
         medianStepDx: Float,
         medianStepDy: Float,
-        comparisonPoint: TransformPoint
+        comparisonPoint: TransformPoint,
+        timing: ExpectedSequenceMotionModel?
     ): Boolean {
         if (previous == null || next == null) return false
         val previousPoint = displacement(previous, comparisonPoint)
@@ -328,11 +339,19 @@ class TransformSequenceValidator {
         val firstLength = hypot(firstDx, firstDy)
         val secondLength = hypot(secondDx, secondDy)
         if (firstLength < MIN_DIRECTION_STEP_PX || secondLength < MIN_DIRECTION_STEP_PX) return false
-        val firstDeviation = hypot(firstDx - medianStepDx, firstDy - medianStepDy)
-        val secondDeviation = hypot(secondDx - medianStepDx, secondDy - medianStepDy)
+        val firstInterval = interval(previous, current, timing)
+        val secondInterval = interval(current, next, timing)
+        val firstDeviation = hypot(firstDx - medianStepDx * firstInterval, firstDy - medianStepDy * firstInterval)
+        val secondDeviation = hypot(secondDx - medianStepDx * secondInterval, secondDy - medianStepDy * secondInterval)
         return firstDeviation > MIN_TRANSLATION_DEVIATION_PX &&
             secondDeviation > MIN_TRANSLATION_DEVIATION_PX &&
             firstDx * secondDx + firstDy * secondDy < 0f
+    }
+
+    private fun interval(first: OrderedRegistration, second: OrderedRegistration,
+                         timing: ExpectedSequenceMotionModel?): Float {
+        fun time(entry: OrderedRegistration) = timing?.timeAt(entry.captureIndex) ?: entry.captureIndex.toFloat()
+        return (time(second) - time(first)).coerceAtLeast(0.001f)
     }
 
     private fun sequenceEntryScore(deviation: Float, limit: Float): Float =

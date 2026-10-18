@@ -573,6 +573,10 @@ class JpegStacker internal constructor(
             )
             val analysisFrames = preparedAnalysis.frames
             val captureIndexByFrameKey = preparedAnalysis.captureIndexByFrameKey
+            val captureTiming = readProfileCaptureTiming(context, analysisFrames, captureIndexByFrameKey)
+            val captureTimeByFrameKey = captureTiming.normalizedTimeByFrameId
+            Log.i(PROFILE_REGISTRATION_TAG,
+                "motionTimingSource=${captureTiming.source} nominalIntervalMillis=${captureTiming.nominalIntervalMillis}")
             val dimensionsByFrameKey = preparedAnalysis.dimensionsByFrameKey
             val commonWidth = preparedAnalysis.commonWidth
             val commonHeight = preparedAnalysis.commonHeight
@@ -631,7 +635,8 @@ class JpegStacker internal constructor(
                 frames = frames,
                 selectedFrameKeys = initialSelection.selectedFrames.map { it.key },
                 analysisWidth = initialSelection.selectedReference.analysis.width,
-                analysisHeight = initialSelection.selectedReference.analysis.height
+                analysisHeight = initialSelection.selectedReference.analysis.height,
+                captureTimeByFrameKey = captureTimeByFrameKey
             )
             currentStage = "Первичное выравнивание"
             val registrationStarted = System.nanoTime()
@@ -643,6 +648,7 @@ class JpegStacker internal constructor(
                 selectedFrames = initialSelection.selectedFrames,
                 analysesByFrameKey = initialSelection.analysesByFrameKey,
                 captureIndexByFrameKey = captureIndexByFrameKey,
+                captureTimeByFrameKey = captureTimeByFrameKey,
                 referenceFrameId = initialSelection.selectedReference.frame.key,
                 imageWidth = initialSelection.selectedReference.analysis.width,
                 imageHeight = initialSelection.selectedReference.analysis.height,
@@ -733,6 +739,7 @@ class JpegStacker internal constructor(
                         startingProvisional = provisionalRegistration,
                         dimensionsByFrameKey = dimensionsByFrameKey,
                         captureIndexByFrameKey = captureIndexByFrameKey,
+                        captureTimeByFrameKey = captureTimeByFrameKey,
                         profile = profile,
                         userApprovedInsufficientFrames =
                             userApprovedInsufficientProfileFrames.get(),
@@ -1401,6 +1408,9 @@ class JpegStacker internal constructor(
                     estimatedVelocityYAnalysisPxPerFrame = registrationDiagnostics.model.velocityY,
                     estimatedVelocityXFullPxPerFrame = registrationDiagnostics.model.velocityX * scaleX,
                     estimatedVelocityYFullPxPerFrame = registrationDiagnostics.model.velocityY * scaleY,
+                    motionTimingSource = captureTiming.source,
+                    nominalCaptureIntervalMillis = captureTiming.nominalIntervalMillis?.toFloat() ?: 0f,
+                    normalizedCaptureTimePerFrame = captureTimeByFrameKey.mapKeys { frameNameByKey[it.key] ?: it.key },
                     sequenceModelScore = registrationDiagnostics.model.score,
                     sequenceModelResidual = registrationDiagnostics.model.residual,
                     zeroModelScore = registrationDiagnostics.model.competingZeroModelScore,
@@ -1916,6 +1926,7 @@ class JpegStacker internal constructor(
         selectedFrames: List<SessionFrame>,
         analysesByFrameKey: Map<String, FrameAnalysis>,
         captureIndexByFrameKey: Map<String, Int>,
+        captureTimeByFrameKey: Map<String, Float>,
         referenceFrameId: String,
         imageWidth: Int,
         imageHeight: Int,
@@ -1933,7 +1944,7 @@ class JpegStacker internal constructor(
             }
         }
     ) {
-        val featureFrames = buildTemporalFeatureFrames(selectedFrames, analysesByFrameKey, captureIndexByFrameKey)
+        val featureFrames = buildTemporalFeatureFrames(selectedFrames, analysesByFrameKey, captureIndexByFrameKey, captureTimeByFrameKey)
         com.joe6355.astrophoto.processing.jpeg.v2.registration.registerWithReferenceRecovery(
             selectedAnalyses = selectedFrames.map { analysesByFrameKey.getValue(it.key) },
             captureIndexByFrameKey = captureIndexByFrameKey,

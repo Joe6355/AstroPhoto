@@ -47,7 +47,10 @@ class SequenceAwareRegistrationEngine(
             onProgress()
             candidate
         }
-        val fitted = modelEstimator.fit(candidates, reference.captureIndex, tracks)
+        val timeCoordinates = if (ordered.all { it.captureTimeCoordinate != null }) {
+            ordered.associate { it.captureIndex to it.motionTime }
+        } else emptyMap()
+        val fitted = modelEstimator.fit(candidates, reference.captureIndex, tracks, timeCoordinates)
         onProgress()
         val globalVerification = verifier.verify(
             reference = reference,

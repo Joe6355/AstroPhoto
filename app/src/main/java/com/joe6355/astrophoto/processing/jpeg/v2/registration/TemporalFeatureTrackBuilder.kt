@@ -24,7 +24,7 @@ class TemporalFeatureTrackBuilder {
                 cancellationCheck()
                 if (usedByFrame.getValue(first.frameId)[indexed.index]) return@mapNotNull null
                 val seed = indexed.value
-                val delta = (anchor.captureIndex - first.captureIndex).coerceAtLeast(1)
+                val delta = (anchor.motionTime - first.motionTime).coerceAtLeast(0.001f)
                 val velocities = buildList {
                     add(0f to 0f)
                     anchor.stars.take(MAX_ANCHOR_STARS).forEach { candidate ->
@@ -56,7 +56,7 @@ class TemporalFeatureTrackBuilder {
                 )
             }
 
-        val captureSpan = (ordered.last().captureIndex - ordered.first().captureIndex).coerceAtLeast(1)
+        val captureSpan = (ordered.last().motionTime - ordered.first().motionTime).coerceAtLeast(0.001f)
         val stationary = tracks.filter {
             it.presenceRatio >= MIN_PRESENCE_RATIO &&
                 hypot(it.velocityX, it.velocityY) * captureSpan <= STATIONARY_TOTAL_MOVEMENT &&
@@ -104,7 +104,7 @@ class TemporalFeatureTrackBuilder {
         velocity: Pair<Float, Float>,
         usedByFrame: Map<String, BooleanArray>
     ): List<IndexedObservation> = frames.mapNotNull { frame ->
-        val delta = frame.captureIndex - first.captureIndex
+        val delta = frame.motionTime - first.motionTime
         val expectedX = seed.x + velocity.first * delta
         val expectedY = seed.y + velocity.second * delta
         frame.stars.withIndex()
@@ -123,20 +123,20 @@ class TemporalFeatureTrackBuilder {
         val slopesX = mutableListOf<Float>()
         val slopesY = mutableListOf<Float>()
         for (first in 0 until observations.lastIndex) for (second in first + 1 until observations.size) {
-            val delta = observations[second].frame.captureIndex - observations[first].frame.captureIndex
-            if (delta != 0) {
+            val delta = observations[second].frame.motionTime - observations[first].frame.motionTime
+            if (delta != 0f) {
                 slopesX += (observations[second].star.x - observations[first].star.x) / delta
                 slopesY += (observations[second].star.y - observations[first].star.y) / delta
             }
         }
         val velocityX = median(slopesX)
         val velocityY = median(slopesY)
-        val interceptX = median(observations.map { it.star.x - velocityX * it.frame.captureIndex })
-        val interceptY = median(observations.map { it.star.y - velocityY * it.frame.captureIndex })
+        val interceptX = median(observations.map { it.star.x - velocityX * it.frame.motionTime })
+        val interceptY = median(observations.map { it.star.y - velocityY * it.frame.motionTime })
         val residual = median(observations.map {
             hypot(
-                it.star.x - (interceptX + velocityX * it.frame.captureIndex),
-                it.star.y - (interceptY + velocityY * it.frame.captureIndex)
+                it.star.x - (interceptX + velocityX * it.frame.motionTime),
+                it.star.y - (interceptY + velocityY * it.frame.motionTime)
             )
         })
         return Fit(velocityX, velocityY, residual)
