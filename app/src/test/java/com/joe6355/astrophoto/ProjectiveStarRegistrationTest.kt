@@ -108,6 +108,52 @@ class ProjectiveStarRegistrationTest {
         assertNull(result.refinedTransform.projective)
     }
 
+    @Test fun acceptedRigidModelCanImproveAcrossTheFieldOnIndependentStars() {
+        val diagnostics = mutableListOf<String>()
+        val reference = render(stars)
+        val candidateStars = stars.map { (x, y) ->
+            val a = prior.mapOutputToSource(x, y); val b = warp.map(x, y)
+            (a.x + (b.x - a.x) * 0.35f) to (a.y + (b.y - a.y) * 0.35f)
+        }
+        val result = StellarCentroidFrameRefiner(rotationDiagnostic = diagnostics::add).refine(
+            "accepted-perspective", false, reference, render(candidateStars),
+            prior.copy(dx = prior.dx + 0.7f, dy = prior.dy + 0.4f, rotationRadians = prior.rotationRadians + 0.0015f),
+            prior.copy(dx = prior.dx + 0.7f, dy = prior.dy + 0.4f, rotationRadians = prior.rotationRadians + 0.0015f),
+            stars.map { (x, y) -> patch(x, y) }, 0f, 0f, 0f, 1f)
+        assertTrue("${result.rejectionReason}\n${diagnostics.joinToString("\n")}", diagnostics.any {
+            "fullResolutionProjectiveComparison" in it && "selected=true" in it
+        })
+        assertTrue(result.rejectionReason, result.accepted)
+        assertNotNull(result.refinedTransform.projective)
+        stars.zip(candidateStars).forEach { (referenceStar, expected) ->
+            val actual = result.refinedTransform.mapOutputToSource(referenceStar.first, referenceStar.second)
+            assertTrue(hypot(actual.x - expected.first, actual.y - expected.second) < 0.15f)
+        }
+    }
+
+    @Test fun heldOutComparisonKeepsAccurateRigidMotionAndRequiresAMaterialGain() {
+        val perspective = checkNotNull(register(matches()))
+        assertTrue(perspective.compareTo(prior).materiallyImproves)
+        assertFalse(perspective.compareTo(perspective.transform).materiallyImproves)
+        val rigid = ProjectiveTransform(kotlin.math.cos(prior.rotationRadians.toDouble()),
+            -kotlin.math.sin(prior.rotationRadians.toDouble()), prior.dx.toDouble(),
+            kotlin.math.sin(prior.rotationRadians.toDouble()), kotlin.math.cos(prior.rotationRadians.toDouble()),
+            prior.dy.toDouble(), 0.0, 0.0)
+        val noisyRigid = checkNotNull(register(matches(model = rigid)))
+        assertFalse(noisyRigid.compareTo(prior).materiallyImproves)
+    }
+
+    @Test fun comparisonCannotDiscardStarsThatWereAlignedByThePrimaryModel() {
+        val mixed = matches().mapIndexed { index, match ->
+            if (index % 6 != 0) match else {
+                val point = prior.mapOutputToSource(match.reference.x, match.reference.y)
+                match.copy(candidate = measurement(point.x, point.y))
+            }
+        }
+        val projective = register(mixed)
+        assertFalse(projective?.compareTo(prior)?.materiallyImproves == true)
+    }
+
     @Test fun preparedSamplingInverseCompositionAndResolutionScalingUseTheSameMatrix() {
         val transform = prior.copy(projective = warp)
         for ((x, y) in stars) {

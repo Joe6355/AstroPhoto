@@ -14,10 +14,47 @@ internal data class ProjectiveStarRegistration(
     val transform: ReferenceToSourceTransform,
     val inliers: List<StellarCentroidMatch>,
     val validationMedian: Float,
-    val validationP90: Float
-)
+    val validationP90: Float,
+    private val validationSamples: List<Pair<StellarCentroidMatch, Float>>
+) {
+    fun compareTo(incumbent: ReferenceToSourceTransform): ProjectiveModelComparison {
+        // Both models are scored at exactly the same measured positions. Include a star
+        // supported by either model so losing an incumbent's good star cannot hide a regression.
+        val pairedErrors = validationSamples.map { (match, heldOutError) ->
+            val predicted = incumbent.mapOutputToSource(match.reference.x, match.reference.y)
+            hypot(predicted.x - match.candidate.x, predicted.y - match.candidate.y) to heldOutError
+        }.filter { (before, after) -> before <= 1.10f || after <= 1.10f }
+        fun percentile(values: List<Float>, fraction: Float): Float = values.sorted().let {
+            if (it.isEmpty()) Float.POSITIVE_INFINITY
+            else it[ceil((it.size - 1) * fraction).toInt()]
+        }
+        val before = pairedErrors.map { it.first }
+        val after = pairedErrors.map { it.second }
+        return ProjectiveModelComparison(pairedErrors.size,
+            percentile(before, 0.5f), percentile(before, 0.9f),
+            percentile(after, 0.5f), percentile(after, 0.9f),
+            pairedErrors.count { (a, b) -> b <= a + 0.10f }.toFloat() / pairedErrors.size.coerceAtLeast(1))
+    }
+}
 
-/** A bounded fallback for spatial motion that a single image-plane rotation cannot represent. */
+internal data class ProjectiveModelComparison(
+    val starCount: Int,
+    val primaryMedian: Float,
+    val primaryP90: Float,
+    val projectiveMedian: Float,
+    val projectiveP90: Float,
+    val nonRegressedFraction: Float
+) {
+    // Prefer the simpler, already accepted model unless held-out predictions improve both
+    // typical and outer-field error substantially, without sacrificing its well-aligned stars.
+    val materiallyImproves: Boolean get() = starCount >= 24 &&
+        projectiveMedian <= primaryMedian * 0.75f && primaryMedian - projectiveMedian >= 0.08f &&
+        projectiveP90 <= primaryP90 * 0.75f && primaryP90 - projectiveP90 >= 0.15f &&
+        projectiveMedian <= StellarCentroidRefinementPolicy.TARGET_MEDIAN_RESIDUAL &&
+        projectiveP90 <= StellarCentroidRefinementPolicy.TARGET_P90_RESIDUAL && nonRegressedFraction >= 0.90f
+}
+
+/** Bounded spatial motion that a single image-plane rotation cannot represent. */
 internal class ProjectiveStarRegistrar {
     fun register(
         matches: List<StellarCentroidMatch>,
@@ -46,15 +83,16 @@ internal class ProjectiveStarRegistrar {
 
         // Held-out stars never participate in their fold's fit. A flexible matrix must predict
         // independent positions, not merely interpolate the stars that selected its parameters.
-        val validationErrors = mutableListOf<Float>()
+        val validationSamples = mutableListOf<Pair<StellarCentroidMatch, Float>>()
         for (fold in 0 until VALIDATION_FOLDS) {
             cancellationCheck()
             val training = usable.filterIndexed { index, _ -> index % VALIDATION_FOLDS != fold }
             val heldOut = usable.filterIndexed { index, _ -> index % VALIDATION_FOLDS == fold }
             val validation = robustFit(training, normalization, cancellationCheck) ?: return null
             if (!physicallyBounded(validation, initial, width, height, searchRadius)) return null
-            validationErrors += errors(validation, heldOut)
+            validationSamples += heldOut.zip(errors(validation, heldOut))
         }
+        val validationErrors = validationSamples.map { it.second }
         if (!consensusValid(validationErrors)) return null
         val validatedMatches = validationErrors.filter { it <= MATCH_DISTANCE }
         val median = percentile(validatedMatches, 0.5f)
@@ -65,7 +103,7 @@ internal class ProjectiveStarRegistrar {
         val angle = atan2(centerJacobian[2] - centerJacobian[1], centerJacobian[0] + centerJacobian[3]).toFloat()
         return ProjectiveStarRegistration(ReferenceToSourceTransform(
             model.tx.toFloat(), model.ty.toFloat(), angle, projective = model
-        ), inliers, median, p90)
+        ), inliers, median, p90, validationSamples)
     }
 
     private fun consensusValid(errors: List<Float>): Boolean {

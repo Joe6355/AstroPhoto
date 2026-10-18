@@ -270,17 +270,39 @@ class StellarCentroidFrameRefiner(
             matches = aggregation.inliers,
             diagnostics = diagnostics.sortedWith(compareBy({ it.y }, { it.x }, { it.rejectionReason.orEmpty() }))
         )
-        // Preserve every accepted primary result. Perspective is an independently validated
-        // fallback for geometric failure, never a way to bypass photometry or smear gates.
-        if (primary.accepted || primary.rejectionReason !in setOf(
+        // A small inlier subset can pass rigid validation while the rest of the field remains
+        // misaligned. Compare a dense model on held-out stars before replacing an accepted fit.
+        // Photometric, blur and motion failures still cannot request a more flexible model.
+        if (!primary.accepted && primary.rejectionReason !in setOf(
                 "centroid_median_residual_high", "centroid_p90_residual_high"
             )) return primary
+        if (primary.accepted && (evidenceMatches.size < 24 ||
+                median(residuals(evidenceMatches, refined)) <= 0.20f &&
+                percentile(residuals(evidenceMatches, refined), 0.9f) <= 0.45f)) return primary
         cancellationCheck()
         val projective = ProjectiveStarRegistrar().register(evidenceMatches, initialTransform,
             reference.width, reference.height, searchRadius, cancellationCheck)
         if (projective == null) {
             rotationDiagnostic("frame=$frameId fullResolutionProjective accepted=false reason=unsupported_model")
             return primary.copy(projectiveRefinementAttempted = true)
+        }
+        if (primary.accepted) {
+            val comparison = projective.compareTo(refined)
+            rotationDiagnostic("frame=$frameId fullResolutionProjectiveComparison $comparison " +
+                "selected=${comparison.materiallyImproves}")
+            if (!comparison.materiallyImproves) return primary.copy(projectiveRefinementAttempted = true,
+                projectiveValidationMedian = projective.validationMedian,
+                projectiveValidationP90 = projective.validationP90)
+            // An upgrade must also pass photometry on the incumbent's own measured support.
+            val incumbentSupportVerification = verifier.verifyCentroids(primary.matches, initialTransform,
+                znccTransform, projective.transform)
+            if (!decideTransform(initialTransform, projective.transform, znccTransform, primary.matches,
+                    availableSectors, searchRadius, incumbentSupportVerification).accepted) {
+                rotationDiagnostic("frame=$frameId fullResolutionProjective accepted=false reason=primary_support_regression")
+                return primary.copy(projectiveRefinementAttempted = true,
+                    projectiveValidationMedian = projective.validationMedian,
+                    projectiveValidationP90 = projective.validationP90)
+            }
         }
         val projectiveVerification = verifier.verifyCentroids(projective.inliers, initialTransform,
             znccTransform, projective.transform)
