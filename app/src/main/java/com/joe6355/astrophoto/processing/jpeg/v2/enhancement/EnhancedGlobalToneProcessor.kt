@@ -86,7 +86,9 @@ data class EnhancedGlobalToneValidationMetrics(
     val targetedStarEnhancedCount: Int = 0,
     val targetedStarChangedPixelCount: Int = 0,
     val targetedStarMaximumResidualGain: Double = 0.0,
-    val quantizationOnlyColorPatchCount: Int = 0
+    val quantizationOnlyColorPatchCount: Int = 0,
+    val luminanceHighFrequencyNoiseMad: Double = 0.0,
+    val luminanceNoiseEstimateSampleCount: Int = 0
 ) {
     fun asReportMetrics(): Map<String, Float> = linkedMapOf(
         "gain" to appliedGain.finiteFloat(),
@@ -138,6 +140,8 @@ data class EnhancedGlobalToneValidationMetrics(
         "luminanceDenoiseEligiblePixelCount" to luminanceDenoiseEligiblePixelCount.toFloat(),
         "luminanceDenoisedPixelCount" to luminanceDenoisedPixelCount.toFloat(),
         "luminanceProtectedStarPixelCount" to luminanceProtectedStarPixelCount.toFloat(),
+        "luminanceHighFrequencyNoiseMad" to luminanceHighFrequencyNoiseMad.finiteFloat(),
+        "luminanceNoiseEstimateSampleCount" to luminanceNoiseEstimateSampleCount.toFloat(),
         "targetedStarDiscoveredCount" to targetedStarDiscoveredCount.toFloat(),
         "targetedStarConsideredCount" to targetedStarConsideredCount.toFloat(),
         "targetedStarEnhancedCount" to targetedStarEnhancedCount.toFloat(),
@@ -365,6 +369,8 @@ class EnhancedGlobalToneProcessor(
                     luminanceDenoisedPixelCount = generation.luminanceDenoise.changedPixelCount,
                     luminanceProtectedStarPixelCount =
                         generation.luminanceDenoise.protectedStarPixelCount,
+                    luminanceHighFrequencyNoiseMad = generation.luminanceDenoise.highFrequencyNoiseMad.toDouble(),
+                    luminanceNoiseEstimateSampleCount = generation.luminanceDenoise.noiseEstimateSampleCount,
                     targetedStarDiscoveredCount =
                         generation.faintStarEnhancement.discoveredStarCount,
                     targetedStarConsideredCount =

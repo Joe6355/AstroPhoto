@@ -24,7 +24,9 @@ data class ProtectedLuminanceDenoiseMetrics(
     val noiseMapMaximum: Float,
     val eligiblePixelCount: Int,
     val changedPixelCount: Int,
-    val protectedStarPixelCount: Int
+    val protectedStarPixelCount: Int,
+    val highFrequencyNoiseMad: Float = 0f,
+    val noiseEstimateSampleCount: Int = 0
 ) {
     companion object {
         val NONE = ProtectedLuminanceDenoiseMetrics(0f, 0f, 0f, 0f, 0, 0, 0)
@@ -68,9 +70,20 @@ class ProtectedLuminanceDenoiser(
             confirmedStars,
             radiusScale = STAR_PROTECTION_RADIUS_SCALE
         )
-        val noiseLow = maxOf(MIN_NOISE_LOW, sky.luminanceMad * NOISE_LOW_MAD_SCALE)
-        val noiseHigh = maxOf(MIN_NOISE_HIGH, sky.luminanceMad * NOISE_HIGH_MAD_SCALE, noiseLow * 2f)
-        val peakLimit = maxOf(MIN_PEAK_LIMIT, sky.luminanceMad * PEAK_MAD_SCALE)
+        val noiseEstimate = estimateHighFrequencyNoise(baseline, effectiveSkyAlpha, starCores)
+        val adaptive = noiseEstimate.samples >= MINIMUM_NOISE_SAMPLES
+        val legacyLow = maxOf(MIN_NOISE_LOW, sky.luminanceMad * NOISE_LOW_MAD_SCALE)
+        val legacyHigh = maxOf(MIN_NOISE_HIGH, sky.luminanceMad * NOISE_HIGH_MAD_SCALE, legacyLow * 2f)
+        val noiseLow = if (adaptive) {
+            minOf(legacyLow, maxOf(LINEAR_QUANTUM * 0.5f, noiseEstimate.mad * 0.25f))
+        } else legacyLow
+        val noiseHigh = if (adaptive) {
+            minOf(legacyHigh, maxOf(LINEAR_QUANTUM * 2f, noiseEstimate.mad * 2f, noiseLow * 2f))
+        } else legacyHigh
+        val legacyPeakLimit = maxOf(MIN_PEAK_LIMIT, sky.luminanceMad * PEAK_MAD_SCALE)
+        val peakLimit = if (adaptive) {
+            minOf(legacyPeakLimit, maxOf(LINEAR_QUANTUM * 2f, noiseEstimate.mad * 3f))
+        } else legacyPeakLimit
         val darkStart = maxOf(
             sky.highPercentile,
             sky.luminanceMedian + maxOf(sky.luminanceMad * DARK_MAD_SCALE, MIN_DARK_RANGE)
@@ -148,7 +161,9 @@ class ProtectedLuminanceDenoiser(
                     noiseMapMaximum = maximum,
                     eligiblePixelCount = eligible.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
                     changedPixelCount = 0,
-                    protectedStarPixelCount = protected.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                    protectedStarPixelCount = protected.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+                    highFrequencyNoiseMad = noiseEstimate.mad,
+                    noiseEstimateSampleCount = noiseEstimate.samples
                 )
             )
         } catch (error: Throwable) {
@@ -181,8 +196,15 @@ class ProtectedLuminanceDenoiser(
             confirmedStars,
             radiusScale = STAR_PROTECTION_RADIUS_SCALE
         )
-        val edgeLimit = maxOf(MIN_APPLY_EDGE_LIMIT, sky.luminanceMad * APPLY_EDGE_MAD_SCALE)
-        val maximumChange = maxOf(MINIMUM_MAXIMUM_CHANGE, sky.luminanceMad * MAXIMUM_CHANGE_MAD_SCALE)
+        val adaptive = prepared.metrics.noiseEstimateSampleCount >= MINIMUM_NOISE_SAMPLES
+        val legacyEdgeLimit = maxOf(MIN_APPLY_EDGE_LIMIT, sky.luminanceMad * APPLY_EDGE_MAD_SCALE)
+        val edgeLimit = if (adaptive) {
+            minOf(legacyEdgeLimit, maxOf(LINEAR_QUANTUM * 8f, prepared.metrics.highFrequencyNoiseMad * 12f))
+        } else legacyEdgeLimit
+        val legacyMaximumChange = maxOf(MINIMUM_MAXIMUM_CHANGE, sky.luminanceMad * MAXIMUM_CHANGE_MAD_SCALE)
+        val maximumChange = if (adaptive) {
+            minOf(legacyMaximumChange, maxOf(LINEAR_QUANTUM, prepared.metrics.highFrequencyNoiseMad * 2f))
+        } else legacyMaximumChange
         val outputRow = LongArray(input.width)
         var changed = 0L
         val writer = store.createTemporaryWriter("luminance-denoised", input.width, input.height)
@@ -206,6 +228,7 @@ class ProtectedLuminanceDenoiser(
                                 var totalWeight = CENTER_WEIGHT
                                 for (dy in -1..1) for (dx in -1..1) {
                                     if (dx == 0 && dy == 0) continue
+                                    if (alpha.alphaAt(x + dx, y + dy) < FULL_SKY_ALPHA) continue
                                     val neighbor = linearLuminance(image.linearRgbAt(x + dx, y + dy))
                                     val difference = abs(neighbor - center)
                                     if (difference > edgeLimit) continue
@@ -247,6 +270,38 @@ class ProtectedLuminanceDenoiser(
         }
     }
 
+    private data class NoiseEstimate(val mad: Float, val samples: Int)
+
+    /** The diagonal difference cancels a planar sky gradient; no RGB8 or coarse sky histogram is involved. */
+    private fun estimateHighFrequencyNoise(
+        baseline: FileBackedImage,
+        effectiveSkyAlpha: FileBackedFloatPlane,
+        starCores: StarCoreIndex
+    ): NoiseEstimate {
+        val histogram = LongArray(NOISE_ESTIMATE_BINS)
+        val step = maxOf(1, maxOf(baseline.width, baseline.height) / NOISE_ESTIMATE_MAX_DIMENSION)
+        var count = 0L
+        FileBackedImageReader(baseline, cachedRows = 2).use { image ->
+            FileBackedFloatPlaneReader(effectiveSkyAlpha, cachedRows = 2).use { alpha ->
+                for (y in 0 until baseline.height - 1 step step) for (x in 0 until baseline.width - 1 step step) {
+                    if ((0..1).any { dy -> (0..1).any { dx ->
+                            alpha.alphaAt(x + dx, y + dy) < FULL_SKY_ALPHA || starCores.contains(x + dx, y + dy)
+                        } }) continue
+                    val difference = linearLuminance(image.linearRgbAt(x, y)) -
+                        linearLuminance(image.linearRgbAt(x + 1, y)) -
+                        linearLuminance(image.linearRgbAt(x, y + 1)) +
+                        linearLuminance(image.linearRgbAt(x + 1, y + 1))
+                    histogram[(abs(difference) / NOISE_ESTIMATE_BIN_WIDTH).roundToInt()
+                        .coerceIn(0, histogram.lastIndex)]++
+                    count++
+                }
+            }
+        }
+        if (count == 0L) return NoiseEstimate(0f, 0)
+        val medianBin = histogramPercentile(histogram, count, 0.5f) * histogram.lastIndex
+        return NoiseEstimate(medianBin * NOISE_ESTIMATE_BIN_WIDTH, count.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+    }
+
     private fun histogramPercentile(histogram: LongArray, count: Long, fraction: Float): Float {
         if (count <= 0L) return 0f
         val target = (count * fraction.coerceIn(0f, 1f)).toLong().coerceAtLeast(1L)
@@ -281,5 +336,10 @@ class ProtectedLuminanceDenoiser(
         private const val CENTER_WEIGHT = 2f
         private const val MAXIMUM_BLEND = 0.68f
         private const val NOISE_HISTOGRAM_BINS = 257
+        private const val LINEAR_QUANTUM = 1f / 65535f
+        private const val NOISE_ESTIMATE_BIN_WIDTH = LINEAR_QUANTUM / 4f
+        private const val NOISE_ESTIMATE_BINS = 16_385
+        private const val NOISE_ESTIMATE_MAX_DIMENSION = 512
+        private const val MINIMUM_NOISE_SAMPLES = 256
     }
 }
