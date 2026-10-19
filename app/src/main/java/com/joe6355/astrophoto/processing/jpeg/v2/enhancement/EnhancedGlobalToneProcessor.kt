@@ -1,6 +1,8 @@
 package com.joe6355.astrophoto.processing.jpeg.v2.enhancement
 
 import com.joe6355.astrophoto.SavedProcessedImage
+import com.joe6355.astrophoto.processing.jpeg.v2.color.LinearRgb16
+import com.joe6355.astrophoto.processing.jpeg.v2.color.linearRgbAt
 import com.joe6355.astrophoto.processing.jpeg.v2.model.DetectedStar
 import com.joe6355.astrophoto.processing.jpeg.v2.model.ResultQualityMetrics
 import com.joe6355.astrophoto.processing.jpeg.v2.postprocessing.FileBackedSkyStatistics
@@ -83,7 +85,8 @@ data class EnhancedGlobalToneValidationMetrics(
     val targetedStarConsideredCount: Int = 0,
     val targetedStarEnhancedCount: Int = 0,
     val targetedStarChangedPixelCount: Int = 0,
-    val targetedStarMaximumResidualGain: Double = 0.0
+    val targetedStarMaximumResidualGain: Double = 0.0,
+    val quantizationOnlyColorPatchCount: Int = 0
 ) {
     fun asReportMetrics(): Map<String, Float> = linkedMapOf(
         "gain" to appliedGain.finiteFloat(),
@@ -121,6 +124,8 @@ data class EnhancedGlobalToneValidationMetrics(
         "fanPatternScore" to fanPatternScore.finiteFloat(),
         "newStrongColorPatchCount" to newStrongColorPatchCount.toFloat(),
         "largestStrongColorPatchSamples" to largestStrongColorPatchSamples.toFloat(),
+        "quantizationOnlyColorPatchCount" to quantizationOnlyColorPatchCount.toFloat(),
+        "colorPatchMeasurementLinear16" to 1f,
         "scaleLimitedPixelCount" to scaleLimitedPixelCount.toFloat(),
         "scaleLimitedSkyPixelCount" to scaleLimitedSkyPixelCount.toFloat(),
         "scaleLimitedHighlightPixelCount" to scaleLimitedHighlightPixelCount.toFloat(),
@@ -680,6 +685,7 @@ open class EnhancedGlobalToneValidator(
             addAll(lineHardFailures)
         }.distinct()
         val warnings = buildList {
+            if (colorPatches.quantizationOnlyComponentCount > 0) add("color_patch_within_output_quantization")
             addAll(
                 enhancedGlobalToneGeometryWarnings(
                     medianWidthChange,
@@ -735,7 +741,8 @@ open class EnhancedGlobalToneValidator(
             scaleLimitedHighlightPixelCount = imageMetrics.scaleLimitedHighlightPixelCount,
             scaleLimitedStarWindowPixelCount = imageMetrics.scaleLimitedStarWindowPixelCount,
             maximumLinearChannel = maximumLinearChannel,
-            appliedGain = gain
+            appliedGain = gain,
+            quantizationOnlyColorPatchCount = colorPatches.quantizationOnlyComponentCount
         )
         return EnhancedGlobalToneValidation(
             accepted = hardFailures.isEmpty(),
@@ -833,10 +840,11 @@ open class EnhancedGlobalToneValidator(
             baselineClippedHighlightCount = baselineClipped,
             candidateClippedHighlightCount = candidateClipped,
             highlightClippingIncreasePercentagePoints = candidatePercent - baselinePercent,
+            // An all-sky image (or flat foreground) has no eligible edges to lose.
             foregroundStrongEdgeRetention =
-                retainedEdges.toDouble() / strongEdges.coerceAtLeast(1),
+                if (strongEdges == 0) 1.0 else retainedEdges.toDouble() / strongEdges,
             foregroundEdgeSignAgreement =
-                signAgreed.toDouble() / strongEdges.coerceAtLeast(1),
+                if (strongEdges == 0) 1.0 else signAgreed.toDouble() / strongEdges,
             foregroundEdgeCosineSimilarity = cosine,
             recomputedScaleLimitedPixelCount = recomputedLimited,
             scaleLimitedSkyPixelCount = skyLimited,
@@ -845,7 +853,9 @@ open class EnhancedGlobalToneValidator(
         )
     }
 
-    private data class ColorPatchMetrics(val componentCount: Int, val largestComponent: Int)
+    private data class ColorPatchMetrics(
+        val componentCount: Int, val largestComponent: Int, val quantizationOnlyComponentCount: Int
+    )
 
     private fun strongColorPatchMetrics(
         baseline: ArgbPixelSource,
@@ -858,6 +868,7 @@ open class EnhancedGlobalToneValidator(
         val width = max(3, (baseline.width * scale).roundToInt())
         val height = max(3, (baseline.height * scale).roundToInt())
         val changed = BooleanArray(width * height)
+        val quantizationOnly = BooleanArray(changed.size)
         fun nearStar(sourceX: Int, sourceY: Int): Boolean = stars.any { star ->
             val radius = max(2.0, star.width.toDouble() * 1.8).coerceAtMost(8.0)
             val dx = sourceX.toDouble() - star.x
@@ -872,14 +883,26 @@ open class EnhancedGlobalToneValidator(
             if (alpha.alphaAt(sourceX, sourceY) < SKY_ALPHA_THRESHOLD ||
                 nearStar(sourceX, sourceY)
             ) continue
-            val before = linearChromaticity(baseline.argbAt(sourceX, sourceY)) ?: continue
-            val after = linearChromaticity(candidate.argbAt(sourceX, sourceY)) ?: continue
-            val shift = max(
-                abs(after.first - before.first),
-                max(abs(after.second - before.second), abs(after.third - before.third))
-            )
-            changed[y * width + x] = shift >= STRONG_CHROMATICITY_SHIFT
+            // Keep the precision of the processing buffer. Near black, an RGB8 round trip
+            // can turn a sub-0.002 chromaticity change into 0.10 and cross the signal floor.
+            // ARGB-only sources still use their actual decoded samples through this adapter.
+            val before = linearChromaticity(baseline.linearRgbAt(sourceX, sourceY))
+            val after = linearChromaticity(candidate.linearRgbAt(sourceX, sourceY))
+            val index = y * width + x
+            changed[index] = chromaticityShift(before, after) >= STRONG_CHROMATICITY_SHIFT
+            // Preserve the display-rounding observation as a warning, separately from a
+            // strong change in the underlying linear colour. The PNG itself remains RGB8.
+            val encodedBefore = linearChromaticity(baseline.argbAt(sourceX, sourceY))
+            val encodedAfter = linearChromaticity(candidate.argbAt(sourceX, sourceY))
+            quantizationOnly[index] = !changed[index] &&
+                chromaticityShift(encodedBefore, encodedAfter) >= STRONG_CHROMATICITY_SHIFT
         }
+        val actual = connectedColorPatches(changed, width, height)
+        val quantized = connectedColorPatches(quantizationOnly, width, height)
+        return ColorPatchMetrics(actual.first, actual.second, quantized.first)
+    }
+
+    private fun connectedColorPatches(changed: BooleanArray, width: Int, height: Int): Pair<Int, Int> {
         val visited = BooleanArray(changed.size)
         val queue = IntArray(changed.size)
         var components = 0
@@ -911,10 +934,23 @@ open class EnhancedGlobalToneValidator(
                 largest = max(largest, tail)
             }
         }
-        return ColorPatchMetrics(components, largest)
+        return components to largest
     }
 
     private data class Chromaticity(val first: Double, val second: Double, val third: Double)
+
+    private fun chromaticityShift(before: Chromaticity?, after: Chromaticity?): Double =
+        if (before == null || after == null) 0.0 else max(abs(after.first - before.first),
+            max(abs(after.second - before.second), abs(after.third - before.third)))
+
+    private fun linearChromaticity(color: Long): Chromaticity? {
+        val red = LinearRgb16.red(color).toDouble()
+        val green = LinearRgb16.green(color).toDouble()
+        val blue = LinearRgb16.blue(color).toDouble()
+        val sum = red + green + blue
+        if (sum < MIN_CHROMATICITY_SIGNAL) return null
+        return Chromaticity(red / sum, green / sum, blue / sum)
+    }
 
     private fun linearChromaticity(color: Int): Chromaticity? {
         val red = LINEAR_CHANNEL_LUT[color ushr 16 and 0xFF]
