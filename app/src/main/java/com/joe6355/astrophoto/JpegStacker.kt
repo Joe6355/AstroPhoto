@@ -72,6 +72,7 @@ import com.joe6355.astrophoto.processing.jpeg.v2.quality.CleanStackExecutionPoli
 import com.joe6355.astrophoto.processing.jpeg.v2.quality.CoverageUniformityValidator
 import com.joe6355.astrophoto.processing.jpeg.v2.quality.LineArtifactDetector
 import com.joe6355.astrophoto.processing.jpeg.v2.quality.ReferenceStarRetentionValidator
+import com.joe6355.astrophoto.processing.jpeg.v2.quality.ReferenceStarRetentionResult
 import com.joe6355.astrophoto.processing.jpeg.v2.quality.FileBackedResultQualityAnalyzer
 import com.joe6355.astrophoto.processing.jpeg.v2.quality.ResultSelectionPolicy
 import com.joe6355.astrophoto.processing.jpeg.v2.registration.ProfileRegistrationCheckpointStore
@@ -1172,6 +1173,7 @@ class JpegStacker internal constructor(
                 val processedCandidate: StoredResultCandidate?
                 val processedDecision: QualityGateDecision
                 var adaptiveDiagnostics: AdaptiveProcessingDiagnostics? = null
+                var processedStarRetention: ReferenceStarRetentionResult? = null
                 if (stage4Executed) {
                     currentStage = "Адаптивная обработка с временными файлами"
                     val alignedStackStars = qualityAnalyzer.detectStars(
@@ -1209,6 +1211,11 @@ class JpegStacker internal constructor(
                             effectiveSkyAlpha
                         )
                     )
+                    processedStarRetention = ReferenceStarRetentionValidator().validate(
+                        cleanStackHandle,
+                        adaptiveResult.image,
+                        fullResolutionStars
+                    )
                     processedDecision = LineArtifactDetector().compareStarNeighborhoods(
                         maskStage.referenceCandidate, adaptiveResult.image, fullResolutionStars,
                         cancellationCheck = { artifactCheckContext.ensureActive() }
@@ -1217,7 +1224,8 @@ class JpegStacker internal constructor(
                         cleanStackCandidate,
                         processedCandidate,
                         profile,
-                        acceptedFrames
+                        acceptedFrames,
+                        starRetention = processedStarRetention
                     ))
                     Log.i(
                         ADAPTIVE_PROCESSING_TAG,
@@ -1268,6 +1276,7 @@ class JpegStacker internal constructor(
                     composition = composite.diagnostics,
                     stars = fullResolutionStars,
                     cleanRetention = retentionValidation,
+                    processedStarRetention = processedStarRetention,
                     effectiveSkyAlpha = effectiveSkyAlpha,
                     integrationFrames = integrationFrames,
                     sensorDefectMask = activeAutomaticSensorMask

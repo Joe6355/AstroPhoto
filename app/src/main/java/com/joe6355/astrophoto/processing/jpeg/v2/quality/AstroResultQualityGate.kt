@@ -4,6 +4,7 @@ import com.joe6355.astrophoto.AstroProcessingProfile
 import com.joe6355.astrophoto.processing.jpeg.v2.model.QualityComparison
 import com.joe6355.astrophoto.processing.jpeg.v2.model.QualityGateDecision
 import com.joe6355.astrophoto.processing.jpeg.v2.model.ResultCandidate
+import com.joe6355.astrophoto.processing.jpeg.v2.model.ResultQualityMetrics
 import com.joe6355.astrophoto.processing.jpeg.v2.model.StoredResultCandidate
 import com.joe6355.astrophoto.processing.jpeg.v2.profile.ExistingPresetParameterMapper
 
@@ -27,11 +28,13 @@ class AstroResultQualityGate(
         cleanStack: ResultCandidate,
         processed: ResultCandidate,
         profile: AstroProcessingProfile,
-        frameCount: Int
+        frameCount: Int,
+        starRetention: ReferenceStarRetentionResult? = null
     ): QualityGateDecision {
         val comparisons = listOf(
             foregroundComparator.compare(reference.metrics, processed.metrics),
-            starComparator.compare(cleanStack.metrics, processed.metrics, profile),
+            compareStars(cleanStack.metrics, processed.metrics, profile, starRetention),
+            matchedStarComparison(starRetention),
             backgroundComparisonFor(
                 cleanStack.metrics,
                 processed.metrics,
@@ -48,12 +51,14 @@ class AstroResultQualityGate(
         cleanStack: StoredResultCandidate,
         processed: StoredResultCandidate,
         profile: AstroProcessingProfile,
-        frameCount: Int
+        frameCount: Int,
+        starRetention: ReferenceStarRetentionResult? = null
     ): QualityGateDecision = decision(
         processed.metrics,
         listOf(
             foregroundComparator.compare(reference.metrics, processed.metrics),
-            starComparator.compare(cleanStack.metrics, processed.metrics, profile),
+            compareStars(cleanStack.metrics, processed.metrics, profile, starRetention),
+            matchedStarComparison(starRetention),
             backgroundComparisonFor(
                 cleanStack.metrics,
                 processed.metrics,
@@ -63,6 +68,46 @@ class AstroResultQualityGate(
             experimentalNoOpComparison(cleanStack.metrics, processed.metrics, profile)
         )
     )
+
+    // Apply the existing star limits to the same sources, including moderate ellipticity growth.
+    // Clipping and suspicious-point metrics still describe the complete candidate.
+    private fun compareStars(
+        clean: ResultQualityMetrics,
+        processed: ResultQualityMetrics,
+        profile: AstroProcessingProfile,
+        retention: ReferenceStarRetentionResult?
+    ): QualityComparison {
+        if (retention?.accepted != true || retention.sources.isEmpty()) {
+            return starComparator.compare(clean, processed, profile)
+        }
+        val matched = retention.metrics
+        fun median(values: List<Float>): Float {
+            val sorted = values.sorted()
+            val middle = sorted.size / 2
+            return if (sorted.size % 2 == 1) sorted[middle]
+            else (sorted[middle - 1] + sorted[middle]) * 0.5f
+        }
+        return starComparator.compare(
+            clean.copy(
+                reliableStarCount = matched.evaluatedReferenceStarCount,
+                medianStarLocalContrast = matched.medianContrastBefore,
+                medianStarWidth = matched.medianWidthBefore,
+                medianStarEllipticity = median(retention.sources.map { it.beforeEllipticity })
+            ),
+            processed.copy(
+                reliableStarCount = matched.retainedReferenceStarCount,
+                medianStarLocalContrast = matched.medianContrastAfter,
+                medianStarWidth = matched.medianWidthAfter,
+                medianStarEllipticity = median(retention.sources.map { it.afterEllipticity })
+            ),
+            profile
+        )
+    }
+
+    // Fixed-position failures are authoritative even when independent global medians look good.
+    private fun matchedStarComparison(retention: ReferenceStarRetentionResult?): QualityComparison =
+        retention?.let { QualityComparison(it.hardFailureReasons, it.warningReasons) }
+            ?: QualityComparison()
 
     private fun experimentalNoOpComparison(
         clean: com.joe6355.astrophoto.processing.jpeg.v2.model.ResultQualityMetrics,

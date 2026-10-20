@@ -362,6 +362,7 @@ internal fun JpegStacker.candidateMaskLineage(
     composition: CompositeDiagnostics,
     stars: List<V2DetectedStar>,
     cleanRetention: ReferenceStarRetentionResult,
+    processedStarRetention: ReferenceStarRetentionResult?,
     effectiveSkyAlpha: FileBackedFloatPlane,
     integrationFrames: List<WeightedIntegrationFrame<CachedArgbFrame>>,
     sensorDefectMask: SensorDefectMask?
@@ -408,7 +409,8 @@ internal fun JpegStacker.candidateMaskLineage(
         stars = stars,
         effectiveSkyAlpha = effectiveSkyAlpha,
         integrationFrames = integrationFrames,
-        sensorDefectMask = sensorDefectMask
+        sensorDefectMask = sensorDefectMask,
+        processedStarRetention = processedStarRetention
     )
     return filtering.copy(
         cleanCandidateMasked = cleanLineage.sampleFilteringPresent,
@@ -497,7 +499,8 @@ internal fun JpegStacker.completeReferenceStarRetentionLineage(
     stars: List<V2DetectedStar>,
     effectiveSkyAlpha: FileBackedFloatPlane,
     integrationFrames: List<WeightedIntegrationFrame<CachedArgbFrame>>,
-    sensorDefectMask: SensorDefectMask?
+    sensorDefectMask: SensorDefectMask?,
+    processedStarRetention: ReferenceStarRetentionResult? = null
 ): List<ReferenceStarRetentionStage> {
     val composed = ReferenceStarRetentionStage(
         "composed_clean_result",
@@ -527,6 +530,14 @@ internal fun JpegStacker.completeReferenceStarRetentionLineage(
     val stages = buildList {
         addAll(recorded)
         add(composed)
+        processedStarRetention?.let {
+            add(ReferenceStarRetentionStage(
+                "clean_to_processed_candidate",
+                it.metrics,
+                it.sources,
+                measurementBasis = "clean_to_processed_argb_measurement"
+            ))
+        }
         processedStage?.let(::add)
         add(selectedStage)
     }
