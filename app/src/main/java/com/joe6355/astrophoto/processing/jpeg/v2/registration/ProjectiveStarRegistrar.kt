@@ -55,7 +55,7 @@ internal data class ProjectiveModelComparison(
 }
 
 /** Bounded spatial motion that a single image-plane rotation cannot represent. */
-internal class ProjectiveStarRegistrar {
+internal class ProjectiveStarRegistrar(private val perspectiveGeometry: PerspectiveRotationGeometry? = null) {
     fun register(
         matches: List<StellarCentroidMatch>,
         initial: ReferenceToSourceTransform,
@@ -64,6 +64,8 @@ internal class ProjectiveStarRegistrar {
         searchRadius: Float,
         cancellationCheck: () -> Unit = {}
     ): ProjectiveStarRegistration? {
+        if (perspectiveGeometry != null &&
+            (perspectiveGeometry.width != width || perspectiveGeometry.height != height)) return null
         val unique = matches.distinctBy { (it.reference.x to it.reference.y) to (it.candidate.x to it.candidate.y) }
         val references = unique.groupingBy { it.reference.x to it.reference.y }.eachCount()
         val candidates = unique.groupingBy { it.candidate.x to it.candidate.y }.eachCount()
@@ -128,23 +130,25 @@ internal class ProjectiveStarRegistrar {
                 best = model; bestCount = count; bestCost = cost
             }
         }
-        consider(fit(matches, normalization))
+        consider(fit(matches, normalization, cancellationCheck))
         val random = Random(20261018)
         repeat(MAX_HYPOTHESES) {
             cancellationCheck()
             val indices = mutableSetOf<Int>()
-            while (indices.size < 4) indices += random.nextInt(matches.size)
-            consider(fit(indices.map { matches[it] }, normalization))
+            while (indices.size < (if (perspectiveGeometry == null) 4 else 3)) indices += random.nextInt(matches.size)
+            consider(fit(indices.map { matches[it] }, normalization, cancellationCheck))
         }
         repeat(3) {
             val model = best ?: return null
             val residuals = errors(model, matches)
-            consider(fit(matches.filterIndexed { index, _ -> residuals[index] <= INLIER_DISTANCE }, normalization))
+            consider(fit(matches.filterIndexed { index, _ -> residuals[index] <= INLIER_DISTANCE }, normalization,
+                cancellationCheck))
         }
         return best
     }
 
-    private fun fit(matches: List<StellarCentroidMatch>, scale: Double): ProjectiveTransform? {
+    private fun fit(matches: List<StellarCentroidMatch>, scale: Double, cancellationCheck: () -> Unit): ProjectiveTransform? {
+        perspectiveGeometry?.let { return it.fit(matches, cancellationCheck) }
         if (matches.size < 4) return null
         val normal = Array(8) { DoubleArray(9) }
         fun add(row: DoubleArray, value: Double) {
@@ -202,7 +206,9 @@ internal class ProjectiveStarRegistrar {
             val trace = j.sumOf { it * it }
             val root = sqrt(maxOf(0.0, trace * trace - 4 * determinant * determinant))
             val major = sqrt((trace + root) * 0.5); val minor = sqrt(maxOf(0.0, (trace - root) * 0.5))
-            if (major > 1.01 || minor < 0.99) return false
+            // A fixed-lens SO(3) fit has no free scale/shear. Its perspective can legitimately
+            // change apparent pixel scale across the field; arbitrary homographies keep the cap.
+            if (perspectiveGeometry == null && (major > 1.01 || minor < 0.99)) return false
             val angle = atan2(j[2] - j[1], j[0] + j[3])
             if (abs(angle) > StarSimilarityRegistrar.MAX_AUTOMATIC_ROTATION_RADIANS ||
                 initial.rotationRadians != 0f && abs(angle - initial.rotationRadians) > MAX_PRIOR_DISAGREEMENT

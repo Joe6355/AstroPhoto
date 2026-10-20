@@ -395,8 +395,14 @@ internal suspend fun JpegStacker.prepareAndRefineFullResolutionFrames(
     val centroidRefiner = StellarCentroidFrameRefiner(rotationDiagnostic = {
         Log.i(PROFILE_REGISTRATION_TAG, it)
     })
+    val referenceFocalPixels = readProfileFocalLengthPixels(this.context, selectedReference.frame, targetWidth, targetHeight)
     provisionalCachedFrames.forEachIndexed { index, (accepted, cached) ->
         context.ensureActive()
+        val candidateFocalPixels = if (referenceFocalPixels != null)
+            readProfileFocalLengthPixels(this.context, accepted.frame, targetWidth, targetHeight) else null
+        val matchingFocalPixels = referenceFocalPixels?.takeIf { referenceFocal ->
+            candidateFocalPixels != null && kotlin.math.abs(candidateFocalPixels / referenceFocal - 1.0) <= 0.01
+        }
         withContext(Dispatchers.Main.immediate) {
             onProgress(
                 "Refining full-resolution frame ${index + 1} of ${provisionalFrames.size}",
@@ -429,6 +435,7 @@ internal suspend fun JpegStacker.prepareAndRefineFullResolutionFrames(
                         candidate = candidateSource,
                         initialTransform = initial,
                         znccTransform = zncc.refinedTransform,
+                        focalLengthPixels = matchingFocalPixels,
                         patches = patches,
                         analysisScaleUncertainty = (maxOf(scaleX, scaleY) * 0.5f).coerceIn(0f, 1f),
                         stage10Residual = accepted.registration.residualError
@@ -467,6 +474,8 @@ internal suspend fun JpegStacker.prepareAndRefineFullResolutionFrames(
                             .ReferenceToSourceTransform.Identity,
                         correctionDx = 0f,
                         correctionDy = 0f,
+                        perspectiveRotationUsed = false,
+                        perspectiveFocalPixels = null,
                         accepted = identityDecision.accepted,
                         rejectionReason = identityDecision.rejectionReason
                     )
@@ -501,6 +510,7 @@ internal suspend fun JpegStacker.prepareAndRefineFullResolutionFrames(
                         FrameAcceptanceDecision.PATH_STATIONARY_PROVISIONAL &&
                         centroidResult.refinedTransform == com.joe6355.astrophoto.processing.jpeg.v2.model
                             .ReferenceToSourceTransform.Identity -> "VERIFIED_IDENTITY"
+                    centroidResult.perspectiveRotationUsed -> "VALIDATED_PERSPECTIVE_ROTATION"
                     centroidResult.refinedTransform.projective != null -> "VALIDATED_PROJECTIVE_REFINED"
                     rotationFallbackUsed -> "TRANSLATION_FALLBACK_FULL_RESOLUTION"
                     centroidResult.refinedTransform.rotationRadians != 0f -> "FIXED_SCALE_RIGID_REFINED"
@@ -722,6 +732,8 @@ internal fun ProcessingReport.withFullResolutionRefinement(
         centroidProjectiveUsedPerFrame = centroidNamed { it.refinedTransform.projective != null },
         centroidProjectiveValidationMedianPerFrame = centroidNamed { it.projectiveValidationMedian },
         centroidProjectiveValidationP90PerFrame = centroidNamed { it.projectiveValidationP90 },
+        centroidPerspectiveRotationUsedPerFrame = centroidNamed { it.perspectiveRotationUsed },
+        centroidPerspectiveFocalPixelsPerFrame = centroidNamed { it.perspectiveFocalPixels?.toFloat() ?: 0f },
         znccSecondaryUsedPerFrame = centroidNamed { it.znccSecondaryUsed },
         znccFallbackUsedPerFrame = centroidNamed { it.znccFallbackUsed },
         referenceCentroidCount = referenceCentroids?.referenceCentroidCount ?: 0,

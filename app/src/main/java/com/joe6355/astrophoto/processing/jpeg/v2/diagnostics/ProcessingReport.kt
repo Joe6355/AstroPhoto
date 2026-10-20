@@ -233,6 +233,8 @@ data class ProcessingReport(
     val centroidProjectiveUsedPerFrame: Map<String, Boolean> = emptyMap(),
     val centroidProjectiveValidationMedianPerFrame: Map<String, Float> = emptyMap(),
     val centroidProjectiveValidationP90PerFrame: Map<String, Float> = emptyMap(),
+    val centroidPerspectiveRotationUsedPerFrame: Map<String, Boolean> = emptyMap(),
+    val centroidPerspectiveFocalPixelsPerFrame: Map<String, Float> = emptyMap(),
     val znccSecondaryUsedPerFrame: Map<String, Boolean> = emptyMap(),
     val znccFallbackUsedPerFrame: Map<String, Boolean> = emptyMap(),
     val referenceCentroidCount: Int = 0,
@@ -462,6 +464,8 @@ data class ProcessingReport(
         append("  \"centroidProjectiveUsedPerFrame\": ${booleanMapJson(centroidProjectiveUsedPerFrame)},\n")
         append("  \"centroidProjectiveValidationMedianPerFrame\": ${floatMapJson(centroidProjectiveValidationMedianPerFrame)},\n")
         append("  \"centroidProjectiveValidationP90PerFrame\": ${floatMapJson(centroidProjectiveValidationP90PerFrame)},\n")
+        append("  \"centroidPerspectiveRotationUsedPerFrame\": ${booleanMapJson(centroidPerspectiveRotationUsedPerFrame)},\n")
+        append("  \"centroidPerspectiveFocalPixelsPerFrame\": ${floatMapJson(centroidPerspectiveFocalPixelsPerFrame)},\n")
         append("  \"znccSecondaryUsedPerFrame\": ${booleanMapJson(znccSecondaryUsedPerFrame)},\n")
         append("  \"znccFallbackUsedPerFrame\": ${booleanMapJson(znccFallbackUsedPerFrame)},\n")
         property("referenceCentroidCount", referenceCentroidCount)

@@ -37,7 +37,9 @@ data class StellarCentroidRefinementResult(
     val diagnostics: List<StellarCentroidMatchDiagnostic>,
     val projectiveRefinementAttempted: Boolean = false,
     val projectiveValidationMedian: Float = 0f,
-    val projectiveValidationP90: Float = 0f
+    val projectiveValidationP90: Float = 0f,
+    val perspectiveRotationUsed: Boolean = false,
+    val perspectiveFocalPixels: Double? = null
 ) : java.io.Serializable
 
 class StellarCentroidFrameRefiner(
@@ -59,6 +61,7 @@ class StellarCentroidFrameRefiner(
         stage10Residual: Float,
         sequenceResidual: Float,
         stage10Confidence: Float,
+        focalLengthPixels: Double? = null,
         cancellationCheck: () -> Unit = {}
     ): StellarCentroidRefinementResult {
         require(initialTransform.scale == 1f && znccTransform.scale == 1f) {
@@ -280,8 +283,15 @@ class StellarCentroidFrameRefiner(
                 median(residuals(evidenceMatches, refined)) <= 0.20f &&
                 percentile(residuals(evidenceMatches, refined), 0.9f) <= 0.45f)) return primary
         cancellationCheck()
-        val projective = ProjectiveStarRegistrar().register(evidenceMatches, initialTransform,
+        val planar = ProjectiveStarRegistrar().register(evidenceMatches, initialTransform,
             reference.width, reference.height, searchRadius, cancellationCheck)
+        // Preserve all accepted fits. A lens-constrained rotation can rescue a geometric
+        // refusal, but cannot bypass the photometric decision of an existing dense fit.
+        val geometry = if (planar == null && !primary.accepted)
+            PerspectiveRotationGeometry.fromFocalPixels(reference.width, reference.height, focalLengthPixels) else null
+        val perspective = geometry?.let { ProjectiveStarRegistrar(it).register(evidenceMatches, initialTransform,
+            reference.width, reference.height, searchRadius, cancellationCheck) }
+        val projective = planar ?: perspective
         if (projective == null) {
             rotationDiagnostic("frame=$frameId fullResolutionProjective accepted=false reason=unsupported_model")
             return primary.copy(projectiveRefinementAttempted = true)
@@ -310,7 +320,8 @@ class StellarCentroidFrameRefiner(
             projective.inliers, availableSectors, searchRadius, projectiveVerification)
         rotationDiagnostic("frame=$frameId fullResolutionProjective accepted=${projectiveDecision.accepted} " +
             "reason=${projectiveDecision.rejectionReason} inliers=${projective.inliers.size} " +
-            "validationMedian=${projective.validationMedian} validationP90=${projective.validationP90}")
+            "validationMedian=${projective.validationMedian} validationP90=${projective.validationP90} " +
+            "perspectiveRotation=${perspective != null} focalPixels=${geometry?.focalPixels}")
         if (!projectiveDecision.accepted) return primary.copy(projectiveRefinementAttempted = true,
             projectiveValidationMedian = projective.validationMedian,
             projectiveValidationP90 = projective.validationP90)
@@ -340,7 +351,9 @@ class StellarCentroidFrameRefiner(
             matches = projective.inliers, diagnostics = projectiveDiagnostics,
             projectiveRefinementAttempted = true,
             projectiveValidationMedian = projective.validationMedian,
-            projectiveValidationP90 = projective.validationP90
+            projectiveValidationP90 = projective.validationP90,
+            perspectiveRotationUsed = perspective != null,
+            perspectiveFocalPixels = geometry?.focalPixels
         )
     }
 
