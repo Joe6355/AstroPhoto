@@ -7,6 +7,7 @@ import com.joe6355.astrophoto.processing.jpeg.v2.model.DetectedStar
 import com.joe6355.astrophoto.processing.jpeg.v2.model.ResultQualityMetrics
 import com.joe6355.astrophoto.processing.jpeg.v2.postprocessing.FileBackedSkyStatistics
 import com.joe6355.astrophoto.processing.jpeg.v2.quality.FileBackedResultQualityAnalyzer
+import com.joe6355.astrophoto.processing.jpeg.v2.quality.FileBackedOutputBandingEstimator
 import com.joe6355.astrophoto.processing.jpeg.v2.quality.LineArtifactDetector
 import com.joe6355.astrophoto.processing.jpeg.v2.sampling.ArgbPixelSource
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.AlphaPixelSource
@@ -88,7 +89,11 @@ data class EnhancedGlobalToneValidationMetrics(
     val targetedStarMaximumResidualGain: Double = 0.0,
     val quantizationOnlyColorPatchCount: Int = 0,
     val luminanceHighFrequencyNoiseMad: Double = 0.0,
-    val luminanceNoiseEstimateSampleCount: Int = 0
+    val luminanceNoiseEstimateSampleCount: Int = 0,
+    val bandingHistogramLevels: Int = 256,
+    val coarseNormalizedBandingRatio: Double = 0.0,
+    val baselineOutputBandingScore: Double = 0.0,
+    val candidateOutputBandingScore: Double = 0.0
 ) {
     fun asReportMetrics(): Map<String, Float> = linkedMapOf(
         "gain" to appliedGain.finiteFloat(),
@@ -110,6 +115,10 @@ data class EnhancedGlobalToneValidationMetrics(
             candidateVisibleStarCount.toFloat(),
         "normalizedSkyMadRatio" to normalizedSkyMadRatio.finiteFloat(),
         "normalizedBandingRatio" to normalizedBandingRatio.finiteFloat(),
+        "bandingHistogramLevels" to bandingHistogramLevels.toFloat(),
+        "coarseNormalizedBandingRatio" to coarseNormalizedBandingRatio.finiteFloat(),
+        "baselineOutputBandingScore" to baselineOutputBandingScore.finiteFloat(),
+        "candidateOutputBandingScore" to candidateOutputBandingScore.finiteFloat(),
         "normalizedGradientRatio" to normalizedGradientRatio.finiteFloat(),
         "baselineSuspiciousPointCount" to baselineSuspiciousPointCount.toFloat(),
         "candidateSuspiciousPointCount" to candidateSuspiciousPointCount.toFloat(),
@@ -470,7 +479,8 @@ class EnhancedGlobalToneProcessor(
         internal val PRODUCTION_GAINS = listOf(
             0.80,
             0.60,
-            GlobalToneTransform.APPROVED_GAIN
+            GlobalToneTransform.APPROVED_GAIN,
+            0.20
         )
     }
 }
@@ -480,6 +490,7 @@ open class EnhancedGlobalToneValidator(
     private val qualityAnalyzer: FileBackedResultQualityAnalyzer = FileBackedResultQualityAnalyzer(),
     private val lineArtifactDetector: LineArtifactDetector = LineArtifactDetector()
 ) {
+    private val outputBandingEstimator = FileBackedOutputBandingEstimator()
     open fun validate(
         baseline: FileBackedImage,
         candidate: FileBackedImage,
@@ -639,12 +650,16 @@ open class EnhancedGlobalToneValidator(
             slope,
             LINEAR_METRIC_ALLOWANCE
         )
-        val normalizedBandingRatio = normalizedRatio(
+        val coarseNormalizedBandingRatio = normalizedRatio(
             candidateQuality.banding.combinedScore.toDouble(),
             baselineQuality.banding.combinedScore.toDouble(),
             slope,
             BANDING_ALLOWANCE
         )
+        val baselineBanding = outputBandingEstimator.estimate(baseline, alpha, baselineQuality.skyMad)
+        val candidateBanding = outputBandingEstimator.estimate(candidate, alpha, candidateQuality.skyMad)
+        val normalizedBandingRatio = normalizedRatio(candidateBanding.combinedScore.toDouble(),
+            baselineBanding.combinedScore.toDouble(), slope, BANDING_ALLOWANCE)
         val normalizedGradientRatio = normalizedRatio(
             candidateQuality.gradientResidual.toDouble(),
             baselineQuality.gradientResidual.toDouble(),
@@ -672,8 +687,8 @@ open class EnhancedGlobalToneValidator(
             ) add("foreground_edge_geometry_changed")
             if (
                 normalizedBandingRatio > STRONG_BACKGROUND_NORMALIZED_RATIO &&
-                candidateQuality.banding.combinedScore -
-                baselineQuality.banding.combinedScore >
+                candidateBanding.combinedScore -
+                baselineBanding.combinedScore >
                 STRONG_BANDING_ABSOLUTE_INCREASE
             ) add("strong_banding_appeared")
             if (
@@ -726,6 +741,10 @@ open class EnhancedGlobalToneValidator(
             candidateVisibleStarCount = candidateQuality.reliableStarCount,
             normalizedSkyMadRatio = normalizedSkyMadRatio,
             normalizedBandingRatio = normalizedBandingRatio,
+            bandingHistogramLevels = 65536,
+            coarseNormalizedBandingRatio = coarseNormalizedBandingRatio,
+            baselineOutputBandingScore = baselineBanding.combinedScore.toDouble(),
+            candidateOutputBandingScore = candidateBanding.combinedScore.toDouble(),
             normalizedGradientRatio = normalizedGradientRatio,
             baselineSuspiciousPointCount = baselineQuality.suspiciousPointCount,
             candidateSuspiciousPointCount = candidateQuality.suspiciousPointCount,

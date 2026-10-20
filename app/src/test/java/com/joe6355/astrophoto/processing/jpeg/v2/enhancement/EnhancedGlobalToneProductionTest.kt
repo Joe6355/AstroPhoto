@@ -284,9 +284,57 @@ class EnhancedGlobalToneProductionTest {
     }
 
     @Test
+    fun retriesAWeakerValidatedEnhancementAndReleasesRejectedCandidates() {
+        TemporaryPipelineFiles.create(temporaryFolder.root).use { files ->
+            val store = ResultCandidateStore(files)
+            val baseline = store.createTemporaryWriter("baseline", 8, 8).use { writer ->
+                repeat(8) { writer.writeRow(it, IntArray(8) { 0xFF101418.toInt() }) }
+                writer.finish()
+            }
+            val alpha = store.createFloatPlaneWriter("alpha", 8, 8).use { writer ->
+                repeat(8) { writer.writeRow(it, FloatArray(8)) }
+                writer.finish()
+            }
+            val originalHash = fileBackedPixelHash(baseline)
+            val originalFiles = files.directory.listFiles().orEmpty().map { it.name }.toSet()
+            val evaluated = mutableListOf<Pair<Double, File>>()
+            val validator = object : EnhancedGlobalToneValidator() {
+                override fun validate(
+                    baseline: FileBackedImage,
+                    candidate: FileBackedImage,
+                    effectiveSkyAlpha: FileBackedFloatPlane,
+                    confirmedStars: List<DetectedStar>,
+                    anchors: GlobalToneAnchors,
+                    generatedScaleLimitedPixelCount: Int,
+                    maximumLinearChannel: Double,
+                    gain: Double
+                ): EnhancedGlobalToneValidation {
+                    candidate.validate()
+                    evaluated += gain to candidate.file
+                    return acceptedCandidate(candidate).validation.copy(
+                        accepted = gain <= 0.20,
+                        hardFailureReasons = if (gain > 0.20) listOf("strong_banding_appeared") else emptyList()
+                    )
+                }
+            }
+            val result = EnhancedGlobalToneProcessor(validator = validator).createStrongestAcceptedCandidate(
+                baseline, alpha, emptyList(), store
+            )
+            assertTrue("A weaker candidate must still be offered to the validator", result.validation.accepted)
+            assertEquals(0.20, result.generation.gain, 0.0)
+            assertTrue(evaluated.dropLast(1).all { !it.second.exists() })
+            assertTrue(result.generation.image.file.isFile)
+            assertEquals(originalFiles + result.generation.image.file.name,
+                files.directory.listFiles().orEmpty().map { it.name }.toSet())
+            assertEquals(originalHash, fileBackedPixelHash(baseline))
+            assertTrue(result.validation.warnings.any { it.startsWith("stronger_gain_0.4_rejected:") })
+        }
+    }
+
+    @Test
     fun productionTriesVisibleGainBeforeConservativeFallback() {
         assertEquals(
-            listOf(0.80, 0.60, GlobalToneTransform.APPROVED_GAIN),
+            listOf(0.80, 0.60, GlobalToneTransform.APPROVED_GAIN, 0.20),
             EnhancedGlobalToneProcessor.PRODUCTION_GAINS
         )
         assertTrue(
