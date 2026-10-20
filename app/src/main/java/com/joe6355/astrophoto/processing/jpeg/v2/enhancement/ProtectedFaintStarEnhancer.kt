@@ -117,7 +117,8 @@ class ProtectedFaintStarEnhancer(
                         val y = centerY + dy
                         if (alpha.alphaAt(x, y) < FULL_SKY_ALPHA) continue
                         val key = y.toLong() * input.width + x
-                        val color = changes[key] ?: image.linearRgbAt(x, y)
+                        // Every overlapping proposal is measured from the unchanged input.
+                        val color = image.linearRgbAt(x, y)
                         val luminance = linearLuminance(color)
                         val localDetail = luminance - background
                         if (localDetail < supportThreshold || luminance <= MINIMUM_LUMINANCE) continue
@@ -126,11 +127,15 @@ class ProtectedFaintStarEnhancer(
                         val target = (background + localDetail * (1f + localGain))
                             .coerceAtMost(MAXIMUM_ENHANCED_LUMINANCE)
                         val scale = target / luminance
-                        changes[key] = LinearRgb16.pack(
+                        val proposal = LinearRgb16.pack(
                             linearChannel(color, 16) * scale,
                             linearChannel(color, 8) * scale,
                             linearChannel(color, 0) * scale
                         )
+                        val previous = changes[key]
+                        if (previous == null || linearLuminance(proposal) > linearLuminance(previous)) {
+                            changes[key] = proposal
+                        }
                         maximumGain = maxOf(maximumGain, localGain)
                         starChanged = true
                     }
