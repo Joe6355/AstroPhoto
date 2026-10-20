@@ -72,7 +72,7 @@ internal class ProjectiveStarRegistrar {
         if (usable.size < MIN_MATCHES) return null
         val normalization = maxOf(width, height).toDouble()
         val model = robustFit(usable, normalization, cancellationCheck) ?: return null
-        if (!physicallyBounded(model, initial, width, height, searchRadius)) return null
+        if (!physicallyBounded(model, initial, width, height, searchRadius, usable)) return null
         val errors = errors(model, usable)
         if (!consensusValid(errors)) return null
         val inliers = usable.filterIndexed { index, _ -> errors[index] <= INLIER_DISTANCE }
@@ -89,7 +89,7 @@ internal class ProjectiveStarRegistrar {
             val training = usable.filterIndexed { index, _ -> index % VALIDATION_FOLDS != fold }
             val heldOut = usable.filterIndexed { index, _ -> index % VALIDATION_FOLDS == fold }
             val validation = robustFit(training, normalization, cancellationCheck) ?: return null
-            if (!physicallyBounded(validation, initial, width, height, searchRadius)) return null
+            if (!physicallyBounded(validation, initial, width, height, searchRadius, usable)) return null
             validationSamples += heldOut.zip(errors(validation, heldOut))
         }
         val validationErrors = validationSamples.map { it.second }
@@ -177,15 +177,25 @@ internal class ProjectiveStarRegistrar {
 
     private fun physicallyBounded(
         model: ProjectiveTransform, initial: ReferenceToSourceTransform,
-        width: Int, height: Int, searchRadius: Float
+        width: Int, height: Int, searchRadius: Float, support: List<StellarCentroidMatch>
     ): Boolean {
+        // The local detector radius bounds corrections where stars were measured, plus the
+        // frame center. A rotating field can move farther at empty corners without invalidating
+        // those measurements. Physical deformation is still checked over the entire grid.
+        fun withinLocalSearch(x: Float, y: Float): Boolean {
+            val before = initial.mapOutputToSource(x, y)
+            val after = model.map(x, y)
+            return after.x.isFinite() && after.y.isFinite() &&
+                abs(after.x - before.x) <= searchRadius && abs(after.y - before.y) <= searchRadius
+        }
+        if (!withinLocalSearch(width * 0.5f, height * 0.5f) ||
+            support.any { !withinLocalSearch(it.reference.x, it.reference.y) }) return false
         for (row in 0..4) for (column in 0..4) {
             val x = (width - 1) * column / 4f; val y = (height - 1) * row / 4f
             val denominator = model.denominator(x.toDouble(), y.toDouble())
             if (denominator !in 0.95..1.05) return false
-            val before = initial.mapOutputToSource(x, y); val after = model.map(x, y)
-            if (!after.x.isFinite() || !after.y.isFinite() ||
-                abs(after.x - before.x) > searchRadius || abs(after.y - before.y) > searchRadius) return false
+            val after = model.map(x, y)
+            if (!after.x.isFinite() || !after.y.isFinite()) return false
             val j = model.jacobian(x.toDouble(), y.toDouble())
             val determinant = j[0] * j[3] - j[1] * j[2]
             if (determinant <= 0.0) return false
