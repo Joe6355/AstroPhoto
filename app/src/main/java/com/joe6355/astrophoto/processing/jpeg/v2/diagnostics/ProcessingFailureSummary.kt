@@ -2,6 +2,7 @@ package com.joe6355.astrophoto.processing.jpeg.v2.diagnostics
 
 import android.content.Context
 import android.util.Log
+import com.joe6355.astrophoto.SessionProcessingCoordinator
 
 data class ProcessingFailureSummary(
     val runId: String,
@@ -17,6 +18,8 @@ class PreviousProcessingFailureDetector(private val context: Context) {
     fun detect(): ProcessingFailureSummary? {
         val journal = ProcessingRunJournal(context)
         val unfinished = journal.latestUnfinished() ?: return null
+        // Reopening/recreating the Activity is not a previous process failure.
+        if (SessionProcessingCoordinator.isActive(unfinished.sessionFolder)) return null
         val exit = PreviousProcessExitReader(context).latest(unfinished.startedAtMillis)
         val kind = exit?.kind ?: PreviousProcessExitKind.UNKNOWN
         val artifactsValid = unfinished.lastCompletedStage == "report_published" &&

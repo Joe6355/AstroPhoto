@@ -23,6 +23,7 @@ import kotlinx.coroutines.launch
 class ProcessingForegroundService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var notificationManager: NotificationManager
+    private var lastStartId = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -46,15 +47,20 @@ class ProcessingForegroundService : Service() {
                             buildNotification(state.statusWithEta, progress)
                         )
                     }
+                } else if (lastStartId != 0) {
+                    // A short task can finish before Android creates this service.
+                    stopSelf(lastStartId)
                 }
             }
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        lastStartId = startId
         if (intent?.action == ACTION_CANCEL_ALL) {
             SessionProcessingCoordinator.cancelAll()
         }
+        if (SessionProcessingCoordinator.states.value.values.none { it.running }) stopSelf(startId)
         return START_NOT_STICKY
     }
 

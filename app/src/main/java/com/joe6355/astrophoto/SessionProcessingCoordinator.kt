@@ -7,11 +7,12 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.SystemClock
+import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.core.content.edit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -19,6 +20,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 data class SessionProcessingState(
     val sessionFolder: String,
@@ -50,7 +52,8 @@ object SessionProcessingCoordinator {
     val states: StateFlow<Map<String, SessionProcessingState>> = mutableStates.asStateFlow()
 
     fun isActive(sessionFolder: String): Boolean = synchronized(lock) {
-        jobs[sessionFolder]?.isActive == true
+        // Cancellation may still be closing files and writing checkpoints.
+        jobs[sessionFolder]?.isCompleted == false
     }
 
     fun start(
@@ -61,42 +64,11 @@ object SessionProcessingCoordinator {
         initialTotal: Int,
         block: suspend () -> Unit
     ): Job? = synchronized(lock) {
-        if (jobs[sessionFolder]?.isActive == true) return null
+        if (jobs[sessionFolder]?.isCompleted == false) return null
+        val application = context.applicationContext
+        val recoveryStore = ProcessingRecoveryStore(application)
         etaEstimators[sessionFolder] = ProcessingEtaEstimator()
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.POST_NOTIFICATIONS
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            (context as? Activity)?.let { activity ->
-                ActivityCompat.requestPermissions(
-                    activity,
-                    arrayOf(Manifest.permission.POST_NOTIFICATIONS),
-                    NOTIFICATION_PERMISSION_REQUEST
-                )
-            }
-        }
-
-        updateState(
-            SessionProcessingState(
-                sessionFolder = sessionFolder,
-                label = label,
-                status = initialStatus,
-                current = 0,
-                total = initialTotal,
-                running = true
-            )
-        )
-        ProcessingRecoveryStore(context.applicationContext).markStarted(sessionFolder, label)
-        ContextCompat.startForegroundService(
-            context.applicationContext,
-            Intent(context.applicationContext, ProcessingForegroundService::class.java)
-                .setAction(ProcessingForegroundService.ACTION_START)
-        )
-
-        scope.launch {
+        val job = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 block()
             } catch (error: CancellationException) {
@@ -104,21 +76,47 @@ object SessionProcessingCoordinator {
                 throw error
             } catch (error: Throwable) {
                 update(sessionFolder, error.message ?: "Ошибка обработки")
-            } finally {
-                synchronized(lock) {
+            }
+        }
+        // Register before Main.immediate can run even an immediately completing block.
+        jobs[sessionFolder] = job
+        job.invokeOnCompletion {
+            synchronized(lock) {
+                if (jobs[sessionFolder] === job) {
                     jobs.remove(sessionFolder)
                     etaEstimators.remove(sessionFolder)
                     val previous = mutableStates.value[sessionFolder]
                     if (previous != null) updateState(previous.copy(running = false, stageEtaMillis = null))
-                    ProcessingRecoveryStore(context.applicationContext).markFinished(sessionFolder)
-                    if (jobs.values.none { it.isActive }) {
-                        context.applicationContext.stopService(
-                            Intent(context.applicationContext, ProcessingForegroundService::class.java)
-                        )
-                    }
+                    runCatching { recoveryStore.markFinished(sessionFolder) }
+                        .onFailure { Log.e("AstroPhotoProcessing", "Unable to finish recovery record", it) }
+                    // The service stops itself after acknowledging Android's start request.
+                    // Stopping it here can race startForeground() for a very short task.
                 }
             }
-        }.also { jobs[sessionFolder] = it }
+        }
+        updateState(SessionProcessingState(sessionFolder, label, initialStatus, 0, initialTotal, true))
+        try {
+            recoveryStore.markStarted(sessionFolder, label)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                (context as? Activity)?.let { activity ->
+                    ActivityCompat.requestPermissions(activity,
+                        arrayOf(Manifest.permission.POST_NOTIFICATIONS), NOTIFICATION_PERMISSION_REQUEST)
+                }
+            }
+            ContextCompat.startForegroundService(application,
+                Intent(application, ProcessingForegroundService::class.java)
+                    .setAction(ProcessingForegroundService.ACTION_START))
+        } catch (error: RuntimeException) {
+            Log.e("AstroPhotoProcessing", "Unable to start foreground processing", error)
+            update(sessionFolder, "Не удалось начать обработку. Откройте приложение и повторите запуск.")
+            job.cancel()
+            return null
+        }
+        job.start()
+        job
     }
 
     fun update(
@@ -143,11 +141,18 @@ object SessionProcessingCoordinator {
     }
 
     fun cancel(sessionFolder: String) {
-        synchronized(lock) { jobs[sessionFolder] }?.cancel()
+        synchronized(lock) {
+            jobs[sessionFolder]?.let { job ->
+                if (!job.isCompleted) {
+                    update(sessionFolder, "Остановка обработки…")
+                    job.cancel()
+                }
+            }
+        }
     }
 
     fun cancelAll() {
-        synchronized(lock) { jobs.values.toList() }.forEach(Job::cancel)
+        synchronized(lock) { jobs.keys.toList() }.forEach(::cancel)
     }
 
     private fun updateState(state: SessionProcessingState) {
@@ -160,30 +165,46 @@ object SessionProcessingCoordinator {
 class ProcessingRecoveryStore(context: Context) {
     private val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
 
-    fun markStarted(sessionFolder: String, label: String) {
-        preferences.edit {
-                putString(KEY_SESSION, sessionFolder)
-                .putString(KEY_LABEL, label)
-            }
+    fun markStarted(sessionFolder: String, label: String) = synchronized(recoveryLock) {
+        write(read().apply { put(sessionFolder, label) })
     }
 
-    fun markFinished(sessionFolder: String) {
-        if (preferences.getString(KEY_SESSION, null) == sessionFolder) {
-            preferences.edit {clear()}
+    fun markFinished(sessionFolder: String) = synchronized(recoveryLock) {
+        write(read().apply { remove(sessionFolder) })
+    }
+
+    /** Reading does not dismiss a warning: Activity recreation must not lose it. */
+    fun pendingInterrupted(): List<InterruptedSessionProcessing> =
+        synchronized(recoveryLock) { read().toMap() }.map { (folder, label) ->
+            InterruptedSessionProcessing(folder, label)
+        }.filterNot { SessionProcessingCoordinator.isActive(it.sessionFolder) }
+
+    private fun read(): MutableMap<String, String> {
+        val records = linkedMapOf<String, String>()
+        preferences.getString(KEY_RECORDS, null)?.let { encoded ->
+            val json = JSONObject(encoded)
+            json.keys().forEach { folder -> records[folder] = json.getString(folder) }
         }
+        // Preserve a task recorded by the earlier single-session format.
+        preferences.getString(KEY_SESSION, null)?.let { folder ->
+            records.putIfAbsent(folder, preferences.getString(KEY_LABEL, null) ?: "Обработка")
+        }
+        return records
     }
 
-    fun takeInterrupted(): InterruptedSessionProcessing? {
-        val sessionFolder = preferences.getString(KEY_SESSION, null) ?: return null
-        if (SessionProcessingCoordinator.isActive(sessionFolder)) return null
-        val label = preferences.getString(KEY_LABEL, null) ?: "Обработка"
-        preferences.edit {clear()}
-        return InterruptedSessionProcessing(sessionFolder, label)
+    private fun write(records: Map<String, String>) {
+        // Persist before work starts so a killed process leaves a durable recovery record.
+        check(preferences.edit().remove(KEY_SESSION).remove(KEY_LABEL)
+            .putString(KEY_RECORDS, JSONObject(records).toString()).commit()) {
+            "Unable to persist processing recovery record"
+        }
     }
 
     private companion object {
         const val PREFERENCES = "processing_recovery"
         const val KEY_SESSION = "session_folder"
         const val KEY_LABEL = "label"
+        const val KEY_RECORDS = "sessions"
+        val recoveryLock = Any()
     }
 }

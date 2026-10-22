@@ -73,20 +73,13 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val previousProcessingFailure = PreviousProcessingFailureDetector(this).detect()
-        val interruptedProcessing = if (previousProcessingFailure == null) {
-            ProcessingRecoveryStore(this).takeInterrupted()
-        } else {
-            null
-        }
+        val interruptedProcessing = ProcessingRecoveryStore(this).pendingInterrupted()
+            .filterNot { it.sessionFolder == previousProcessingFailure?.sessionFolder }
         setContent {
             AstroPhotoTheme(darkTheme = true, dynamicColor = false) {
                 AstroPhotoApp(
                     initialProcessingFailure = previousProcessingFailure,
-                    initialInterruptedProcessing = if (previousProcessingFailure == null) {
-                        interruptedProcessing
-                    } else {
-                        null
-                    }
+                    initialInterruptedProcessing = interruptedProcessing
                 )
             }
         }
@@ -96,7 +89,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun AstroPhotoApp(
     initialProcessingFailure: ProcessingFailureSummary? = null,
-    initialInterruptedProcessing: InterruptedSessionProcessing? = null
+    initialInterruptedProcessing: List<InterruptedSessionProcessing> = emptyList()
 ) {
     var showSplash by remember { mutableStateOf(true) }
     var processingFailure by remember { mutableStateOf(initialProcessingFailure) }
@@ -454,6 +447,7 @@ private fun AstroPhotoApp(
         AlertDialog(
             onDismissRequest = {
                 PreviousProcessingFailureDetector(context.applicationContext).dismiss(failure)
+                ProcessingRecoveryStore(context.applicationContext).markFinished(failure.sessionFolder)
                 processingFailure = null
             },
             title = {
@@ -472,6 +466,7 @@ private fun AstroPhotoApp(
                 TextButton(
                     onClick = {
                         PreviousProcessingFailureDetector(context.applicationContext).dismiss(failure)
+                        ProcessingRecoveryStore(context.applicationContext).markFinished(failure.sessionFolder)
                         processingFailure = null
                     }
                 ) {
@@ -480,9 +475,13 @@ private fun AstroPhotoApp(
             }
         )
     }
-    interruptedProcessing?.let { interrupted ->
+    if (processingFailure == null) interruptedProcessing.firstOrNull()?.let { interrupted ->
+        fun dismissInterrupted() {
+            ProcessingRecoveryStore(context.applicationContext).markFinished(interrupted.sessionFolder)
+            interruptedProcessing = interruptedProcessing.drop(1)
+        }
         AlertDialog(
-            onDismissRequest = { interruptedProcessing = null },
+            onDismissRequest = { dismissInterrupted() },
             title = { Text("Обработка была прервана") },
             text = {
                 Text(
@@ -491,7 +490,7 @@ private fun AstroPhotoApp(
                 )
             },
             confirmButton = {
-                TextButton(onClick = { interruptedProcessing = null }) {
+                TextButton(onClick = { dismissInterrupted() }) {
                     Text("Понятно")
                 }
             }
