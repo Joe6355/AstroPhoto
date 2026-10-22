@@ -45,10 +45,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.text.font.FontWeight
@@ -106,6 +108,9 @@ private fun AstroPhotoApp(
     }
 
     val context = androidx.compose.ui.platform.LocalContext.current
+    val recoveryScope = rememberCoroutineScope()
+    var openingRecoveredSession by remember { mutableStateOf(false) }
+    var recoveryOpenError by remember { mutableStateOf<String?>(null) }
     val appSettingsStore = remember {
         CameraSettingsStore(context.applicationContext)
     }
@@ -188,6 +193,31 @@ private fun AstroPhotoApp(
 
     fun navigateToSessionsAfterDelete() {
         navigation.navigateToSessionsAfterDelete()
+    }
+
+    fun openRecoveredSession(folder: String, acknowledge: () -> Unit) {
+        if (openingRecoveredSession) return
+        openingRecoveredSession = true
+        recoveryOpenError = null
+        recoveryScope.launch {
+            try {
+                val restored = SessionBrowserRepository(context.applicationContext).loadSessions()
+                    .firstOrNull { it.folderName == folder }
+                if (restored == null) {
+                    recoveryOpenError = "Сессия сейчас недоступна. Проверьте доступ к фотографиям."
+                } else {
+                    selectedSession = restored
+                    pendingSessionAction = null
+                    navigation.navigateTopLevel(AppScreen.Sessions)
+                    navigateTo(AppScreen.SessionDetails)
+                    acknowledge()
+                }
+            } catch (_: SecurityException) {
+                recoveryOpenError = "Разрешите приложению доступ к фотографиям и повторите попытку."
+            } finally {
+                openingRecoveredSession = false
+            }
+        }
     }
 
     BackHandler(enabled = showExitDialog) {
@@ -444,12 +474,17 @@ private fun AstroPhotoApp(
         )
     }
     processingFailure?.let { failure ->
+        fun dismissFailure() {
+            PreviousProcessingFailureDetector(context.applicationContext).dismiss(failure)
+            ProcessingRecoveryStore(context.applicationContext).markFinished(failure.sessionFolder)
+            processingFailure = null
+            recoveryOpenError = null
+        }
         AlertDialog(
             onDismissRequest = {
-                PreviousProcessingFailureDetector(context.applicationContext).dismiss(failure)
-                ProcessingRecoveryStore(context.applicationContext).markFinished(failure.sessionFolder)
-                processingFailure = null
+                if (!openingRecoveredSession) dismissFailure()
             },
+            modifier = Modifier.testTag("processing-recovery-dialog"),
             title = {
                 Text(
                     if (failure.classification ==
@@ -461,15 +496,20 @@ private fun AstroPhotoApp(
                     }
                 )
             },
-            text = { Text(failure.message) },
+            text = {
+                Text(failure.message + "\nСовместимые сохранённые этапы будут использованы при повторном запуске." +
+                    recoveryOpenError?.let { "\n$it" }.orEmpty())
+            },
             confirmButton = {
                 TextButton(
-                    onClick = {
-                        PreviousProcessingFailureDetector(context.applicationContext).dismiss(failure)
-                        ProcessingRecoveryStore(context.applicationContext).markFinished(failure.sessionFolder)
-                        processingFailure = null
-                    }
+                    enabled = !openingRecoveredSession,
+                    onClick = { openRecoveredSession(failure.sessionFolder, ::dismissFailure) }
                 ) {
+                    Text("Открыть сессию")
+                }
+            },
+            dismissButton = {
+                TextButton(enabled = !openingRecoveredSession, onClick = { dismissFailure() }) {
                     Text("Понятно")
                 }
             }
@@ -479,18 +519,28 @@ private fun AstroPhotoApp(
         fun dismissInterrupted() {
             ProcessingRecoveryStore(context.applicationContext).markFinished(interrupted.sessionFolder)
             interruptedProcessing = interruptedProcessing.drop(1)
+            recoveryOpenError = null
         }
         AlertDialog(
-            onDismissRequest = { dismissInterrupted() },
+            onDismissRequest = { if (!openingRecoveredSession) dismissInterrupted() },
+            modifier = Modifier.testTag("processing-recovery-dialog"),
             title = { Text("Обработка была прервана") },
             text = {
                 Text(
                     "${interrupted.label} в сессии «${interrupted.sessionFolder}» не завершена. " +
-                        "Исходные кадры сохранены: откройте сессию и запустите обработку снова."
+                        "Исходные кадры сохранены: откройте сессию и запустите обработку снова. " +
+                        "Совместимые сохранённые этапы будут использованы повторно." +
+                        recoveryOpenError?.let { "\n$it" }.orEmpty()
                 )
             },
             confirmButton = {
-                TextButton(onClick = { dismissInterrupted() }) {
+                TextButton(enabled = !openingRecoveredSession,
+                    onClick = { openRecoveredSession(interrupted.sessionFolder, ::dismissInterrupted) }) {
+                    Text("Открыть сессию")
+                }
+            },
+            dismissButton = {
+                TextButton(enabled = !openingRecoveredSession, onClick = { dismissInterrupted() }) {
                     Text("Понятно")
                 }
             }
