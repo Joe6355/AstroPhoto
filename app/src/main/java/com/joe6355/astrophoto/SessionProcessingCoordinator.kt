@@ -1,6 +1,7 @@
 package com.joe6355.astrophoto
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
@@ -192,6 +193,7 @@ class ProcessingRecoveryStore(context: Context) {
         return records
     }
 
+    @SuppressLint("UseKtx") // The commit result is required; the KTX edit helper returns Unit.
     private fun write(records: Map<String, String>) {
         // Persist before work starts so a killed process leaves a durable recovery record.
         check(preferences.edit().remove(KEY_SESSION).remove(KEY_LABEL)

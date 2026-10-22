@@ -204,6 +204,16 @@ internal data class SavedResultBookkeeping(
     val reportJson: String
 )
 
+// Keep exception capture in a separate coroutine state machine. A cancellation resumed from
+// a progress callback must return to the caller's resource and journal finalization.
+private suspend fun captureProfileStackOutcome(
+    block: suspend () -> JpegStackResult
+): Result<JpegStackResult> = try {
+    Result.success(block())
+} catch (error: Throwable) {
+    Result.failure(error)
+}
+
 internal fun completeSavedResultBookkeeping(
     report: ProcessingReport,
     writeCacheReport: (String) -> Unit,
@@ -517,7 +527,7 @@ class JpegStacker internal constructor(
         var registrationCheckpointStore: ProfileRegistrationCheckpointStore? = null
         var integrationCheckpointStore: ProfileIntegrationCheckpointStore? = null
         var currentStage = "Подготовка"
-        val stackResult = runCatching {
+        val stackResult = captureProfileStackOutcome {
             require(profile != AstroProcessingProfile.NORMAL) {
                 "Обычный режим доступен в ручном JPEG stacking"
             }
