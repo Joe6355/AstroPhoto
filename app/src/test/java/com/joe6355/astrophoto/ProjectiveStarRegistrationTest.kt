@@ -215,9 +215,22 @@ class ProjectiveStarRegistrationTest {
             val w = 1 + 1e-5 * x - 1e-5 * y
             val sx = ((1.001 * x + 0.001 * y + 0.3) / w).toFloat()
             val sy = ((0.002 * x + 1.001 * y - 0.2) / w).toFloat()
-            val expected = LinearRgb16.pack(SrgbTransfer.srgbToLinear(sx * 2 / 255),
-                SrgbTransfer.srgbToLinear(sy * 2 / 255), SrgbTransfer.srgbToLinear((sx + sy) / 255))
-            assertEquals(expected, output[y * 64 + x])
+            val x0 = kotlin.math.floor(sx).toInt()
+            val y0 = kotlin.math.floor(sy).toInt()
+            val fx = (sx - x0).toDouble()
+            val fy = (sy - y0).toDouble()
+            // Independent four-tap light sum at the analytically projected position.
+            // Decoding the interpolated byte-gradient would reproduce the old gamma error.
+            fun expectedLight(code: (Int, Int) -> Int): Double =
+                (0..1).sumOf { oy -> (0..1).sumOf { ox ->
+                    SrgbTransfer.srgbToLinear(code(x0 + ox, y0 + oy) / 255.0) *
+                        (if (ox == 0) 1 - fx else fx) * (if (oy == 0) 1 - fy else fy)
+                } }
+            val actual = output[y * 64 + x]
+            val tolerance = .5 / 65535 + .0000001
+            assertEquals(expectedLight { px, _ -> px * 2 }, LinearRgb16.red(actual).toDouble(), tolerance)
+            assertEquals(expectedLight { _, py -> py * 2 }, LinearRgb16.green(actual).toDouble(), tolerance)
+            assertEquals(expectedLight { px, py -> px + py }, LinearRgb16.blue(actual).toDouble(), tolerance)
         }
     }
 

@@ -1,5 +1,8 @@
 package com.joe6355.astrophoto.processing.jpeg.v2.sampling
 
+import com.joe6355.astrophoto.processing.jpeg.v2.color.LinearRgb16
+import com.joe6355.astrophoto.processing.jpeg.v2.color.LinearRgbPixelSource
+import com.joe6355.astrophoto.processing.jpeg.v2.color.SrgbTransfer
 import com.joe6355.astrophoto.processing.jpeg.v2.model.RegistrationResult
 import com.joe6355.astrophoto.processing.jpeg.v2.model.ReferenceToSourceTransform
 import kotlin.math.cos
@@ -32,6 +35,12 @@ data class SampledSrgb(
 )
 
 class MutableSampledSrgb(
+    var red: Float = 0f,
+    var green: Float = 0f,
+    var blue: Float = 0f
+)
+
+class MutableSampledLinearRgb(
     var red: Float = 0f,
     var green: Float = 0f,
     var blue: Float = 0f
@@ -132,7 +141,65 @@ class TransformedBitmapSampler {
         return true
     }
 
-    /** Uses the exact production bilinear coverage and interpolation semantics for patch evidence. */
+    /**
+     * Interpolates light, decoding each JPEG neighbour before mixing. RGB16 sources bypass
+     * display encoding entirely. The destination is reusable in the integration pixel loop.
+     */
+    fun sampleLinearAt(
+        source: ArgbPixelSource,
+        sourceX: Float,
+        sourceY: Float,
+        destination: MutableSampledLinearRgb
+    ): Boolean {
+        if (!isCovered(source, sourceX, sourceY)) return false
+        val x0 = floor(sourceX).toInt()
+        val y0 = floor(sourceY).toInt()
+        val x1 = minOf(source.width - 1, x0 + 1)
+        val y1 = minOf(source.height - 1, y0 + 1)
+        val fractionX = sourceX - x0
+        val fractionY = sourceY - y0
+        if (source is LinearRgbPixelSource) {
+            val topLeft = source.linearRgbAt(x0, y0)
+            val topRight = source.linearRgbAt(x1, y0)
+            val bottomLeft = source.linearRgbAt(x0, y1)
+            val bottomRight = source.linearRgbAt(x1, y1)
+            destination.red = bilinearLinearChannel(
+                LinearRgb16.red(topLeft), LinearRgb16.red(topRight),
+                LinearRgb16.red(bottomLeft), LinearRgb16.red(bottomRight), fractionX, fractionY
+            )
+            destination.green = bilinearLinearChannel(
+                LinearRgb16.green(topLeft), LinearRgb16.green(topRight),
+                LinearRgb16.green(bottomLeft), LinearRgb16.green(bottomRight), fractionX, fractionY
+            )
+            destination.blue = bilinearLinearChannel(
+                LinearRgb16.blue(topLeft), LinearRgb16.blue(topRight),
+                LinearRgb16.blue(bottomLeft), LinearRgb16.blue(bottomRight), fractionX, fractionY
+            )
+        } else {
+            val topLeft = source.argbAt(x0, y0)
+            val topRight = source.argbAt(x1, y0)
+            val bottomLeft = source.argbAt(x0, y1)
+            val bottomRight = source.argbAt(x1, y1)
+            destination.red = bilinearLinearChannel(
+                DECODED_SRGB_8[topLeft ushr 16 and 255], DECODED_SRGB_8[topRight ushr 16 and 255],
+                DECODED_SRGB_8[bottomLeft ushr 16 and 255], DECODED_SRGB_8[bottomRight ushr 16 and 255],
+                fractionX, fractionY
+            )
+            destination.green = bilinearLinearChannel(
+                DECODED_SRGB_8[topLeft ushr 8 and 255], DECODED_SRGB_8[topRight ushr 8 and 255],
+                DECODED_SRGB_8[bottomLeft ushr 8 and 255], DECODED_SRGB_8[bottomRight ushr 8 and 255],
+                fractionX, fractionY
+            )
+            destination.blue = bilinearLinearChannel(
+                DECODED_SRGB_8[topLeft and 255], DECODED_SRGB_8[topRight and 255],
+                DECODED_SRGB_8[bottomLeft and 255], DECODED_SRGB_8[bottomRight and 255],
+                fractionX, fractionY
+            )
+        }
+        return true
+    }
+
+    /** Keeps encoded-sRGB patch evidence independent of linear-light integration. */
     fun sampleLuminanceAt(source: ArgbPixelSource, sourceX: Float, sourceY: Float): Float? {
         if (!isCovered(source, sourceX, sourceY)) return null
         val x0 = floor(sourceX).toInt()
@@ -175,5 +242,22 @@ class TransformedBitmapSampler {
         val top = topLeft + (topRight - topLeft) * fractionX
         val bottom = bottomLeft + (bottomRight - bottomLeft) * fractionX
         return (top + (bottom - top) * fractionY).coerceIn(0f, 1f)
+    }
+
+    private fun bilinearLinearChannel(
+        topLeft: Float,
+        topRight: Float,
+        bottomLeft: Float,
+        bottomRight: Float,
+        fractionX: Float,
+        fractionY: Float
+    ): Float {
+        val top = topLeft + (topRight - topLeft) * fractionX
+        val bottom = bottomLeft + (bottomRight - bottomLeft) * fractionX
+        return (top + (bottom - top) * fractionY).coerceIn(0f, 1f)
+    }
+
+    private companion object {
+        val DECODED_SRGB_8 = FloatArray(256) { SrgbTransfer.srgbToLinear(it / 255f) }
     }
 }

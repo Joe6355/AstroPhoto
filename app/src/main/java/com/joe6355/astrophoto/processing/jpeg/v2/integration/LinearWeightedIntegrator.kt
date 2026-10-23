@@ -10,7 +10,7 @@ import com.joe6355.astrophoto.processing.jpeg.v2.model.SensorDefectFilteringRepo
 import com.joe6355.astrophoto.processing.jpeg.v2.model.SensorDefectRegionReport
 import com.joe6355.astrophoto.processing.jpeg.v2.model.TileSpec
 import com.joe6355.astrophoto.processing.jpeg.v2.sampling.ArgbPixelSource
-import com.joe6355.astrophoto.processing.jpeg.v2.sampling.MutableSampledSrgb
+import com.joe6355.astrophoto.processing.jpeg.v2.sampling.MutableSampledLinearRgb
 import com.joe6355.astrophoto.processing.jpeg.v2.sampling.PreparedReferenceToSourceTransform
 import com.joe6355.astrophoto.processing.jpeg.v2.sampling.TransformedBitmapSampler
 import kotlinx.coroutines.currentCoroutineContext
@@ -99,7 +99,7 @@ class LinearWeightedIntegrator(
                         }
                     }
                     val preparedTransform = preparedTransforms[frameIndex]
-                    val reusableSample = MutableSampledSrgb()
+                    val reusableSample = MutableSampledLinearRgb()
                     for (localY in 0 until tile.height) {
                         if (localY % 32 == 0) currentCoroutineContext().ensureActive()
                         val outputY = tile.top + localY
@@ -124,25 +124,25 @@ class LinearWeightedIntegrator(
                                     continue
                                 }
                                 val sample = reusableSample
-                                if (!sampler.sampleAt(source, sourceX, sourceY, sample)) continue
+                                if (!sampler.sampleLinearAt(source, sourceX, sourceY, sample)) continue
                                 accumulator.add(
                                     index = accumulatorIndex,
-                                    red = SrgbTransfer.srgbToLinear(sample.red),
-                                    green = SrgbTransfer.srgbToLinear(sample.green),
-                                    blue = SrgbTransfer.srgbToLinear(sample.blue),
+                                    red = sample.red,
+                                    green = sample.green,
+                                    blue = sample.blue,
                                     weight = frame.normalizedWeight
                                 )
                             } else {
                                 val transform = preparedTransform
                                 val sample = reusableSample
-                                if (!sampler.sampleAt(source,
+                                if (!sampler.sampleLinearAt(source,
                                         transform.sourceX(outputX.toFloat(), outputY.toFloat()),
                                         transform.sourceY(outputX.toFloat(), outputY.toFloat()), sample)) continue
                                 accumulator.add(
                                     index = accumulatorIndex,
-                                    red = SrgbTransfer.srgbToLinear(sample.red),
-                                    green = SrgbTransfer.srgbToLinear(sample.green),
-                                    blue = SrgbTransfer.srgbToLinear(sample.blue),
+                                    red = sample.red,
+                                    green = sample.green,
+                                    blue = sample.blue,
                                     weight = frame.normalizedWeight
                                 )
                             }
