@@ -10,6 +10,8 @@ import com.joe6355.astrophoto.processing.jpeg.v2.composition.MaskFeathering
 import com.joe6355.astrophoto.processing.jpeg.v2.composition.FileBackedCompositeResult
 import com.joe6355.astrophoto.processing.jpeg.v2.composition.FileBackedSkyForegroundComposer
 import com.joe6355.astrophoto.processing.jpeg.v2.composition.ReferenceStarSignalPreserver
+import com.joe6355.astrophoto.processing.jpeg.v2.composition.ReferenceStarRestorationPolicy
+import com.joe6355.astrophoto.processing.jpeg.v2.composition.ReferenceStarRestorationPlan
 import com.joe6355.astrophoto.processing.jpeg.v2.enhancement.fileBackedDisplayPixelHash
 import com.joe6355.astrophoto.processing.jpeg.v2.integration.WeightedIntegrationFrame
 import com.joe6355.astrophoto.processing.jpeg.v2.masking.ForegroundProtectionMask
@@ -313,13 +315,14 @@ internal fun JpegStacker.preserveAutomaticReferenceStars(
         stackedSky,
         stars
     )
+    val restoration = ReferenceStarRestorationPolicy().plan(stars, maskedStage.sources)
     return sensorDefectAffectedOutput
         ?.let(::FileBackedFloatPlaneReader)
         .use { affectedOutput ->
             val preservation = ReferenceStarSignalPreserver().preserve(
                 stackedSky = stackedSky,
                 reference = reference,
-                stars = stars,
+                stars = restoration.starsToRestore,
                 store = store,
                 sensorDefectMask = sensorDefectMask,
                 sensorDefectAffectedOutput = affectedOutput
@@ -336,7 +339,10 @@ internal fun JpegStacker.preserveAutomaticReferenceStars(
                 stage.withMaskLineageEvidence(
                     stars,
                     sensorDefectMask,
-                    affectedOutput
+                    affectedOutput,
+                    restoration,
+                    reference.width,
+                    reference.height
                 )
             }
             AutomaticReferenceStarPreservationResult(
@@ -550,7 +556,8 @@ internal fun JpegStacker.completeReferenceStarRetentionLineage(
         effectiveSkyAlpha,
         integrationFrames
     )
-    return stages.map { it.withReferenceSourceEvidence(evidence) }
+    val preservedFootprints = affectedLineage.filterValues { it.intersectsStarPreservationPatch }.keys
+    return stages.map { it.withReferenceSourceEvidence(evidence, preservedFootprints) }
 }
 
 internal fun JpegStacker.measureReferenceStarRetention(
@@ -563,14 +570,15 @@ internal fun JpegStacker.measureReferenceStarRetention(
     .let { result -> ReferenceStarRetentionStage(stage, result.metrics, result.sources) }
 
 internal fun ReferenceStarRetentionStage.withReferenceSourceEvidence(
-    evidence: Map<Int, ReferenceStarRetentionEvidence>
+    evidence: Map<Int, ReferenceStarRetentionEvidence>,
+    preservedFootprints: Set<Int>
 ): ReferenceStarRetentionStage = copy(
     sources = sources.map { source ->
         val item = evidence[source.sourceIndex] ?: return@map source
         source.copy(
             intersectsSourceSensorMask = item.intersectsSourceSensorMask,
             intersectsAffectedOutputLineage = item.intersectsAffectedOutputLineage,
-            intersectsStarPreservationPatch = true,
+            intersectsStarPreservationPatch = source.sourceIndex in preservedFootprints,
             effectiveSkyAlpha = item.effectiveSkyAlpha,
             referenceContribution = 1f - item.effectiveSkyAlpha,
             validContributingFrameCount = item.validContributingFrameCount,
@@ -582,7 +590,10 @@ internal fun ReferenceStarRetentionStage.withReferenceSourceEvidence(
 internal fun ReferenceStarRetentionStage.withMaskLineageEvidence(
     stars: List<V2DetectedStar>,
     sensorDefectMask: SensorDefectMask?,
-    affectedOutput: AlphaPixelSource?
+    affectedOutput: AlphaPixelSource?,
+    restoration: ReferenceStarRestorationPlan,
+    imageWidth: Int,
+    imageHeight: Int
 ): ReferenceStarRetentionStage = copy(
     sources = sources.map { source ->
         val star = stars.getOrNull(source.sourceIndex) ?: return@map source
@@ -599,7 +610,7 @@ internal fun ReferenceStarRetentionStage.withMaskLineageEvidence(
                 width,
                 height
             ) { x, y -> affectedOutput?.alphaAt(x, y)?.let { it > 0f } == true },
-            intersectsStarPreservationPatch = true
+            intersectsStarPreservationPatch = restoration.intersectsPatch(star, imageWidth, imageHeight)
         )
     }
 )

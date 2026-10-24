@@ -162,7 +162,7 @@ class ReferenceStarSignalPreserver {
         if (!affectedOutputIntersects(x, y, sensorDefectAffectedOutput)) return false
         val centerX = star.x.roundToInt()
         val centerY = star.y.roundToInt()
-        val coreRadius = ceil(star.width * 1.8f).toInt().coerceIn(3, 7)
+        val coreRadius = referenceStarCoreRadius(star)
         val dx = x - centerX
         val dy = y - centerY
         return dx * dx + dy * dy > coreRadius * coreRadius
@@ -193,8 +193,7 @@ class ReferenceStarSignalPreserver {
         action: (Int, Int) -> Unit
     ) {
         stars.forEachIndexed { starIndex, star ->
-            val coreRadius = ceil(star.width * 1.8f).toInt().coerceIn(3, 7)
-            val radius = coreRadius + 3
+            val radius = referenceStarPreservationRadius(star)
             val dy = y - star.y
             if (abs(dy) > radius) return@forEachIndexed
             val centerX = star.x.roundToInt()
@@ -256,3 +255,8 @@ class ReferenceStarSignalPreserver {
         const val FILTERED_SAMPLE_SUPPORT_RADIUS = 3
     }
 }
+
+internal fun referenceStarCoreRadius(star: DetectedStar): Int =
+    ceil(star.width * 1.8f).toInt().coerceIn(3, 7)
+
+internal fun referenceStarPreservationRadius(star: DetectedStar): Int = referenceStarCoreRadius(star) + 3
