@@ -73,13 +73,15 @@ class FileBackedSkyStatistics {
         fun linearLuminance(color: Long): Float = 0.2126f * linearChannel(color, 16) +
             0.7152f * linearChannel(color, 8) + 0.0722f * linearChannel(color, 0)
         val starCores = StarCoreIndex.create(image.width, image.height, stars)
-        val luminanceHistogram = IntArray(HISTOGRAM_BINS)
-        val redHistogram = IntArray(HISTOGRAM_BINS)
-        val greenHistogram = IntArray(HISTOGRAM_BINS)
-        val blueHistogram = IntArray(HISTOGRAM_BINS)
+        val histogramBins = if (legacyArgb) HISTOGRAM_BINS else 65536
+        val luminanceHistogram = IntArray(histogramBins)
+        val redHistogram = IntArray(histogramBins)
+        val greenHistogram = IntArray(histogramBins)
+        val blueHistogram = IntArray(histogramBins)
         val clipping = LongArray(3)
         val grid = Grid.create(image.width, image.height)
-        val gridHistograms = IntArray(grid.cellCount * GRADIENT_BINS)
+        val preciseGradient = if (legacyArgb) null else FineBackgroundQuantiles(grid.cellCount)
+        val gridHistograms = if (legacyArgb) IntArray(grid.cellCount * GRADIENT_BINS) else IntArray(0)
         val gridCounts = IntArray(grid.cellCount)
         var skyCount = 0L
         var backgroundCount = 0L
@@ -99,12 +101,13 @@ class FileBackedSkyStatistics {
             if (blue <= CLIP_LIMIT || blue >= 1f - CLIP_LIMIT) clipping[2]++
             if (starCores.contains(x, y) || maxOf(red, green, blue) >= SATURATED_BACKGROUND_LIMIT) continue
             backgroundCount++
-            luminanceHistogram[histogramBin(luminance, HISTOGRAM_BINS)]++
-            redHistogram[histogramBin(red, HISTOGRAM_BINS)]++
-            greenHistogram[histogramBin(green, HISTOGRAM_BINS)]++
-            blueHistogram[histogramBin(blue, HISTOGRAM_BINS)]++
+            luminanceHistogram[histogramBin(luminance, histogramBins)]++
+            redHistogram[histogramBin(red, histogramBins)]++
+            greenHistogram[histogramBin(green, histogramBins)]++
+            blueHistogram[histogramBin(blue, histogramBins)]++
             val cell = grid.cellIndex(x, y)
-            gridHistograms[cell * GRADIENT_BINS + histogramBin(luminance, GRADIENT_BINS)]++
+            if (preciseGradient != null) preciseGradient.addFirstPass(cell, luminance)
+            else gridHistograms[cell * GRADIENT_BINS + histogramBin(luminance, GRADIENT_BINS)]++
             gridCounts[cell]++
             if (x > 0 && effectiveSkyAlpha.alphaAt(x - 1, y) >= STATISTICS_ALPHA_THRESHOLD &&
                 !starCores.contains(x - 1, y)
@@ -131,10 +134,11 @@ class FileBackedSkyStatistics {
             histogramPercentile(greenHistogram, backgroundCount, 0.50f),
             histogramPercentile(blueHistogram, backgroundCount, 0.50f)
         )
-        val luminanceDeviation = IntArray(HISTOGRAM_BINS)
-        val redDeviation = IntArray(HISTOGRAM_BINS)
-        val greenDeviation = IntArray(HISTOGRAM_BINS)
-        val blueDeviation = IntArray(HISTOGRAM_BINS)
+        val luminanceDeviation = IntArray(histogramBins)
+        val redDeviation = IntArray(histogramBins)
+        val greenDeviation = IntArray(histogramBins)
+        val blueDeviation = IntArray(histogramBins)
+        preciseGradient?.beginRefinement()
         for (y in 0 until image.height) for (x in 0 until image.width) {
             if (effectiveSkyAlpha.alphaAt(x, y) < STATISTICS_ALPHA_THRESHOLD || starCores.contains(x, y)) continue
             val color = sample(x, y)
@@ -143,10 +147,11 @@ class FileBackedSkyStatistics {
             val blue = linearChannel(color, 0)
             if (maxOf(red, green, blue) >= SATURATED_BACKGROUND_LIMIT) continue
             val luminance = 0.2126f * red + 0.7152f * green + 0.0722f * blue
-            luminanceDeviation[histogramBin(abs(luminance - median), HISTOGRAM_BINS)]++
-            redDeviation[histogramBin(abs(red - channelMedian.red), HISTOGRAM_BINS)]++
-            greenDeviation[histogramBin(abs(green - channelMedian.green), HISTOGRAM_BINS)]++
-            blueDeviation[histogramBin(abs(blue - channelMedian.blue), HISTOGRAM_BINS)]++
+            luminanceDeviation[histogramBin(abs(luminance - median), histogramBins)]++
+            redDeviation[histogramBin(abs(red - channelMedian.red), histogramBins)]++
+            greenDeviation[histogramBin(abs(green - channelMedian.green), histogramBins)]++
+            blueDeviation[histogramBin(abs(blue - channelMedian.blue), histogramBins)]++
+            preciseGradient?.addRefinementSample(grid.cellIndex(x, y), luminance)
         }
         val mad = histogramPercentile(luminanceDeviation, backgroundCount, 0.50f)
         val channelMad = LinearRgb(
@@ -154,7 +159,7 @@ class FileBackedSkyStatistics {
             histogramPercentile(greenDeviation, backgroundCount, 0.50f),
             histogramPercentile(blueDeviation, backgroundCount, 0.50f)
         )
-        val gradient = gradientEstimate(grid, gridHistograms, gridCounts, mad)
+        val gradient = gradientEstimate(grid, gridHistograms, gridCounts, mad, preciseGradient)
         val reliableStars = stars.filter { star ->
             val starX = star.x.roundToInt()
             val starY = star.y.roundToInt()
@@ -222,16 +227,21 @@ class FileBackedSkyStatistics {
         grid: Grid,
         histograms: IntArray,
         counts: IntArray,
-        globalMad: Float
+        globalMad: Float,
+        precise: FineBackgroundQuantiles?
     ): GradientEstimate {
         val medians = FloatArray(grid.cellCount) { Float.NaN }
         counts.indices.forEach { cell ->
             if (counts[cell] < MIN_GRADIENT_CELL_SAMPLES) return@forEach
-            val histogram = histograms.copyOfRange(cell * GRADIENT_BINS, (cell + 1) * GRADIENT_BINS)
-            val p16 = histogramPercentile(histogram, counts[cell].toLong(), 0.16f)
-            val p84 = histogramPercentile(histogram, counts[cell].toLong(), 0.84f)
+            val histogram = if (precise == null)
+                histograms.copyOfRange(cell * GRADIENT_BINS, (cell + 1) * GRADIENT_BINS) else null
+            val p16 = precise?.percentile(cell, FineBackgroundQuantiles.LOW)
+                ?: histogramPercentile(checkNotNull(histogram), counts[cell].toLong(), 0.16f)
+            val p84 = precise?.percentile(cell, FineBackgroundQuantiles.HIGH)
+                ?: histogramPercentile(checkNotNull(histogram), counts[cell].toLong(), 0.84f)
             if (p84 - p16 <= maxOf(MIN_CELL_TEXTURE_LIMIT, globalMad * 8f)) {
-                medians[cell] = histogramPercentile(histogram, counts[cell].toLong(), 0.50f)
+                medians[cell] = precise?.percentile(cell, FineBackgroundQuantiles.MEDIAN)
+                    ?: histogramPercentile(checkNotNull(histogram), counts[cell].toLong(), 0.50f)
             }
         }
         fun halfAverage(horizontal: Boolean, upperOrLeft: Boolean): Float {

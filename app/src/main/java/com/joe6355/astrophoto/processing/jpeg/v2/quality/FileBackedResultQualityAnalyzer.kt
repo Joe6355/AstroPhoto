@@ -78,7 +78,9 @@ class FileBackedResultQualityAnalyzer(
             channelMedian = sky.channelMedian,
             channelClippingPercent = sky.channelClippingPercent,
             chromaNoiseEstimate = sky.chromaNoiseEstimate,
-            banding = fileBackedBanding(image, effectiveSkyAlpha, sky.luminanceMad),
+            banding = if (image.pixelFormat == com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedPixelFormat.LINEAR_RGB_16)
+                FileBackedOutputBandingEstimator().estimate(image, effectiveSkyAlpha, sky.luminanceMad)
+            else fileBackedBanding(image, effectiveSkyAlpha, sky.luminanceMad),
             gradientResidual = sky.largeScaleGradientStrength,
             foregroundSharpness = incremental.foregroundSharpness,
             foregroundEdgeDifference = incremental.foregroundEdgeDifference,

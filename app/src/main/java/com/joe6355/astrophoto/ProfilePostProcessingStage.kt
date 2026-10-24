@@ -24,6 +24,8 @@ internal suspend fun runProfilePostProcessing(
     profile: AstroProcessingProfile,
     frameCount: Int,
     alignedStackStars: List<DetectedStar>,
+    cleanBaseline: FileBackedImage,
+    referenceStars: List<DetectedStar>,
     store: ResultCandidateStore,
     memoryBudget: JpegMemoryBudget,
     memoryTracker: PipelineMemoryTracker,
@@ -38,7 +40,10 @@ internal suspend fun runProfilePostProcessing(
         onProgress("Постобработка восстановлена из checkpoint", 1, 1)
         return restored
     }
-    val result = FileBackedAdaptivePresetProcessor().process(
+    val result = FileBackedAdaptivePresetProcessor(
+        preservationBaseline = cleanBaseline,
+        preservationStars = referenceStars
+    ).process(
         stackedSky, referenceForeground, effectiveSkyAlpha, profile, frameCount,
         alignedStackStars, store, memoryBudget, memoryTracker, sensorDefectAffectedOutput, onProgress
     )

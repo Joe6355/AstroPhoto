@@ -9,6 +9,7 @@ import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedFloatPlane
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedFloatPlaneWriter
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedImage
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedImageWriter
+import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedPixelFormat
 import kotlin.math.abs
 import kotlin.math.sqrt
 import kotlin.random.Random
@@ -21,13 +22,13 @@ import java.io.File
 class FileBackedBandingPrecisionTest {
     @get:Rule val temporary = TemporaryFolder()
 
-    @Test fun oneOutputLevelCannotBecomeAMuchLargerLinearHistogramStep() {
+    @Test fun qualityAndOutputChecksAgreeAtAdjacentDarkDisplayLevels() {
         val baseline = image("baseline") { _, _ -> gray(6) }
         val candidate = image("single-level") { x, _ -> gray(if (x < SIZE / 2) 6 else 7) }
         val alpha = alpha("sky") { _, _ -> 1f }
-        val coarse = FileBackedResultQualityAnalyzer().analyze(candidate, baseline, alpha).banding.combinedScore
+        val quality = FileBackedResultQualityAnalyzer().analyze(candidate, baseline, alpha).banding.combinedScore
         val precise = FileBackedOutputBandingEstimator().estimate(candidate, alpha, 0f).combinedScore
-        assertTrue("The 256-bin quantizer reproduces the false strong-band threshold crossing", coarse > 0.05f)
+        assertEquals(precise, quality, 0.000001f)
         assertTrue(precise.toString(), precise < 0.01f)
         val validation = validate(baseline, candidate, alpha)
         assertFalse(validation.hardFailureReasons.toString(), "strong_banding_appeared" in validation.hardFailureReasons)
@@ -89,7 +90,7 @@ class FileBackedBandingPrecisionTest {
             GlobalToneAnchors(0.0, 0.02), 0, 1.0, 0.0)
 
     private fun image(name: String, color: (Int, Int) -> Int) =
-        FileBackedImageWriter(File(temporary.root, "$name.argb"), SIZE, SIZE).use { writer ->
+        FileBackedImageWriter(File(temporary.root, "$name.argb"), SIZE, SIZE, FileBackedPixelFormat.LINEAR_RGB_16).use { writer ->
             repeat(SIZE) { y -> writer.writeRow(y, IntArray(SIZE) { x -> color(x, y) }) }
             writer.finish()
         }

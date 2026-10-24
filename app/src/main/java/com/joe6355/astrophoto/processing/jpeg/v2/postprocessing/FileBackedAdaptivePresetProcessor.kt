@@ -45,7 +45,9 @@ class FileBackedAdaptivePresetProcessor internal constructor(
     private val featureFlags: AdaptiveProcessingFeatureFlags = AdaptiveProcessingFeatureFlags(),
     private val experimentalStrengthVariant: ExperimentalStarStrengthVariant =
         ExperimentalStarStrengthVariant.PRODUCTION_SELECTED,
-    private val legacyArgb: Boolean = false
+    private val legacyArgb: Boolean = false,
+    private val preservationBaseline: FileBackedImage? = null,
+    private val preservationStars: List<DetectedStar> = emptyList()
 ) {
     suspend fun process(
         stackedSky: FileBackedImage,
@@ -135,6 +137,9 @@ class FileBackedAdaptivePresetProcessor internal constructor(
                     stackedSky.height == sensorDefectAffectedOutput.height)
         )
         require(profile != AstroProcessingProfile.NORMAL)
+        preservationBaseline?.let {
+            require(it.width == stackedSky.width && it.height == stackedSky.height)
+        }
         val started = System.nanoTime()
         val parameters = ExistingPresetParameterMapper.parametersFor(profile, frameCount)
         val durations = linkedMapOf<String, Long>()
@@ -374,8 +379,19 @@ class FileBackedAdaptivePresetProcessor internal constructor(
             tracker = memoryTracker
         )
         if (pointSafe !== composite.image) store.deleteTemporary(composite.image)
-        val processed = store.register(ResultCandidateType.PROCESSED, pointSafe)
         durations["foreground_composition"] = elapsed(stageStarted)
+        stageStarted = System.nanoTime()
+        val protected = if (!legacyArgb && preservationBaseline != null) {
+            ProcessedStarSignalPreserver().preserve(
+                pointSafe, preservationBaseline, preservationStars, store, referenceForeground
+            )
+        } else pointSafe
+        if (protected !== pointSafe) {
+            store.deleteTemporary(pointSafe)
+            after = fileStatistics(protected)
+        }
+        durations["processed_star_preservation"] = elapsed(stageStarted)
+        val processed = store.register(ResultCandidateType.PROCESSED, protected)
         return FileBackedAdaptiveProcessingResult(
             image = processed,
             diagnostics = AdaptiveProcessingDiagnostics(
@@ -548,7 +564,8 @@ class FileBackedAdaptivePresetProcessor internal constructor(
                 GradientRemovalDiagnostics(0f, grid.columns, grid.rows, 0, 0f)
         }
         val starCores = StarCoreIndex.create(input.width, input.height, stars)
-        val histograms = IntArray(grid.cellCount * CHANNELS_PER_CELL * MODEL_BINS)
+        val precise = if (legacyArgb) null else FineBackgroundQuantiles(grid.cellCount * CHANNELS_PER_CELL)
+        val histograms = if (legacyArgb) IntArray(grid.cellCount * CHANNELS_PER_CELL * MODEL_BINS) else IntArray(0)
         val counts = IntArray(grid.cellCount)
         FileBackedImageReader(input).use { image ->
             FileBackedFloatPlaneReader(alphaPlane).use { alpha ->
@@ -561,13 +578,44 @@ class FileBackedAdaptivePresetProcessor internal constructor(
                     if (maxOf(red, green, blue) >= SATURATED_SAMPLE_LIMIT) continue
                     val cell = grid.cellIndex(x, y)
                     counts[cell]++
-                    increment(histograms, cell, 0, red)
-                    increment(histograms, cell, 1, green)
-                    increment(histograms, cell, 2, blue)
-                    increment(histograms, cell, 3, 0.2126f * red + 0.7152f * green + 0.0722f * blue)
+                    val luminance = 0.2126f * red + 0.7152f * green + 0.0722f * blue
+                    if (precise != null) {
+                        precise.addFirstPass(cell * CHANNELS_PER_CELL, red)
+                        precise.addFirstPass(cell * CHANNELS_PER_CELL + 1, green)
+                        precise.addFirstPass(cell * CHANNELS_PER_CELL + 2, blue)
+                        precise.addFirstPass(cell * CHANNELS_PER_CELL + 3, luminance)
+                    } else {
+                        increment(histograms, cell, 0, red)
+                        increment(histograms, cell, 1, green)
+                        increment(histograms, cell, 2, blue)
+                        increment(histograms, cell, 3, luminance)
+                    }
                 }
             }
         }
+        if (precise != null) {
+            precise.beginRefinement()
+            FileBackedImageReader(input).use { image ->
+                FileBackedFloatPlaneReader(alphaPlane).use { alpha ->
+                    for (y in 0 until input.height) for (x in 0 until input.width) {
+                        if (alpha.alphaAt(x, y) < STATISTICS_ALPHA_THRESHOLD || starCores.contains(x, y)) continue
+                        val color = image.processingColorAt(x, y)
+                        val red = linearChannel(color, 16)
+                        val green = linearChannel(color, 8)
+                        val blue = linearChannel(color, 0)
+                        if (maxOf(red, green, blue) >= SATURATED_SAMPLE_LIMIT) continue
+                        val group = grid.cellIndex(x, y) * CHANNELS_PER_CELL
+                        precise.addRefinementSample(group, red)
+                        precise.addRefinementSample(group + 1, green)
+                        precise.addRefinementSample(group + 2, blue)
+                        precise.addRefinementSample(group + 3, 0.2126f * red + 0.7152f * green + 0.0722f * blue)
+                    }
+                }
+            }
+        }
+        fun percentile(cell: Int, channel: Int, quantile: Int, fraction: Float): Float =
+            precise?.percentile(cell * CHANNELS_PER_CELL + channel, quantile)
+                ?: histogramPercentile(channelHistogram(histograms, cell, channel), counts[cell].toLong(), fraction)
         val redModel = FloatArray(grid.cellCount) { Float.NaN }
         val greenModel = FloatArray(grid.cellCount) { Float.NaN }
         val blueModel = FloatArray(grid.cellCount) { Float.NaN }
@@ -575,14 +623,13 @@ class FileBackedAdaptivePresetProcessor internal constructor(
         counts.indices.forEach { cell ->
             val minimum = maxOf(MIN_CELL_SAMPLES, (grid.approximateCellArea * MIN_SKY_CELL_FRACTION).roundToInt())
             if (counts[cell] < minimum) return@forEach
-            val luminosity = channelHistogram(histograms, cell, 3)
-            if (histogramPercentile(luminosity, counts[cell].toLong(), 0.84f) -
-                histogramPercentile(luminosity, counts[cell].toLong(), 0.16f) >
+            if (percentile(cell, 3, FineBackgroundQuantiles.HIGH, 0.84f) -
+                percentile(cell, 3, FineBackgroundQuantiles.LOW, 0.16f) >
                 maxOf(MIN_TEXTURE_LIMIT, stats.luminanceMad * 9f)
             ) return@forEach
-            redModel[cell] = histogramPercentile(channelHistogram(histograms, cell, 0), counts[cell].toLong(), 0.5f)
-            greenModel[cell] = histogramPercentile(channelHistogram(histograms, cell, 1), counts[cell].toLong(), 0.5f)
-            blueModel[cell] = histogramPercentile(channelHistogram(histograms, cell, 2), counts[cell].toLong(), 0.5f)
+            redModel[cell] = percentile(cell, 0, FineBackgroundQuantiles.MEDIAN, 0.5f)
+            greenModel[cell] = percentile(cell, 1, FineBackgroundQuantiles.MEDIAN, 0.5f)
+            blueModel[cell] = percentile(cell, 2, FineBackgroundQuantiles.MEDIAN, 0.5f)
             validCells++
         }
         if (validCells == 0) {
@@ -712,7 +759,9 @@ class FileBackedAdaptivePresetProcessor internal constructor(
             val luminance = 0.2126f * red + 0.7152f * green + 0.0722f * blue
             if (alphaValue <= OPERATION_ALPHA_THRESHOLD || luminance <= MIN_LUMINANCE) color else {
                 val normalized = ((luminance - black) / range).coerceIn(0f, 1f)
-                val mapped = (asinh(asinhStrength * normalized.toDouble()) / denominator).toFloat()
+                // Keep existing faint signal below the black point instead of mapping it toward zero.
+                val stretchedLuminance = (asinh(asinhStrength * normalized.toDouble()) / denominator).toFloat()
+                val mapped = if (legacyArgb) stretchedLuminance else maxOf(luminance, stretchedLuminance)
                 val highlightWeight = 1f - highlightProtection.coerceIn(0f, 1f) * smoothStep(0.52f, 1f, normalized)
                 val localBlend = applied * sqrt(alphaValue.coerceIn(0f, 1f)) * highlightWeight
                 val target = (luminance + (mapped - luminance) * localBlend).coerceIn(0f, MAX_UNCLIPPED_VALUE)

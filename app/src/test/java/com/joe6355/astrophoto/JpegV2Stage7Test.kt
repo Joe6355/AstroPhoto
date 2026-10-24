@@ -386,7 +386,10 @@ class JpegV2Stage7Test {
         ).forEach { required -> assertTrue(required, profile.contains(required)) }
         assertTrue(source("app/src/main/java/com/joe6355/astrophoto/ProfileQualityStage.kt").contains("FileBackedSkyForegroundComposer().compose"))
         assertTrue(source("app/src/main/java/com/joe6355/astrophoto/ProfileIntegrationStage.kt").contains("stackedWriter.writeLinearTile("))
-        assertTrue(source("app/src/main/java/com/joe6355/astrophoto/ProfilePostProcessingStage.kt").contains("FileBackedAdaptivePresetProcessor().process("))
+        val postprocessing = source("app/src/main/java/com/joe6355/astrophoto/ProfilePostProcessingStage.kt")
+        assertTrue(postprocessing.contains("FileBackedAdaptivePresetProcessor("))
+        assertTrue(postprocessing.contains("preservationBaseline = cleanBaseline"))
+        assertTrue(postprocessing.contains("preservationStars = referenceStars"))
         assertTrue(source("app/src/main/java/com/joe6355/astrophoto/ProfileOutputStage.kt").contains("FileBackedImageReader(selected.image)"))
         assertFalse(profile.contains("bitmapFromArgbImage"))
         assertFalse(profile.contains("Bitmap.createBitmap"))

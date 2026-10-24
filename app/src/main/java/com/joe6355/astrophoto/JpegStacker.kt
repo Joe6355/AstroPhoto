@@ -1199,6 +1199,8 @@ class JpegStacker internal constructor(
                         profile = profile,
                         frameCount = acceptedFrames,
                         alignedStackStars = alignedStackStars,
+                        cleanBaseline = cleanStackHandle,
+                        referenceStars = fullResolutionStars,
                         store = candidateStore,
                         memoryBudget = memoryBudget,
                         memoryTracker = memoryTracker,
