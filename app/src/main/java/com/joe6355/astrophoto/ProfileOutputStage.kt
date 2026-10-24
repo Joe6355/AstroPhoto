@@ -455,7 +455,8 @@ internal suspend fun JpegStacker.publishAncillaryEnhanced(
                 effectiveSkyAlpha = effectiveSkyAlpha,
                 confirmedStars = confirmedStars,
                 store = candidateStore,
-                knownBaselineQuality = selected.metrics
+                knownBaselineQuality = selected.metrics,
+                referenceImage = referenceImage
             )
             val artifacts = LineArtifactDetector().compareStarNeighborhoods(
                 referenceImage, candidate.generation.image, confirmedStars,

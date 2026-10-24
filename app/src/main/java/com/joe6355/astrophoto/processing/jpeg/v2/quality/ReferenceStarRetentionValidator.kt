@@ -101,7 +101,7 @@ class ReferenceStarRetentionValidator {
         }
     }
 
-    private fun validateSources(
+    internal fun validateSources(
         reference: ArgbPixelSource,
         cleanStack: ArgbPixelSource,
         referenceStars: List<DetectedStar>
