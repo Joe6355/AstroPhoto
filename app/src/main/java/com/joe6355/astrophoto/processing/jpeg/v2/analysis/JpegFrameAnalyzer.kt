@@ -12,9 +12,10 @@ class JpegFrameAnalyzer(
         id: String,
         fileName: String,
         image: ArgbPixelImage,
-        skyMask: SkyMaskResult
+        skyMask: SkyMaskResult,
+        useLocalBackground: Boolean = false
     ): FrameAnalysis {
-        val detection = detector.detect(image, skyMask.mask)
+        val detection = detector.detect(image, skyMask.mask, useLocalBackground = useLocalBackground)
         val reliable = detection.stars.filter {
             it.confidence >= MIN_RELIABLE_CONFIDENCE &&
                 it.width in 0.6f..4.5f &&

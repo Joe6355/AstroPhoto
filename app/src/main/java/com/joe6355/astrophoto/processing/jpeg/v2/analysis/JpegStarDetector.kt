@@ -21,7 +21,8 @@ class JpegStarDetector {
         mask: SkyMask,
         maxStars: Int = 260,
         staticArtifactMask: StaticArtifactMask? = null,
-        allowBroadStars: Boolean = false
+        allowBroadStars: Boolean = false,
+        useLocalBackground: Boolean = false
     ): JpegStarDetectionResult {
         require(mask.width == image.width && mask.height == image.height)
         require(
@@ -52,14 +53,25 @@ class JpegStarDetector {
         val p95 = percentile(histogram, samples, 0.95f).toFloat()
         val noise = maxOf(1.5f, p84 - background, (p95 - background) * 0.32f)
         val threshold = background + maxOf(6f, noise * 2.6f)
+        val cellColumns = (image.width + BACKGROUND_CELL_SIZE - 1) / BACKGROUND_CELL_SIZE
+        val localBackgrounds = if (useLocalBackground) {
+            backgroundCells(image, mask, background, noise)
+        } else null
         val candidates = mutableListOf<DetectedStar>()
 
         for (centerY in ANALYSIS_RADIUS until image.height - ANALYSIS_RADIUS) {
             for (centerX in ANALYSIS_RADIUS until image.width - ANALYSIS_RADIUS) {
                 if (!mask.contains(centerX, centerY)) continue
                 if (staticArtifactMask?.contains(centerX.toFloat(), centerY.toFloat()) == true) continue
+                val local = localBackgrounds?.get(
+                    (centerY / BACKGROUND_CELL_SIZE) * cellColumns + centerX / BACKGROUND_CELL_SIZE
+                )
+                val candidateNoise = local?.noise ?: noise
+                val candidateThreshold = local?.let {
+                    it.background + maxOf(6f, it.noise * 2.6f)
+                } ?: threshold
                 val peak = pixelLuminance(image.pixelAt(centerX, centerY))
-                if (peak < threshold || !isDeterministicLocalMaximum(image, mask, centerX, centerY, peak)) {
+                if (peak < candidateThreshold || !isDeterministicLocalMaximum(image, mask, centerX, centerY, peak)) {
                     continue
                 }
                 analyzeCandidate(
@@ -68,7 +80,7 @@ class JpegStarDetector {
                     centerX,
                     centerY,
                     background,
-                    noise,
+                    candidateNoise,
                     allowBroadStars
                 )?.let(candidates::add)
             }
@@ -96,6 +108,40 @@ class JpegStarDetector {
         val confidence = (distinct.size / 18f).coerceIn(0f, 1f) *
             (distinct.map { it.confidence }.average().takeIf { it.isFinite() }?.toFloat() ?: 0f)
         return JpegStarDetectionResult(distinct, background, noise, confidence)
+    }
+
+    private data class BackgroundCell(val background: Float, val noise: Float)
+
+    /** Clouds/gradients in one part of the sky must not set the noise floor for every star. */
+    private fun backgroundCells(
+        image: ArgbPixelImage,
+        mask: SkyMask,
+        globalBackground: Float,
+        globalNoise: Float
+    ): Array<BackgroundCell> {
+        val columns = (image.width + BACKGROUND_CELL_SIZE - 1) / BACKGROUND_CELL_SIZE
+        val rows = (image.height + BACKGROUND_CELL_SIZE - 1) / BACKGROUND_CELL_SIZE
+        return Array(columns * rows) { index ->
+            val left = index % columns * BACKGROUND_CELL_SIZE
+            val top = index / columns * BACKGROUND_CELL_SIZE
+            val histogram = IntArray(256)
+            var samples = 0L
+            for (y in top until minOf(image.height, top + BACKGROUND_CELL_SIZE)) {
+                for (x in left until minOf(image.width, left + BACKGROUND_CELL_SIZE)) {
+                    if (mask.contains(x, y)) {
+                        histogram[pixelLuminance(image.pixelAt(x, y))]++
+                        samples++
+                    }
+                }
+            }
+            if (samples < MIN_BACKGROUND_CELL_SAMPLES) BackgroundCell(globalBackground, globalNoise)
+            else {
+                val median = percentile(histogram, samples, 0.50f).toFloat()
+                val p84 = percentile(histogram, samples, 0.84f).toFloat()
+                val p95 = percentile(histogram, samples, 0.95f).toFloat()
+                BackgroundCell(median, maxOf(1.5f, p84 - median, (p95 - median) * 0.32f))
+            }
+        }
     }
 
     private fun analyzeCandidate(
@@ -239,6 +285,8 @@ class JpegStarDetector {
     }
 
     companion object {
+        private const val BACKGROUND_CELL_SIZE = 64
+        private const val MIN_BACKGROUND_CELL_SAMPLES = 32
         private const val ANALYSIS_RADIUS = 5
         private const val CORE_RADIUS = 4
         private const val MIN_DIAMETER = ANALYSIS_RADIUS * 2 + 1

@@ -197,7 +197,7 @@ internal class ProfileFrameAnalysisCoordinator(
             val skyMask = skyMaskEstimator.estimate(image)
             ProfileAnalyzedFrame(
                 frame = frame,
-                analysis = frameAnalyzer.analyze(frame.key, frame.fileName, image, skyMask),
+                analysis = frameAnalyzer.analyze(frame.key, frame.fileName, image, skyMask, useLocalBackground = true),
                 skyMask = skyMask,
                 persistentSensorObservation = persistentSensorDetector.observe(
                     frameId = frame.key,

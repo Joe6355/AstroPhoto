@@ -95,7 +95,7 @@ class ProfileAnalysisCheckpointStore private constructor(
     companion object {
         private const val ROOT_NAME = "jpeg-profile-analysis-checkpoints"
         private const val MAGIC = 0x41504350
-        private const val VERSION = 3
+        private const val VERSION = 4
         private const val MAX_CHECKPOINT_BYTES = 32L * 1024L * 1024L
         private const val MAX_STARS = 10_000
         private const val MAX_CANDIDATES = 100_000
