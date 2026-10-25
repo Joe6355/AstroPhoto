@@ -4,6 +4,7 @@ import com.joe6355.astrophoto.processing.jpeg.v2.color.LinearRgb16
 import com.joe6355.astrophoto.AstroProcessingProfile
 import com.joe6355.astrophoto.processing.jpeg.v2.composition.FileBackedSkyForegroundComposer
 import com.joe6355.astrophoto.processing.jpeg.v2.color.SrgbTransfer
+import com.joe6355.astrophoto.processing.jpeg.v2.enhancement.ProtectedLuminanceDenoiser
 import com.joe6355.astrophoto.processing.jpeg.v2.memory.JpegMemoryBudget
 import com.joe6355.astrophoto.processing.jpeg.v2.memory.PipelineMemoryTracker
 import com.joe6355.astrophoto.processing.jpeg.v2.model.AdaptiveProcessingDiagnostics
@@ -214,6 +215,23 @@ class FileBackedAdaptivePresetProcessor internal constructor(
         val neutralizationDiagnostics = neutralized.second
         durations["background_neutralization"] = elapsed(stageStarted)
         currentStatistics = fileStatistics(workingImage)
+
+        // Reduce native sky grain before the stretch amplifies it in both the base PNG and Enhanced.
+        if (!legacyArgb && profile == AstroProcessingProfile.DEEP_SKY) {
+            onProgress("Подавление яркостного шума", 3, TOTAL_STAGES)
+            stageStarted = System.nanoTime()
+            val denoiser = ProtectedLuminanceDenoiser()
+            val protectedStars = alignedStackStars + preservationStars
+            val prepared = denoiser.prepareNoiseMap(workingImage, effectiveSkyAlpha, protectedStars, store)
+            try {
+                val reduced = denoiser.apply(workingImage, effectiveSkyAlpha, protectedStars, prepared, store)
+                replaceWorking(reduced.image)
+            } finally {
+                store.deleteTemporary(prepared.plane)
+            }
+            durations["luminance_reduction"] = elapsed(stageStarted)
+            // Keep the measured sky anchors: removing grain must not retune the tone curve.
+        }
 
         onProgress("Проявление слабых звёзд", 3, TOTAL_STAGES)
         stageStarted = System.nanoTime()
