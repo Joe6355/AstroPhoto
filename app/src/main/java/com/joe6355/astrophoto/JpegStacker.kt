@@ -104,7 +104,8 @@ class JpegProfileProcessingException(
     val acceptedFrames: Int? = null,
     val totalFrames: Int? = null,
     val minimumFrames: Int? = null,
-    val canContinueWithUserApproval: Boolean = false
+    val canContinueWithUserApproval: Boolean = false,
+    val inputAdvice: String? = null
 ) : IllegalStateException(message)
 
 internal data class JpegProfileOutputPlan(
@@ -122,7 +123,8 @@ internal fun requireMinimumRegisteredFrames(
     acceptedFrames: Int,
     totalFrames: Int,
     profile: AstroProcessingProfile,
-    userApprovedInsufficientFrames: Boolean = false
+    userApprovedInsufficientFrames: Boolean = false,
+    inputAdvice: String? = null
 ) {
     if (acceptedFrames < profile.minimumFrames &&
         (!userApprovedInsufficientFrames || acceptedFrames == 0)
@@ -130,11 +132,13 @@ internal fun requireMinimumRegisteredFrames(
         throw JpegProfileProcessingException(
             JpegProfileProcessingOutcome.FAILED_REGISTRATION,
             "Регистрация не удалась: использовано $acceptedFrames/$totalFrames, " +
-                "минимум для ${profile.title} — ${profile.minimumFrames}. Файл профиля не создан.",
+                "минимум для ${profile.title} — ${profile.minimumFrames}. Файл профиля не создан." +
+                inputAdvice?.takeIf { it.isNotBlank() }?.let { "\n$it" }.orEmpty(),
             acceptedFrames = acceptedFrames,
             totalFrames = totalFrames,
             minimumFrames = profile.minimumFrames,
-            canContinueWithUserApproval = acceptedFrames > 0
+            canContinueWithUserApproval = acceptedFrames > 0,
+            inputAdvice = inputAdvice?.takeIf { it.isNotBlank() }
         )
     }
 }
@@ -870,7 +874,8 @@ class JpegStacker internal constructor(
                     acceptedFrames,
                     selectedFrames.size,
                     profile,
-                    userApprovedInsufficientProfileFrames.get()
+                    userApprovedInsufficientProfileFrames.get(),
+                    inputAdvice = registrationInputAdvice(analyzedFrames.map { it.analysis })
                 )
                 recordUserApprovedFrameWarning(
                     warnings,

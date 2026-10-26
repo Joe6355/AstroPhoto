@@ -34,7 +34,7 @@ class RealDeviceProcessingAuditTest {
             "average3", "cancel", "invalid" -> 3
             "average10", "deep10", "deepreg10" -> 10
             "median35", "sigma35" -> 35
-            "deepAll" -> frames.size
+            "deepAll", "darkSparseAll" -> frames.size
             else -> error("Unknown audit mode: $mode")
         }
         require(frames.size >= requestedCount) {
@@ -121,6 +121,35 @@ class RealDeviceProcessingAuditTest {
                     .any { it === registrationStop })
                 report("QA_PASS mode=deepreg10 elapsedMs=${SystemClock.elapsedRealtime() - started}")
             }
+            return@runBlocking
+        }
+        if (mode == "darkSparseAll") {
+            val refused = withTimeout(5 * 60 * 1000L) {
+                stacker.profileStack(destination, selected, AstroProcessingProfile.DEEP_SKY, onProgress = progress)
+            }
+            assertTrue("The sparse-input audit must remain a registration failure", refused.isFailure)
+            val failure = generateSequence(requireNotNull(refused.exceptionOrNull())) { it.cause }
+                .filterIsInstance<JpegProfileProcessingException>().firstOrNull()
+                ?: error("Expected a typed registration refusal, got ${refused.exceptionOrNull()}")
+            assertEquals(JpegProfileProcessingOutcome.FAILED_REGISTRATION, failure.outcome)
+            assertEquals(1, failure.acceptedFrames)
+            assertEquals(20, failure.totalFrames)
+            assertEquals(4, failure.minimumFrames)
+            assertTrue(failure.message.orEmpty().contains("кадры очень тёмные"))
+            assertTrue(failure.message.orEmpty().contains("Проверьте исходники и экспозицию"))
+            val dialogText = profileContinuationMessage(AstroProcessingProfile.DEEP_SKY,
+                requireNotNull(failure.acceptedFrames), requireNotNull(failure.totalFrames),
+                requireNotNull(failure.minimumFrames), failure.inputAdvice)
+            assertTrue(dialogText.contains("кадры очень тёмные"))
+            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                val images = android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                requireNotNull(context.contentResolver.query(images, arrayOf(android.provider.MediaStore.Images.Media._ID),
+                    "${android.provider.MediaStore.Images.Media.RELATIVE_PATH} = ?",
+                    arrayOf("Pictures/AstroPhoto/$folder/Processed/"), null)).use { cursor ->
+                    assertEquals("A refused profile must not publish an image", 0, cursor.count)
+                }
+            }
+            report("QA_PASS mode=darkSparseAll outcome=FAILED_REGISTRATION accepted=1 total=20 noOutput=true")
             return@runBlocking
         }
         val result = withTimeout(20 * 60 * 1000L) {

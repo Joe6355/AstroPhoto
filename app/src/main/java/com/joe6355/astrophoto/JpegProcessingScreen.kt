@@ -149,7 +149,8 @@ private data class PendingProfileContinuation(
     val profile: AstroProcessingProfile,
     val acceptedFrames: Int,
     val totalFrames: Int,
-    val minimumFrames: Int
+    val minimumFrames: Int,
+    val inputAdvice: String? = null
 )
 
 @Composable
@@ -536,7 +537,8 @@ fun JpegStackingBlock(
                                 profile = profile,
                                 acceptedFrames = checkNotNull(continuable.acceptedFrames),
                                 totalFrames = checkNotNull(continuable.totalFrames),
-                                minimumFrames = checkNotNull(continuable.minimumFrames)
+                                minimumFrames = checkNotNull(continuable.minimumFrames),
+                                inputAdvice = continuable.inputAdvice
                             )
                             status = "Обработка приостановлена: требуется подтверждение"
                         } else {
@@ -1208,10 +1210,8 @@ fun JpegStackingBlock(
             title = { Text("Продолжить с прошедшими кадрами?") },
             text = {
                 Text(
-                    "Проверку прошли ${pending.acceptedFrames} из ${pending.totalFrames} кадров. " +
-                        "Для режима «${pending.profile.title}» обычно нужно минимум " +
-                        "${pending.minimumFrames}. Отклонённые кадры не будут использованы. " +
-                        "Результат может быть шумнее или содержать меньше деталей."
+                    profileContinuationMessage(pending.profile, pending.acceptedFrames,
+                        pending.totalFrames, pending.minimumFrames, pending.inputAdvice)
                 )
             },
             confirmButton = {
