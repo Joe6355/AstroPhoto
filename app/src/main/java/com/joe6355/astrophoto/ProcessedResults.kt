@@ -49,6 +49,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -250,6 +251,8 @@ internal fun isSupportedProcessedImageFile(
 }
 
 private const val LOAD_PROCESSED_THUMBNAILS = true
+private const val RESULT_PROCESSING_MESSAGE =
+    "Идёт обработка сессии. Дождитесь завершения, чтобы изменять или отправлять результаты."
 
 private class ProcessedResultsRepository(private val context: Context) {
     private val imageLoader = SafeImageLoader(context)
@@ -276,6 +279,7 @@ private class ProcessedResultsRepository(private val context: Context) {
         result: ProcessedResult
     ): Result<Boolean> = withContext(Dispatchers.IO) {
         runCatching {
+            check(!SessionProcessingCoordinator.isActive(session.folderName)) { RESULT_PROCESSING_MESSAGE }
             val deleted = if (result.contentUri != null) {
                 require(
                     mediaStoreResultBelongsToSession(
@@ -320,6 +324,7 @@ private class ProcessedResultsRepository(private val context: Context) {
         requestedName: String
     ): Result<ProcessedRenameResult> = withContext(Dispatchers.IO) {
         runCatching {
+            check(!SessionProcessingCoordinator.isActive(session.folderName)) { RESULT_PROCESSING_MESSAGE }
             val extension = processedImageExtension(result.fileName)
                 ?: error("Unsupported processed image format")
             val requestedBase = if (processedImageExtension(requestedName) != null) {
@@ -707,6 +712,16 @@ fun ProcessedResultsScreen(
     var renameInput by remember { mutableStateOf("") }
     var operationRunning by remember { mutableStateOf(false) }
     var operationStatus by remember { mutableStateOf<String?>(null) }
+    val processingStates by SessionProcessingCoordinator.states.collectAsState()
+    val processingRunning = processingStates[session.folderName]?.running == true
+    val fileActionsEnabled = !processingRunning && !operationRunning
+    fun allowFileAction(): Boolean {
+        if (SessionProcessingCoordinator.isActive(session.folderName)) {
+            operationStatus = RESULT_PROCESSING_MESSAGE
+            return false
+        }
+        return !operationRunning
+    }
     var loadError by remember(session.folderName) { mutableStateOf<String?>(null) }
     var refreshKey by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     var comparison by remember {
@@ -737,7 +752,9 @@ fun ProcessedResultsScreen(
             results = loaded.first
             firstLight = loaded.second
             comparisonSelection = emptyList()
-            pendingInitialEditorFileName?.let { requestedFileName ->
+            pendingInitialEditorFileName?.takeUnless {
+                SessionProcessingCoordinator.isActive(session.folderName)
+            }?.let { requestedFileName ->
                 editingResult = findProcessedResultForEditor(
                     loaded.first,
                     requestedFileName
@@ -779,6 +796,10 @@ fun ProcessedResultsScreen(
                 .fillMaxSize()
                 .padding(horizontal = AstroSpacing.Lg)
         ) {
+        if (processingRunning) {
+            Text(RESULT_PROCESSING_MESSAGE, modifier = Modifier.padding(top = 6.dp),
+                color = AstroColors.TextSecondary)
+        }
         operationStatus?.let {
             Text(
                 text = it,
@@ -880,18 +901,23 @@ fun ProcessedResultsScreen(
                             repository = repository,
                             compareMode = compareMode,
                             selectedForComparison = result in comparisonSelection,
-                            onEdit = { editingResult = result },
+                            fileActionsEnabled = fileActionsEnabled,
+                            onEdit = { if (allowFileAction()) editingResult = result },
                             onRename = {
-                                renameInput = result.fileName.substringBeforeLast('.')
-                                operationStatus = null
-                                pendingRename = result
+                                if (allowFileAction()) {
+                                    renameInput = result.fileName.substringBeforeLast('.')
+                                    operationStatus = null
+                                    pendingRename = result
+                                }
                             },
                             onDelete = {
-                                operationStatus = null
-                                pendingDelete = result
+                                if (allowFileAction()) {
+                                    operationStatus = null
+                                    pendingDelete = result
+                                }
                             },
                             onExport = {
-                                operationStatus = shareResult(context, result)
+                                if (allowFileAction()) operationStatus = shareResult(context, result)
                             },
                             onClick = {
                                 if (compareMode) {
@@ -921,6 +947,10 @@ fun ProcessedResultsScreen(
         ProcessedResultViewer(
             result = result,
             firstLight = firstLight,
+            fileActionsEnabled = fileActionsEnabled,
+            onShare = {
+                if (allowFileAction()) shareResult(context, result) else RESULT_PROCESSING_MESSAGE
+            },
             onCompareWithFirst = { light ->
                 selectedResult = null
                 comparison = light.toComparisonImage() to result.toComparisonImage()
@@ -970,6 +1000,7 @@ fun ProcessedResultsScreen(
             confirmButton = {
                 Button(
                     onClick = {
+                        if (!allowFileAction()) return@Button
                         operationRunning = true
                         coroutineScope.launch {
                             val renamed = repository.renameResult(
@@ -1001,7 +1032,7 @@ fun ProcessedResultsScreen(
                             )
                         }
                     },
-                    enabled = !operationRunning &&
+                    enabled = fileActionsEnabled &&
                         sanitizeManagedName(renameInput).isNotBlank()
                 ) {
                     Text(if (operationRunning) "Переименование..." else "Сохранить")
@@ -1044,6 +1075,7 @@ fun ProcessedResultsScreen(
             confirmButton = {
                 Button(
                     onClick = {
+                        if (!allowFileAction()) return@Button
                         operationRunning = true
                         coroutineScope.launch {
                             val deleted = repository.deleteResult(session, result)
@@ -1072,7 +1104,7 @@ fun ProcessedResultsScreen(
                             )
                         }
                     },
-                    enabled = !operationRunning,
+                    enabled = fileActionsEnabled,
                     colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.error,
                         contentColor = Color.White
@@ -1099,6 +1131,7 @@ private fun ProcessedResultCard(
     repository: ProcessedResultsRepository,
     compareMode: Boolean,
     selectedForComparison: Boolean,
+    fileActionsEnabled: Boolean,
     onEdit: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
@@ -1246,6 +1279,7 @@ private fun ProcessedResultCard(
                     onExport = onExport,
                     onRename = onRename,
                     onDelete = onDelete,
+                    fileActionsEnabled = fileActionsEnabled,
                     modifier = Modifier.padding(top = 8.dp)
                 )
             }
@@ -1269,7 +1303,8 @@ fun ProcessedResultActions(
     onExport: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    fileActionsEnabled: Boolean = true
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
     Row(
@@ -1288,7 +1323,7 @@ fun ProcessedResultActions(
         AstroSecondaryButton(
             text = "Пресеты",
             onClick = onEdit,
-            enabled = canEdit,
+            enabled = canEdit && fileActionsEnabled,
             modifier = Modifier
                 .weight(1f)
                 .padding(start = 8.dp)
@@ -1312,7 +1347,7 @@ fun ProcessedResultActions(
                         menuExpanded = false
                         onEdit()
                     },
-                    enabled = canEdit
+                    enabled = canEdit && fileActionsEnabled
                 )
                 DropdownMenuItem(
                     text = { Text("Экспорт / поделиться") },
@@ -1320,21 +1355,23 @@ fun ProcessedResultActions(
                         menuExpanded = false
                         onExport()
                     },
-                    enabled = canOpen
+                    enabled = canOpen && fileActionsEnabled
                 )
                 DropdownMenuItem(
                     text = { Text("Переименовать") },
                     onClick = {
                         menuExpanded = false
                         onRename()
-                    }
+                    },
+                    enabled = fileActionsEnabled
                 )
                 DropdownMenuItem(
                     text = { Text("Удалить", color = AstroColors.Error) },
                     onClick = {
                         menuExpanded = false
                         onDelete()
-                    }
+                    },
+                    enabled = fileActionsEnabled
                 )
             }
         }
@@ -1345,6 +1382,8 @@ fun ProcessedResultActions(
 private fun ProcessedResultViewer(
     result: ProcessedResult,
     firstLight: SessionFrame?,
+    fileActionsEnabled: Boolean,
+    onShare: () -> String?,
     onCompareWithFirst: (SessionFrame) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -1362,7 +1401,7 @@ private fun ProcessedResultViewer(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { actionError = openResultInGallery(context, result) },
                     modifier = Modifier.weight(1f)) { Text("В галерее") }
-                Button(onClick = { actionError = shareResult(context, result) },
+                Button(onClick = { actionError = onShare() }, enabled = fileActionsEnabled,
                     modifier = Modifier.weight(1f)) { Text("Поделиться") }
             }
             TextButton(onClick = { firstLight?.let(onCompareWithFirst) }, enabled = firstLight != null,
