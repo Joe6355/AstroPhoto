@@ -19,6 +19,7 @@ import com.joe6355.astrophoto.processing.jpeg.v2.model.SkyStatisticsResult
 import com.joe6355.astrophoto.processing.jpeg.v2.model.StarEnhancementDiagnostics
 import com.joe6355.astrophoto.processing.jpeg.v2.model.StretchDiagnostics
 import com.joe6355.astrophoto.processing.jpeg.v2.profile.ExistingPresetParameterMapper
+import com.joe6355.astrophoto.processing.jpeg.v2.quality.BackgroundQualityComparator
 import com.joe6355.astrophoto.processing.jpeg.v2.quality.FileBackedSuspiciousPointClassifier
 import com.joe6355.astrophoto.processing.jpeg.v2.quality.withExperimentalSafeFallback
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.AlphaPixelSource
@@ -399,9 +400,9 @@ class FileBackedAdaptivePresetProcessor internal constructor(
         if (pointSafe !== composite.image) store.deleteTemporary(composite.image)
         durations["foreground_composition"] = elapsed(stageStarted)
         stageStarted = System.nanoTime()
-        val protected = if (!legacyArgb && preservationBaseline != null) {
+        var protected = if (!legacyArgb && preservationBaseline != null) {
             ProcessedStarSignalPreserver().preserve(
-                pointSafe, preservationBaseline, preservationStars, store, referenceForeground
+                pointSafe, preservationBaseline, preservationStars, store, referenceForeground, effectiveSkyAlpha
             )
         } else pointSafe
         if (protected !== pointSafe) {
@@ -409,6 +410,26 @@ class FileBackedAdaptivePresetProcessor internal constructor(
             after = fileStatistics(protected)
         }
         durations["processed_star_preservation"] = elapsed(stageStarted)
+        if (!legacyArgb && profile == AstroProcessingProfile.DEEP_SKY && preservationBaseline != null) {
+            val cleanGradient = fileStatistics(preservationBaseline).largeScaleGradientStrength
+            val limit = BackgroundQualityComparator.maximumGradientResidual(cleanGradient)
+            stageStarted = System.nanoTime()
+            // Keep the actual output within the existing background gate; matching a star
+            // must not buy a smoother local sky by amplifying the broad gradient.
+            repeat(2) { attempt ->
+                if (after.largeScaleGradientStrength > limit) {
+                    val target = maxOf(cleanGradient, limit - 3f / 65535f)
+                    val blend = ((target - cleanGradient) /
+                        (after.largeScaleGradientStrength - cleanGradient)).coerceIn(0f, 1f)
+                    val guarded = blendPass(preservationBaseline, protected, effectiveSkyAlpha, blend,
+                        "background-safety-$attempt", store, memoryBudget, memoryTracker)
+                    store.deleteTemporary(protected)
+                    protected = guarded
+                    after = fileStatistics(protected)
+                }
+            }
+            durations["background_safety"] = elapsed(stageStarted)
+        }
         val processed = store.register(ResultCandidateType.PROCESSED, protected)
         return FileBackedAdaptiveProcessingResult(
             image = processed,

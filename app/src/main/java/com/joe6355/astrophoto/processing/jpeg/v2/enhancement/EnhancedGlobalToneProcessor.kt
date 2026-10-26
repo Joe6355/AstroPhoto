@@ -353,7 +353,8 @@ class EnhancedGlobalToneProcessor(
                     baseline = baseline,
                     reference = reference,
                     stars = confirmedStars,
-                    store = store
+                    store = store,
+                    effectiveSkyAlpha = if (baseline.pixelFormat == com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedPixelFormat.LINEAR_RGB_16) effectiveSkyAlpha else null
                 )
             } ?: EnhancedStarPreservationResult(starEnhanced.image, EnhancedStarPreservationMetrics.NONE)
         } catch (error: Throwable) {

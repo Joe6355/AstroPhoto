@@ -113,6 +113,10 @@ class BackgroundQualityComparator {
     ): Boolean = processed > clean * factor && processed - clean > minimumIncrease
 
     companion object {
+
+        internal fun maximumGradientResidual(clean: Float): Float =
+            maxOf(clean * HARD_GRADIENT_FACTOR, clean + GRADIENT_ALLOWANCE)
+
         private const val MIN_MEDIAN_HEADROOM = 0.001f
         private const val METRIC_TOLERANCE = 0.001f
         private const val WARNING_MEDIAN_FACTOR = 1.35f

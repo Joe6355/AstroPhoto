@@ -2,8 +2,11 @@ package com.joe6355.astrophoto.processing.jpeg.v2.enhancement
 
 import com.joe6355.astrophoto.processing.jpeg.v2.color.LinearRgb16
 import com.joe6355.astrophoto.processing.jpeg.v2.color.LinearRgbPixelSource
+import com.joe6355.astrophoto.processing.jpeg.v2.composition.BackgroundMatchedStarSource
 import com.joe6355.astrophoto.processing.jpeg.v2.model.DetectedStar
 import com.joe6355.astrophoto.processing.jpeg.v2.quality.ReferenceStarRetentionValidator
+import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedFloatPlane
+import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedFloatPlaneReader
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedImage
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedImageReader
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.ResultCandidateStore
@@ -32,7 +35,8 @@ internal class EnhancedStarSignalPreserver {
         baseline: FileBackedImage,
         reference: FileBackedImage,
         stars: List<DetectedStar>,
-        store: ResultCandidateStore
+        store: ResultCandidateStore,
+        effectiveSkyAlpha: FileBackedFloatPlane? = null
     ): EnhancedStarPreservationResult {
         require(candidate.width == baseline.width && candidate.height == baseline.height)
         require(reference.width == baseline.width && reference.height == baseline.height)
@@ -49,55 +53,62 @@ internal class EnhancedStarSignalPreserver {
                     if (protect.isEmpty()) return EnhancedStarPreservationResult(
                         candidate, EnhancedStarPreservationMetrics(retainedBefore.size, 0, 0)
                     )
-                    var weights: Map<Long, Float> = emptyMap()
-                    val protected = protect.toMutableSet()
-                    for (index in protect) {
-                        // Display quantization makes retention non-monotonic in blend amount.
-                        // Keep the first passing finish, rather than assuming a binary search.
-                        for (amount in RESTORATION_AMOUNTS) {
-                            val proposal = addPatch(weights, stars[index], candidate, amount)
-                            val image = BlendedSource(enhanced, selected, proposal)
-                            val kept = validator.validateSources(original, image, listOf(stars[index]))
-                                .sources.singleOrNull()?.retained == true
-                            if (kept || amount == 1f) {
-                                weights = proposal
-                                break
-                            }
-                        }
-                    }
-                    var blended = BlendedSource(enhanced, selected, weights)
-                    var lost = required - retained(blended)
-                    // Neighbouring measurement windows can overlap. Recheck the complete fixed
-                    // catalogue and restore their selected-stack support before publishing.
-                    repeat(3) {
-                        if (lost.isNotEmpty()) {
-                            val recoverable = lost.intersect(retainedBefore)
-                            recoverable.forEach { index -> weights = addPatch(weights, stars[index], candidate, 1f) }
-                            protected += recoverable
-                            blended = BlendedSource(enhanced, selected, weights)
-                            lost = required - retained(blended)
-                        }
-                    }
-                    val writer = store.createTemporaryWriter("enhanced-star-preserved", candidate.width, candidate.height)
+                    val alphaReader = effectiveSkyAlpha?.let { FileBackedFloatPlaneReader(it, cachedRows = 48) }
                     try {
-                        val row = LongArray(candidate.width)
-                        val rows = weights.keys.groupBy { (it / candidate.width).toInt() }
-                        for (y in 0 until candidate.height) {
-                            enhanced.readLinearRow(y, row)
-                            rows[y].orEmpty().forEach { key ->
-                                val x = (key % candidate.width).toInt()
-                                row[x] = blended.linearRgbAt(x, y)
+                        val restoreSource: LinearRgbPixelSource = if (alphaReader == null) selected else
+                            BackgroundMatchedStarSource.prepare(enhanced, selected, stars, alphaReader)
+                        var weights: Map<Long, Float> = emptyMap()
+                        val protected = protect.toMutableSet()
+                        for (index in protect) {
+                            // Display quantization makes retention non-monotonic in blend amount.
+                            // Keep the first passing finish, rather than assuming a binary search.
+                            for (amount in RESTORATION_AMOUNTS) {
+                                val proposal = addPatch(weights, stars[index], candidate, amount)
+                                val image = BlendedSource(enhanced, restoreSource, proposal)
+                                val kept = validator.validateSources(original, image, listOf(stars[index]))
+                                    .sources.singleOrNull()?.retained == true
+                                if (kept || amount == 1f) {
+                                    weights = proposal
+                                    break
+                                }
                             }
-                            writer.writeLinearRow(y, row)
                         }
-                        return EnhancedStarPreservationResult(
-                            writer.finish(),
-                            EnhancedStarPreservationMetrics(retainedBefore.size, protected.size, lost.size)
-                        )
-                    } catch (error: Throwable) {
-                        runCatching { writer.close() }
-                        runCatching { store.deleteTemporary(writer.image) }
-                        throw error
+                        var blended = BlendedSource(enhanced, restoreSource, weights)
+                        var lost = required - retained(blended)
+                        // Neighbouring measurement windows can overlap. Recheck the complete fixed
+                        // catalogue and restore their selected-stack support before publishing.
+                        repeat(3) {
+                            if (lost.isNotEmpty()) {
+                                val recoverable = lost.intersect(retainedBefore)
+                                recoverable.forEach { index -> weights = addPatch(weights, stars[index], candidate, 1f) }
+                                protected += recoverable
+                                blended = BlendedSource(enhanced, restoreSource, weights)
+                                lost = required - retained(blended)
+                            }
+                        }
+                        val writer = store.createTemporaryWriter("enhanced-star-preserved", candidate.width, candidate.height)
+                        try {
+                            val row = LongArray(candidate.width)
+                            val rows = weights.keys.groupBy { (it / candidate.width).toInt() }
+                            for (y in 0 until candidate.height) {
+                                enhanced.readLinearRow(y, row)
+                                rows[y].orEmpty().forEach { key ->
+                                    val x = (key % candidate.width).toInt()
+                                    row[x] = blended.linearRgbAt(x, y)
+                                }
+                                writer.writeLinearRow(y, row)
+                            }
+                            return EnhancedStarPreservationResult(
+                                writer.finish(),
+                                EnhancedStarPreservationMetrics(retainedBefore.size, protected.size, lost.size)
+                            )
+                        } catch (error: Throwable) {
+                            runCatching { writer.close() }
+                            runCatching { store.deleteTemporary(writer.image) }
+                            throw error
+                        }
+                    } finally {
+                        alphaReader?.close()
                     }
                 }
             }
@@ -134,7 +145,7 @@ internal class EnhancedStarSignalPreserver {
 
     private class BlendedSource(
         private val candidate: FileBackedImageReader,
-        private val baseline: FileBackedImageReader,
+        private val baseline: LinearRgbPixelSource,
         private val weights: Map<Long, Float>
     ) : LinearRgbPixelSource {
         override val width: Int get() = candidate.width
