@@ -106,6 +106,8 @@ class StorageSpaceChecker(private val context: Context) {
                 val name = cursor.getString(nameIndex).orEmpty()
                 val size = cursor.getLong(sizeIndex)
                 val path = cursor.getString(pathIndex).orEmpty()
+                // LIKE treats underscores in session names as wildcards.
+                if (!path.startsWith(pathPrefix)) continue
                 val captureDirectory = path.contains("/Lights/") ||
                     path.contains("/Darks/")
                 if (
