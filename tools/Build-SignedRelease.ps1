@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [ValidateSet('com.joe6355.astrophoto','com.example.astrophoto')]
     [string]$ApplicationId = 'com.joe6355.astrophoto'
@@ -27,6 +27,9 @@ try {
         if ($sdkLine) { $sdk = ($sdkLine -split '=',2)[1].Trim().Replace('\:',':').Replace('\\','\') }
     }
     if ([string]::IsNullOrWhiteSpace($sdk)) { throw 'Укажите Android SDK в local.properties или ANDROID_HOME.' }
+    if (-not (Test-Path -LiteralPath (Join-Path $sdk 'build-tools') -PathType Container)) {
+        throw "Android SDK не найден по пути '$sdk'. Проверьте sdk.dir в local.properties на этом ПК."
+    }
     $buildTools = Get-ChildItem -LiteralPath (Join-Path $sdk 'build-tools') -Directory |
         Where-Object { $_.Name -match '^\d+\.\d+\.\d+$' } |
         Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
