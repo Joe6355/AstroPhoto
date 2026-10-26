@@ -105,7 +105,8 @@ class SmoothSkyMaskRegressionTest {
         IntArray(width * height) { color(it % width, it / width) })
 
     private fun refine(image: ArgbPixelImage, initial: SkyMask = SkyMask.full(width, height), stars: List<DetectedStar> = emptyList()) =
-        SkyMaskRefiner().refine(initial, image, stars, 1f, false, 1f).binaryMask
+        SkyMaskRefiner(preserveSmoothSkyGradients = true)
+            .refine(initial, image, stars, 1f, false, 1f).binaryMask
 
     private fun rgb(red: Int, green: Int, blue: Int): Int =
         0xFF000000.toInt() or (red shl 16) or (green shl 8) or blue

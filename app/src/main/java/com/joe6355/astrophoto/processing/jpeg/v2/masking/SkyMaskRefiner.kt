@@ -13,7 +13,10 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 class SkyMaskRefiner(
-    private val feathering: MaskFeathering = MaskFeathering()
+    private val feathering: MaskFeathering = MaskFeathering(),
+    // The frozen ARGB pipeline keeps its original color-component contract.
+    // The RGB16 pipeline explicitly enables continuous sky gradients.
+    private val preserveSmoothSkyGradients: Boolean = false
 ) {
     fun refine(
         initialMask: SkyMask,
@@ -154,7 +157,9 @@ class SkyMaskRefiner(
                 meanBlue = blue.toFloat() / included.coerceAtLeast(1),
                 starHits = starHits[blockIndex],
                 // A partially included block can contain the horizon; do not extrapolate through it.
-                smoothColor = if (included == pixels) SmoothSkyColorModel.create(reference, left, top, right, bottom) else null
+                smoothColor = if (preserveSmoothSkyGradients && included == pixels) {
+                    SmoothSkyColorModel.create(reference, left, top, right, bottom)
+                } else null
             )
         }
         val visited = BooleanArray(blocks.size)
@@ -199,15 +204,15 @@ class SkyMaskRefiner(
         val minimumComponent = max(2, blocks.size / COLOR_COMPONENT_AREA_DIVISOR)
         val keep = BooleanArray(blocks.size)
         val primary = BooleanArray(blocks.size)
-        val primaryColor = componentMeanColor(components[best], blocks)
+        val primaryColor = if (preserveSmoothSkyGradients) componentMeanColor(components[best], blocks) else null
         components[best].forEach { primary[it] = true }
         components.forEachIndexed { componentIndex, component ->
             if (componentIndex == best ||
                 (componentStarHits[componentIndex] > 0 && component.size >= minimumComponent &&
-                    hasCompatibleSkyColor(componentMeanColor(component, blocks), primaryColor))
+                    (primaryColor == null || hasCompatibleSkyColor(componentMeanColor(component, blocks), primaryColor)))
             ) component.forEach { keep[it] = true }
         }
-        expandSmoothPrimarySky(keep, primary, blocks, columns, rows)
+        if (preserveSmoothSkyGradients) expandSmoothPrimarySky(keep, primary, blocks, columns, rows)
         completePrimarySkyUpward(keep, primary, blocks, columns, rows)
         val result = BooleanArray(initial.size) { index ->
             if (!initial[index]) return@BooleanArray false

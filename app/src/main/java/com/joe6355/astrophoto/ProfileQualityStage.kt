@@ -37,6 +37,7 @@ import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedFloatPlane
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedFloatPlaneReader
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedImage
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedImageReader
+import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedPixelFormat
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.ResultCandidateStore
 import com.joe6355.astrophoto.JpegStacker.Companion.PROFILE_REGISTRATION_TAG
 
@@ -104,7 +105,9 @@ internal fun JpegStacker.buildFileBackedReferenceAndMask(
         }
     }
     val referenceImage = ArgbPixelImage(targetWidth, targetHeight, referencePixels)
-    val initialRefinedMask = SkyMaskRefiner().refine(
+    val initialRefinedMask = SkyMaskRefiner(
+        preserveSmoothSkyGradients = reference.pixelFormat == FileBackedPixelFormat.LINEAR_RGB_16
+    ).refine(
         initialMask = initialSkyMask,
         reference = referenceImage,
         stars = fullResolutionStars,
