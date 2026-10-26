@@ -237,7 +237,7 @@ internal class ProfileIntegrationCheckpointStore private constructor(
         private const val COVERAGE_NAME = "coverage.f32"
         private const val AFFECTED_NAME = "affected.f32"
         private const val MAGIC = 0x49504350
-        private const val VERSION = 19
+        private const val VERSION = 22
         private const val MAX_MANIFEST_BYTES = 16L * 1024L * 1024L
 
         fun open(

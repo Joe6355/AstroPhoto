@@ -105,7 +105,8 @@ class SkyMaskRefiner(
         val meanRed: Float,
         val meanGreen: Float,
         val meanBlue: Float,
-        val starHits: Int
+        val starHits: Int,
+        val smoothColor: SmoothSkyColorModel?
     )
 
     private fun retainColorContinuousSky(
@@ -151,7 +152,9 @@ class SkyMaskRefiner(
                 meanRed = red.toFloat() / included.coerceAtLeast(1),
                 meanGreen = green.toFloat() / included.coerceAtLeast(1),
                 meanBlue = blue.toFloat() / included.coerceAtLeast(1),
-                starHits = starHits[blockIndex]
+                starHits = starHits[blockIndex],
+                // A partially included block can contain the horizon; do not extrapolate through it.
+                smoothColor = if (included == pixels) SmoothSkyColorModel.create(reference, left, top, right, bottom) else null
             )
         }
         val visited = BooleanArray(blocks.size)
@@ -176,7 +179,7 @@ class SkyMaskRefiner(
                     if (nextX !in 0 until columns || nextY !in 0 until rows) return
                     val next = nextY * columns + nextX
                     if (visited[next] || !blocks[next].eligible ||
-                        !hasContinuousSkyColor(blocks[index], blocks[next])
+                        !hasSimilarMeanColor(blocks[index], blocks[next])
                     ) return
                     visited[next] = true
                     queue[tail++] = next
@@ -196,12 +199,15 @@ class SkyMaskRefiner(
         val minimumComponent = max(2, blocks.size / COLOR_COMPONENT_AREA_DIVISOR)
         val keep = BooleanArray(blocks.size)
         val primary = BooleanArray(blocks.size)
+        val primaryColor = componentMeanColor(components[best], blocks)
         components[best].forEach { primary[it] = true }
         components.forEachIndexed { componentIndex, component ->
             if (componentIndex == best ||
-                (componentStarHits[componentIndex] > 0 && component.size >= minimumComponent)
+                (componentStarHits[componentIndex] > 0 && component.size >= minimumComponent &&
+                    hasCompatibleSkyColor(componentMeanColor(component, blocks), primaryColor))
             ) component.forEach { keep[it] = true }
         }
+        expandSmoothPrimarySky(keep, primary, blocks, columns, rows)
         completePrimarySkyUpward(keep, primary, blocks, columns, rows)
         val result = BooleanArray(initial.size) { index ->
             if (!initial[index]) return@BooleanArray false
@@ -245,7 +251,67 @@ class SkyMaskRefiner(
         }
     }
 
-    private fun hasContinuousSkyColor(first: ColorBlock, second: ColorBlock): Boolean {
+    private fun componentMeanColor(component: List<Int>, blocks: Array<ColorBlock>): FloatArray = floatArrayOf(
+        component.map { blocks[it].meanRed }.average().toFloat(),
+        component.map { blocks[it].meanGreen }.average().toFloat(),
+        component.map { blocks[it].meanBlue }.average().toFloat()
+    )
+
+    private fun hasCompatibleSkyColor(color: FloatArray, primary: FloatArray): Boolean {
+        // A detected point can be a window. Its separate region also needs the sky's
+        // relative color; different exposure/brightness alone must not disqualify real sky.
+        val brightness = color.sum()
+        val primaryBrightness = primary.sum()
+        if (brightness <= 0f || primaryBrightness <= 0f) return false
+        val scale = primaryBrightness / brightness
+        var squared = 0f
+        for (channel in 0..2) {
+            val difference = color[channel] * scale - primary[channel]
+            squared += difference * difference
+        }
+        return squared <= MAX_NEIGHBOR_COLOR_DISTANCE * MAX_NEIGHBOR_COLOR_DISTANCE
+    }
+
+    private fun expandSmoothPrimarySky(
+        keep: BooleanArray,
+        primary: BooleanArray,
+        blocks: Array<ColorBlock>,
+        columns: Int,
+        rows: Int
+    ) {
+        // Only grow the established primary sky. A point detected on a window must not
+        // turn a separate color island into a seed for expanding across the whole facade.
+        val queue = IntArray(blocks.size)
+        var head = 0
+        var tail = 0
+        primary.indices.forEach { if (primary[it]) queue[tail++] = it }
+        while (head < tail) {
+            val index = queue[head++]
+            val x = index % columns
+            val y = index / columns
+            fun visit(nx: Int, ny: Int) {
+                if (nx !in 0 until columns || ny !in 0 until rows) return
+                val next = ny * columns + nx
+                if (primary[next] || !blocks[next].eligible) return
+                val first = blocks[index]
+                val second = blocks[next]
+                val continuous = hasSimilarMeanColor(first, second) ||
+                    first.smoothColor?.let { model ->
+                        second.smoothColor?.let { model.continuesTo(it, nx - x, ny - y) }
+                    } == true
+                if (!continuous) return
+                primary[next] = true
+                keep[next] = true
+                queue[tail++] = next
+            }
+            visit(x - 1, y)
+            visit(x + 1, y)
+            visit(x, y - 1)
+            visit(x, y + 1)
+        }
+    }
+
+    private fun hasSimilarMeanColor(first: ColorBlock, second: ColorBlock): Boolean {
         val red = first.meanRed - second.meanRed
         val green = first.meanGreen - second.meanGreen
         val blue = first.meanBlue - second.meanBlue
