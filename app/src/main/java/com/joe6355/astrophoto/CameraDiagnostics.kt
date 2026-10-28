@@ -60,13 +60,9 @@ fun readCameraDiagnostics(context: Context): Result<CameraDiagnosticInfo> = runC
     val postRawBoostRange = characteristics.get(
         CameraCharacteristics.CONTROL_POST_RAW_SENSITIVITY_BOOST_RANGE
     )
-    val effectiveIsoRange = applyIsoOverrides(
-        range = effectiveIsoRange(
-            sensorRange = isoRange?.let { it.lower..it.upper },
-            postRawBoostRange = postRawBoostRange?.let { it.lower..it.upper }
-        ),
-        minimumIso = storedOverrides.minimumIso,
-        maximumIso = storedOverrides.maximumIso
+    val effectiveIsoRange = effectiveIsoRange(
+        sensorRange = isoRange?.let { it.lower..it.upper },
+        postRawBoostRange = postRawBoostRange?.let { it.lower..it.upper }
     )
     val physicalCameraIds = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
         characteristics.physicalCameraIds
@@ -151,7 +147,7 @@ fun readCameraDiagnostics(context: Context): Result<CameraDiagnosticInfo> = runC
                 name = "Эффективный ISO",
                 value = effectiveIsoRange?.let { "${it.first} - ${it.last}" }
                     ?: "Недоступно",
-                description = "Сенсорный ISO с учётом boost и сохранённых ограничений"
+                description = "Сенсорный ISO с учётом цифрового усиления камеры"
             ),
             DiagnosticRow(
                 name = "Выдержка",

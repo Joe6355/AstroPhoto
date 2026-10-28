@@ -901,13 +901,9 @@ class CameraPreviewView @JvmOverloads constructor(
             val cameraCapabilities = ManualCameraCapabilities(
                 cameraId = cameraId,
                 exposureRangeNs = exposureRangeSelection.effectiveRangeNs,
-                isoRange = applyIsoOverrides(
-                    range = effectiveIsoRange(
-                        sensorRange = sensorIsoRange?.let { it.lower..it.upper },
-                        postRawBoostRange = postRawBoostRange?.let { it.lower..it.upper }
-                    ),
-                    minimumIso = storedOverrides.minimumIso,
-                    maximumIso = storedOverrides.maximumIso
+                isoRange = effectiveIsoRange(
+                    sensorRange = sensorIsoRange?.let { it.lower..it.upper },
+                    postRawBoostRange = postRawBoostRange?.let { it.lower..it.upper }
                 ),
                 minimumFocusDistance = minimumFocusDistance,
                 supportsManualSensor = supportsVerifiedManualSensor(characteristics),
@@ -1267,30 +1263,8 @@ class CameraPreviewView @JvmOverloads constructor(
                 )
             )
         }
-        val isoMinimum = if (
-            requestedEffectiveIso != null &&
-            actualEffectiveIso != null &&
-            materiallyHigherThanRequested(requestedEffectiveIso, actualEffectiveIso)
-        ) {
-            actualEffectiveIso
-        } else {
-            null
-        }
-        val isoMaximum = if (
-            requestedEffectiveIso != null &&
-            actualEffectiveIso != null &&
-            materiallyLowerThanRequested(requestedEffectiveIso, actualEffectiveIso)
-        ) {
-            actualEffectiveIso
-        } else {
-            null
-        }
-
-        updateManualCapabilityLimits(
-            maximumExposureNs = exposureLimit,
-            minimumIso = isoMinimum,
-            maximumIso = isoMaximum
-        )
+        // Report an ISO mismatch above without promoting it to a permanent range restriction.
+        updateManualCapabilityLimits(maximumExposureNs = exposureLimit)
     }
 
     private fun handleManualCaptureFailure(request: CaptureRequest) {
@@ -1310,31 +1284,17 @@ class CameraPreviewView @JvmOverloads constructor(
     }
 
     private fun updateManualCapabilityLimits(
-        maximumExposureNs: Long? = null,
-        minimumIso: Int? = null,
-        maximumIso: Int? = null
+        maximumExposureNs: Long? = null
     ) {
         val current = manualCapabilities ?: return
-        if (maximumExposureNs == null && minimumIso == null && maximumIso == null) return
+        if (maximumExposureNs == null) return
         maximumExposureNs?.let {
             manualCapabilityStore.limitMaximumExposure(current.cameraId, it)
-        }
-        if (minimumIso != null || maximumIso != null) {
-            manualCapabilityStore.limitIsoRange(
-                cameraId = current.cameraId,
-                minimumIso = minimumIso,
-                maximumIso = maximumIso
-            )
         }
         val stored = manualCapabilityStore.load(current.cameraId)
         val updatedExposureRange = applyExposureMaximumOverride(
             current.exposureRangeNs,
             stored.maximumExposureNs
-        )
-        val updatedIsoRange = applyIsoOverrides(
-            current.isoRange,
-            stored.minimumIso,
-            stored.maximumIso
         )
         val stillUsesExtendedExposure = current.usesExtendedExposure &&
             updatedExposureRange?.last?.let { maximum ->
@@ -1342,7 +1302,6 @@ class CameraPreviewView @JvmOverloads constructor(
             } == true
         val updated = current.copy(
             exposureRangeNs = updatedExposureRange,
-            isoRange = updatedIsoRange,
             usesExtendedExposure = stillUsesExtendedExposure
         )
         if (updated == current) return
@@ -1350,10 +1309,7 @@ class CameraPreviewView @JvmOverloads constructor(
         manualParameters = manualParameters.copy(
             exposureTimeNs = updatedExposureRange?.let {
                 manualParameters.exposureTimeNs.coerceIn(it.first, it.last)
-            } ?: manualParameters.exposureTimeNs,
-            iso = updatedIsoRange?.let {
-                manualParameters.iso.coerceIn(it.first, it.last)
-            } ?: manualParameters.iso
+            } ?: manualParameters.exposureTimeNs
         )
         reportStatus("manual camera limits adjusted from capture result")
         mainHandler.post { onCapabilitiesAvailable(updated) }

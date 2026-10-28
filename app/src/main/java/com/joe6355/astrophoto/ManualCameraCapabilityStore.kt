@@ -5,9 +5,7 @@ import android.os.Build
 import androidx.core.content.edit
 
 internal data class ManualCapabilityOverrides(
-    val maximumExposureNs: Long? = null,
-    val minimumIso: Int? = null,
-    val maximumIso: Int? = null
+    val maximumExposureNs: Long? = null
 )
 
 internal class ManualCameraCapabilityStore(context: Context) {
@@ -18,12 +16,10 @@ internal class ManualCameraCapabilityStore(context: Context) {
 
     fun load(cameraId: String): ManualCapabilityOverrides {
         val prefix = keyPrefix(cameraId)
+        // A capture's reported ISO is an observation, not proof of a global hardware limit.
+        // Leave legacy *_iso_min/max preferences intact, but never use them to hide ISO values.
         return ManualCapabilityOverrides(
             maximumExposureNs = preferences.getLong("${prefix}_exposure_max", 0L)
-                .takeIf { it > 0L },
-            minimumIso = preferences.getInt("${prefix}_iso_min", 0)
-                .takeIf { it > 0 },
-            maximumIso = preferences.getInt("${prefix}_iso_max", 0)
                 .takeIf { it > 0 }
         )
     }
@@ -34,22 +30,6 @@ internal class ManualCameraCapabilityStore(context: Context) {
         val current = preferences.getLong(key, 0L)
         if (current == 0L || maximumExposureNs < current) {
             preferences.edit { putLong(key, maximumExposureNs) }
-        }
-    }
-
-    fun limitIsoRange(cameraId: String, minimumIso: Int? = null, maximumIso: Int? = null) {
-        val prefix = keyPrefix(cameraId)
-        preferences.edit {
-            minimumIso?.takeIf { it > 0 }?.let { value ->
-                val key = "${prefix}_iso_min"
-                val current = preferences.getInt(key, 0)
-                if (current == 0 || value > current) putInt(key, value)
-            }
-            maximumIso?.takeIf { it > 0 }?.let { value ->
-                val key = "${prefix}_iso_max"
-                val current = preferences.getInt(key, 0)
-                if (current == 0 || value < current) putInt(key, value)
-            }
         }
     }
 
