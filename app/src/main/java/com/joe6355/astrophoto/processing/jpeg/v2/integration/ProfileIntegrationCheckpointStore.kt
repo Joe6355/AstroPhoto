@@ -16,6 +16,7 @@ import com.joe6355.astrophoto.processing.jpeg.v2.storage.CheckpointFiles
 import com.joe6355.astrophoto.processing.jpeg.v2.model.AdaptiveProcessingDiagnostics
 import com.joe6355.astrophoto.processing.jpeg.v2.postprocessing.FileBackedAdaptiveProcessingResult
 import java.io.File
+import java.io.IOException
 import java.io.Serializable
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -45,8 +46,14 @@ internal class ProfileIntegrationCheckpointStore private constructor(
     private val directory: File,
     private val fingerprint: String
 ) {
-    fun readInto(temporaryFiles: TemporaryPipelineFiles): ProfileIntegrationRun? {
+    fun readInto(
+        temporaryFiles: TemporaryPipelineFiles,
+        copyFile: (File, File, Long) -> Unit = { source, target, _ ->
+            Files.copy(source.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
+    ): ProfileIntegrationRun? {
         val restoredFiles = mutableListOf<File>()
+        var restorationStarted = false
         return try {
             val manifestFile = File(directory, MANIFEST_NAME)
             require(manifestFile.isFile && manifestFile.length() in 1..MAX_MANIFEST_BYTES)
@@ -59,7 +66,8 @@ internal class ProfileIntegrationCheckpointStore private constructor(
                 CheckpointFiles.verify(source, expectedBytes, manifest.hashes.getValue(name))
                 val target = temporaryFiles.file(targetName)
                 restoredFiles += target
-                Files.copy(source.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                restorationStarted = true
+                copyFile(source, target, expectedBytes)
                 CheckpointFiles.verify(target, expectedBytes, manifest.hashes.getValue(name))
                 return target
             }
@@ -99,8 +107,11 @@ internal class ProfileIntegrationCheckpointStore private constructor(
                 sensorDefectFiltering = manifest.sensorDefectFiltering,
                 totalDurationMillis = manifest.totalDurationMillis
             )
-        } catch (_: Exception) {
+        } catch (error: Exception) {
             restoredFiles.forEach(File::delete)
+            // ENOSPC or another destination I/O failure does not invalidate the
+            // verified source checkpoint. Keep it for a retry after storage recovers.
+            if (restorationStarted && error is IOException) throw restoreFailure(error)
             clear()
             null
         }
@@ -158,28 +169,44 @@ internal class ProfileIntegrationCheckpointStore private constructor(
         if (root.listFiles().orEmpty().isEmpty()) root.delete()
     }
 
-    fun readPostProcessing(inputSignature: String, temporaryFiles: TemporaryPipelineFiles): FileBackedAdaptiveProcessingResult? {
+    fun readPostProcessing(
+        inputSignature: String,
+        temporaryFiles: TemporaryPipelineFiles,
+        copyFile: (File, File, Long) -> Unit = { source, target, bytes ->
+            CheckpointFiles.copyAtomic(source, target, bytes)
+        }
+    ): FileBackedAdaptiveProcessingResult? {
         val metadata = File(directory, "postprocessing.bin")
         if (!metadata.exists()) return null
         val target = temporaryFiles.file("checkpoint-postprocessed.argb")
+        var restorationStarted = false
         return try {
             val saved = CheckpointFiles.readObject(metadata) as PostProcessingCheckpoint
             require(saved.inputSignature == inputSignature && saved.fingerprint == fingerprint)
             val source = File(directory, "postprocessed.argb")
             CheckpointFiles.verify(source, saved.expectedBytes, saved.hash)
-            CheckpointFiles.copyAtomic(source, target, saved.expectedBytes)
+            restorationStarted = true
+            copyFile(source, target, saved.expectedBytes)
             CheckpointFiles.verify(target, saved.expectedBytes, saved.hash)
             FileBackedAdaptiveProcessingResult(
                 FileBackedImage(target, saved.width, saved.height,
                     pixelFormat = FileBackedPixelFormat.valueOf(saved.pixelFormat), rowStrideBytes = saved.rowStrideBytes).validate(),
                 saved.diagnostics
             )
-        } catch (_: Exception) {
+        } catch (error: Exception) {
             target.delete()
+            if (restorationStarted) File(target.parentFile, "${target.name}.tmp").delete()
+            if (restorationStarted && error is IOException) throw restoreFailure(error)
             clear()
             null
         }
     }
+
+    private fun restoreFailure(cause: IOException) = IOException(
+        "Не удалось восстановить обработку. Прогресс сохранён. " +
+            "Проверьте свободное место и доступность хранилища, затем повторите.",
+        cause
+    )
 
     @SuppressLint("UsableSpace") // Same conservative optional-cache policy as write().
     fun writePostProcessing(inputSignature: String, result: FileBackedAdaptiveProcessingResult) {

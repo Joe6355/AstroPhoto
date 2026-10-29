@@ -19,6 +19,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import com.joe6355.astrophoto.processing.jpeg.v2.model.*
 import com.joe6355.astrophoto.processing.jpeg.v2.postprocessing.FileBackedAdaptiveProcessingResult
 import org.junit.Rule
@@ -168,6 +169,101 @@ class ProfileIntegrationCheckpointStoreTest {
                     assertNull(store.readPostProcessing(if (scenario == "signature") "changed" else "inputs", restored))
                     assertFalse(checkNotNull(pixels.parentFile).exists())
                     assertFalse(restored.file("checkpoint-postprocessed.argb").exists())
+                }
+            }
+        }
+    }
+
+    @Test fun destinationCopyFailureKeepsValidIntegrationCheckpointForRetry() {
+        val targets = listOf("checkpoint-integrated-sky.argb", "checkpoint-valid-coverage.f32",
+            "checkpoint-sensor-defect-affected.f32")
+        targets.forEachIndexed { index, targetName ->
+            TemporaryPipelineFiles.create(temporaryFolder.newFolder("io-source-$index")).use { source ->
+                val store = openStore()
+                val affected = source.file("affected.f32").apply { writeBytes(ByteArray(16) { 37 }) }
+                val run = integrationRun(source, ByteArray(16) { 11 }, ByteArray(16) { 23 }).copy(
+                    sensorDefectAffectedOutput = FileBackedFloatPlane(affected, 2, 2))
+                store.write(run)
+                val checkpoint = temporaryFolder.root.walkTopDown().first { it.name == "manifest.bin" }.parentFile!!
+                val before = checkpointBytes(checkpoint)
+                TemporaryPipelineFiles.create(temporaryFolder.newFolder("io-target-$index")).use { restored ->
+                    // A real destination I/O failure, without consuming free storage or changing permissions.
+                    val blocked = restored.file(targetName).apply { check(mkdir()) }
+                    val sentinel = java.io.File(blocked,"keep.txt").apply { writeText("owned test blocker") }
+                    val failure = assertThrows(java.io.IOException::class.java) { store.readInto(restored) }
+                    assertTrue(failure.message!!.contains("Прогресс сохранён"))
+                    assertEquals(before,checkpointBytes(checkpoint))
+                    targets.filterNot { it == targetName }.forEach { name ->
+                        assertFalse(restored.file(name).exists())
+                    }
+                    assertTrue(sentinel.isFile)
+                    assertTrue(sentinel.delete())
+                    assertTrue(blocked.delete())
+                    val retry = requireNotNull(store.readInto(restored))
+                    assertArrayEquals(run.stackedSky.file.readBytes(),retry.stackedSky.file.readBytes())
+                    assertArrayEquals(run.validCoverage.file.readBytes(),retry.validCoverage.file.readBytes())
+                    assertArrayEquals(affected.readBytes(),retry.sensorDefectAffectedOutput!!.file.readBytes())
+                }
+            }
+        }
+    }
+
+    @Test fun destinationCopyFailureKeepsPostProcessingAndIntegrationForRetry() {
+        TemporaryPipelineFiles.create(temporaryFolder.newFolder("post-io-source")).use { source ->
+            val store = openStore()
+            val run = integrationRun(source,ByteArray(16) { 11 },ByteArray(16) { 23 })
+            store.write(run)
+            store.writePostProcessing("inputs",postProcessed(run.stackedSky))
+            val checkpoint = temporaryFolder.root.walkTopDown().first { it.name == "manifest.bin" }.parentFile!!
+            val before = checkpointBytes(checkpoint)
+            TemporaryPipelineFiles.create(temporaryFolder.newFolder("post-io-target")).use { restored ->
+                val blocked = restored.file("checkpoint-postprocessed.argb").apply { check(mkdir()) }
+                val sentinel = java.io.File(blocked,"keep.txt").apply { writeText("owned test blocker") }
+                val failure = assertThrows(java.io.IOException::class.java) {
+                    store.readPostProcessing("inputs",restored)
+                }
+                assertTrue(failure.message!!.contains("Прогресс сохранён"))
+                assertEquals(before,checkpointBytes(checkpoint))
+                assertFalse(restored.file("checkpoint-postprocessed.argb.tmp").exists())
+                assertTrue(sentinel.isFile)
+                assertTrue(sentinel.delete())
+                assertTrue(blocked.delete())
+                val retry = requireNotNull(store.readPostProcessing("inputs",restored))
+                assertArrayEquals(run.stackedSky.file.readBytes(),retry.image.file.readBytes())
+                assertArrayEquals(run.stackedSky.file.readBytes(),store.readInto(restored)!!.stackedSky.file.readBytes())
+            }
+        }
+    }
+
+    private fun checkpointBytes(directory: java.io.File): Map<String,List<Byte>> =
+        directory.walkTopDown().filter { it.isFile }.associate {
+            it.relativeTo(directory).path to it.readBytes().toList()
+        }
+
+    @Test fun noSpaceAfterPartialCopyPreservesBothCheckpointsAndAllowsRetry() {
+        listOf(false,true).forEach { postProcessing ->
+            TemporaryPipelineFiles.create(temporaryFolder.newFolder("space-source-$postProcessing")).use { source ->
+                val store = openStore()
+                val run = integrationRun(source,ByteArray(16) { 11 },ByteArray(16) { 23 })
+                store.write(run)
+                store.writePostProcessing("inputs",postProcessed(run.stackedSky))
+                val checkpoint = temporaryFolder.root.walkTopDown().first { it.name == "manifest.bin" }.parentFile!!
+                val before = checkpointBytes(checkpoint)
+                TemporaryPipelineFiles.create(temporaryFolder.newFolder("space-target-$postProcessing")).use { restored ->
+                    val noSpaceCopy: (java.io.File,java.io.File,Long) -> Unit = { input,output,_ ->
+                        output.writeBytes(input.readBytes().copyOf(3))
+                        throw java.io.IOException("write failed: ENOSPC (No space left on device)")
+                    }
+                    val failure = assertThrows(java.io.IOException::class.java) {
+                        if (postProcessing) store.readPostProcessing("inputs",restored,noSpaceCopy)
+                        else store.readInto(restored,noSpaceCopy)
+                    }
+                    assertTrue(failure.cause!!.message!!.contains("ENOSPC"))
+                    assertEquals(before,checkpointBytes(checkpoint))
+                    assertFalse(restored.directory.listFiles()!!.any { it.name.startsWith("checkpoint-") })
+                    assertArrayEquals(run.stackedSky.file.readBytes(),store.readInto(restored)!!.stackedSky.file.readBytes())
+                    assertArrayEquals(run.stackedSky.file.readBytes(),
+                        store.readPostProcessing("inputs",restored)!!.image.file.readBytes())
                 }
             }
         }
