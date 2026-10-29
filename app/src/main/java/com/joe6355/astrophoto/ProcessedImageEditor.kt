@@ -2,14 +2,9 @@ package com.joe6355.astrophoto
 
 import androidx.activity.compose.BackHandler
 
-import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.net.Uri
-import android.os.Build
-import android.os.Environment
-import android.provider.MediaStore
 import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -55,17 +50,16 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import com.joe6355.astrophoto.processing.jpeg.v2.output.LosslessProcessedImageWriter
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
-import java.io.FileOutputStream
 import java.io.InputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.math.pow
 import kotlin.math.roundToInt
 import com.joe6355.astrophoto.ui.AstroExpandableSection
 import com.joe6355.astrophoto.ui.AstroSegmentedControl
@@ -89,7 +83,7 @@ data class CropSettings(
     val bottomPercent: Float = 0f
 )
 
-private data class CropPixels(
+internal data class CropPixels(
     val left: Int,
     val right: Int,
     val top: Int,
@@ -164,11 +158,17 @@ internal fun isSupportedEditorImage(fileName: String): Boolean =
 data class EditedImageSaveResult(
     val fileName: String,
     val displayPath: String,
-    val usedPreviewFallback: Boolean,
+    val width: Int,
+    val height: Int,
     val sessionInfoUpdated: Boolean
 )
 
-class ProcessedImageEditor(private val context: Context) {
+class ProcessedImageEditor internal constructor(
+    private val context: Context,
+    private val exportSourceFactory: EditorExportSourceFactory?
+) {
+    constructor(context: Context) : this(context, null)
+
     private val sourceResolver = ProcessedImageSourceResolver(context)
 
     suspend fun loadPreview(
@@ -351,78 +351,33 @@ class ProcessedImageEditor(private val context: Context) {
         session: SessionSummary,
         source: ProcessedResult,
         adjustments: ImageAdjustments,
-        crop: CropSettings,
-        preview: Bitmap,
-        resultMetrics: EditorImageMetrics?
+        crop: CropSettings
     ): Result<EditedImageSaveResult> = withContext(Dispatchers.IO) {
-        runCatching {
-            require(isSupportedEditorImage(source.fileName)) {
-                "Редактор поддерживает JPEG и PNG"
-            }
-
-            var usedPreviewFallback = false
-            var fullBitmap: Bitmap? = null
-            val editedAndCrop = try {
-                val full = decodeFullMutable(source)
-                    ?: error("Не удалось прочитать изображение")
-                fullBitmap = full
-                applyInPlace(full, adjustments)
-                val cropPixels = cropPixels(full.width, full.height, crop)
-                val cropped = applyCrop(full, crop)
-                if (cropped !== full) {
-                    full.recycle()
-                    fullBitmap = null
-                }
-                cropped to cropPixels
-            } catch (_: OutOfMemoryError) {
-                fullBitmap?.takeUnless(Bitmap::isRecycled)?.recycle()
-                fullBitmap = null
-                usedPreviewFallback = true
-                val fallback = preview.copy(Bitmap.Config.ARGB_8888, true)
-                    ?: error("Недостаточно памяти для обработки изображения")
-                applyInPlace(fallback, adjustments)
-                val cropPixels = cropPixels(
-                    fallback.width,
-                    fallback.height,
-                    crop
-                )
-                val cropped = applyCrop(fallback, crop)
-                if (cropped !== fallback) fallback.recycle()
-                cropped to cropPixels
-            } catch (error: Throwable) {
-                fullBitmap?.takeUnless(Bitmap::isRecycled)?.recycle()
-                fullBitmap = null
-                throw error
-            }
-            val edited = editedAndCrop.first
-            val appliedCrop = editedAndCrop.second
-
-            try {
+        val result = runCatching {
+            require(isSupportedEditorImage(source.fileName)) { "Редактор поддерживает JPEG и PNG" }
+            val export = exportSourceFactory?.open(source, adjustments, crop)
+                ?: RegionEditorExportSource.open({ openSource(source) }, adjustments, crop)
+            export.use { pixels ->
                 val now = System.currentTimeMillis()
-                val fileName = "Edited_${
+                val requestedName = "Edited_${
                     SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(now))
                 }.png"
-                val path = saveBitmap(session, edited, fileName)
+                val saved = LosslessProcessedImageWriter(context).write(session, pixels, requestedName)
+                val metrics = pixels.metrics()
                 val infoUpdated = runCatching {
-                    appendSessionInfo(
-                        session = session,
-                        sourceFile = source.fileName,
-                        editedFile = fileName,
-                        adjustments = adjustments,
-                        crop = appliedCrop,
-                        resultMetrics = resultMetrics ?: calculateMetrics(edited),
-                        editedAtMillis = now
-                    )
+                    appendSessionInfo(session, source.fileName, saved.fileName, adjustments,
+                        pixels.crop, metrics, now)
                 }.isSuccess
-                EditedImageSaveResult(
-                    fileName = fileName,
-                    displayPath = path,
-                    usedPreviewFallback = usedPreviewFallback,
-                    sessionInfoUpdated = infoUpdated
-                )
-            } finally {
-                edited.recycle()
+                EditedImageSaveResult(saved.fileName, saved.displayPath, pixels.width, pixels.height, infoUpdated)
             }
+        }
+        when (val failure = result.exceptionOrNull()) {
+            is CancellationException -> throw failure
+            is OutOfMemoryError -> Result.failure(IllegalStateException(
+                "Недостаточно памяти для сохранения в полном размере. Закройте другие приложения и повторите.",
+                failure
+            ))
+            else -> result
         }
     }
 
@@ -462,17 +417,6 @@ class ProcessedImageEditor(private val context: Context) {
         }
     }
 
-    private fun decodeFullMutable(source: ProcessedResult): Bitmap? =
-        openSource(source)?.use {
-            BitmapFactory.decodeStream(
-                it,
-                null,
-                BitmapFactory.Options().apply {
-                    inPreferredConfig = Bitmap.Config.ARGB_8888
-                    inMutable = true
-                }
-            )
-        }
 
     private fun openSource(source: ProcessedResult): InputStream? =
         sourceResolver.openInputStream(source.imageSource())
@@ -482,58 +426,16 @@ class ProcessedImageEditor(private val context: Context) {
         val width = bitmap.width
         val rowCount = 32
         val pixels = IntArray(width * rowCount)
-        val black = settings.blackPoint.coerceIn(0f, 100f)
-        val white = settings.whitePoint.coerceIn(155f, 255f)
-            .coerceAtLeast(black + 1f)
-        val gamma = settings.gamma.coerceIn(0.5f, 2.5f)
-        val contrastFactor = 1f + settings.contrast.coerceIn(-100f, 100f) / 100f
-        val saturationFactor = settings.saturation.coerceIn(0f, 200f) / 100f
+        val color = EditorColorTransform(settings)
         var top = 0
-
         while (top < bitmap.height) {
             val rows = minOf(rowCount, bitmap.height - top)
             val count = width * rows
             bitmap.getPixels(pixels, 0, width, 0, top, width, rows)
-            for (index in 0 until count) {
-                val color = pixels[index]
-                var red = adjustChannel(
-                    color ushr 16 and 0xFF,
-                    black,
-                    white,
-                    gamma,
-                    settings.brightness,
-                    contrastFactor
-                )
-                var green = adjustChannel(
-                    color ushr 8 and 0xFF,
-                    black,
-                    white,
-                    gamma,
-                    settings.brightness,
-                    contrastFactor
-                )
-                var blue = adjustChannel(
-                    color and 0xFF,
-                    black,
-                    white,
-                    gamma,
-                    settings.brightness,
-                    contrastFactor
-                )
-                val gray = red * 0.299f + green * 0.587f + blue * 0.114f
-                red = (gray + (red - gray) * saturationFactor)
-                    .toInt().coerceIn(0, 255)
-                green = (gray + (green - gray) * saturationFactor)
-                    .toInt().coerceIn(0, 255)
-                blue = (gray + (blue - gray) * saturationFactor)
-                    .toInt().coerceIn(0, 255)
-                pixels[index] =
-                    0xFF000000.toInt() or (red shl 16) or (green shl 8) or blue
-            }
+            for (index in 0 until count) pixels[index] = color.apply(pixels[index])
             bitmap.setPixels(pixels, 0, width, 0, top, width, rows)
             top += rows
         }
-
         val sharpness = settings.sharpness.coerceIn(0f, 100f)
         if (sharpness > 0f && bitmap.width > 1 && bitmap.height > 1) {
             applySharpnessInPlace(bitmap, sharpness)
@@ -582,7 +484,7 @@ class ProcessedImageEditor(private val context: Context) {
     }
 
     private fun applyCrop(bitmap: Bitmap, crop: CropSettings): Bitmap {
-        val pixels = cropPixels(bitmap.width, bitmap.height, crop)
+        val pixels = editorCropPixels(bitmap.width, bitmap.height, crop)
         if (
             pixels.left == 0 &&
             pixels.right == 0 &&
@@ -600,33 +502,6 @@ class ProcessedImageEditor(private val context: Context) {
         )
     }
 
-    private fun cropPixels(
-        width: Int,
-        height: Int,
-        crop: CropSettings
-    ): CropPixels {
-        val left = (width * crop.leftPercent.coerceIn(0f, 30f) / 100f)
-            .roundToInt()
-        val right = (width * crop.rightPercent.coerceIn(0f, 30f) / 100f)
-            .roundToInt()
-        val top = (height * crop.topPercent.coerceIn(0f, 30f) / 100f)
-            .roundToInt()
-        val bottom = (height * crop.bottomPercent.coerceIn(0f, 30f) / 100f)
-            .roundToInt()
-        val finalWidth = width - left - right
-        val finalHeight = height - top - bottom
-        require(finalWidth >= MIN_CROP_SIZE && finalHeight >= MIN_CROP_SIZE) {
-            "Обрезка даёт слишком маленькое изображение"
-        }
-        return CropPixels(
-            left = left,
-            right = right,
-            top = top,
-            bottom = bottom,
-            finalWidth = finalWidth,
-            finalHeight = finalHeight
-        )
-    }
 
     private fun detectAutoCrop(bitmap: Bitmap): AutoCropResult {
         val width = bitmap.width
@@ -708,20 +583,6 @@ class ProcessedImageEditor(private val context: Context) {
         }
     }
 
-    private fun adjustChannel(
-        value: Int,
-        black: Float,
-        white: Float,
-        gamma: Float,
-        brightness: Float,
-        contrastFactor: Float
-    ): Int {
-        val normalized = ((value - black) / (white - black)).coerceIn(0f, 1f)
-        var corrected = normalized.toDouble().pow(1.0 / gamma).toFloat()
-        corrected += brightness.coerceIn(-100f, 100f) / 255f
-        corrected = (corrected - 0.5f) * contrastFactor + 0.5f
-        return (corrected.coerceIn(0f, 1f) * 255f).toInt().coerceIn(0, 255)
-    }
 
     private fun percentile(
         histogram: IntArray,
@@ -775,67 +636,6 @@ class ProcessedImageEditor(private val context: Context) {
         )
     }
 
-    private fun saveBitmap(
-        session: SessionSummary,
-        bitmap: Bitmap,
-        fileName: String
-    ): String {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val resolver = context.contentResolver
-            val destination = processedImageDestination(
-                session.folderName,
-                mimeType = "image/png"
-            )
-            val relativePath = destination.relativePath
-            val uri = resolver.insert(
-                processedImagesCollection(destination.collection),
-                ContentValues().apply {
-                    put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
-                    put(MediaStore.Images.Media.MIME_TYPE, destination.mimeType)
-                    put(MediaStore.Images.Media.RELATIVE_PATH, relativePath)
-                    put(MediaStore.Images.Media.IS_PENDING, 1)
-                }
-            ) ?: error("Не удалось сохранить результат")
-            try {
-                resolver.openOutputStream(uri, "w")?.use {
-                    if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) {
-                        error("Не удалось сохранить результат")
-                    }
-                } ?: error("Не удалось сохранить результат")
-                resolver.update(
-                    uri,
-                    ContentValues().apply {
-                        put(MediaStore.Images.Media.IS_PENDING, 0)
-                    },
-                    null,
-                    null
-                )
-                return "Pictures/AstroPhoto/${session.folderName}/Processed/$fileName"
-            } catch (error: Exception) {
-                resolver.delete(uri, null, null)
-                throw error
-            }
-        }
-
-        @Suppress("DEPRECATION")
-        val pictures = Environment.getExternalStoragePublicDirectory(
-            Environment.DIRECTORY_PICTURES
-        )
-        val directory = File(
-            pictures,
-            "AstroPhoto/${session.folderName}/Processed"
-        )
-        if (!directory.exists() && !directory.mkdirs()) {
-            error("Не удалось создать папку Processed")
-        }
-        val file = File(directory, fileName)
-        FileOutputStream(file).use {
-            if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) {
-                error("Не удалось сохранить результат")
-            }
-        }
-        return file.absolutePath
-    }
 
     private fun appendSessionInfo(
         session: SessionSummary,
@@ -1334,7 +1134,7 @@ fun ProcessedImageEditorScreen(
         }
         Button(
             onClick = {
-                val fallback = original ?: return@Button
+                if (original == null) return@Button
                 saving = true
                 status = "Сохранение..."
                 coroutineScope.launch {
@@ -1342,9 +1142,7 @@ fun ProcessedImageEditorScreen(
                         session = session,
                         source = source,
                         adjustments = adjustments,
-                        crop = crop,
-                        preview = fallback,
-                        resultMetrics = processedMetrics
+                        crop = crop
                     )
                     saving = false
                     status = result.fold(
@@ -1352,14 +1150,9 @@ fun ProcessedImageEditorScreen(
                             onSaved()
                             buildString {
                                 append("Сохранено: ${it.fileName}")
-                                if (it.usedPreviewFallback) {
-                                    append(
-                                        "\nНе хватило памяти для оригинала; " +
-                                            "сохранена preview-версия."
-                                    )
-                                }
+                                append("\nРазмер: ${it.width}×${it.height}")
                                 if (!it.sessionInfoUpdated) {
-                                    append("\nsession_info.txt обновить не удалось.")
+                                    append("\nНе удалось обновить сведения сессии.")
                                 }
                             }
                         },
