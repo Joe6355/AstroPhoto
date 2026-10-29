@@ -8,7 +8,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -16,12 +15,14 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
+import java.io.OutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import com.joe6355.astrophoto.processing.jpeg.v2.diagnostics.AppSpecificProcessingReportStore
+import com.joe6355.astrophoto.processing.jpeg.v2.output.CountingOutputStream
 
 data class SessionZipExportResult(
     val fileName: String,
@@ -40,7 +41,11 @@ data class SessionZipProgress(
     val total: Int
 )
 
-class SessionZipExporter(private val context: Context) {
+class SessionZipExporter internal constructor(
+    private val context: Context,
+    private val wrapOutput: (OutputStream) -> OutputStream
+) {
+    constructor(context: Context) : this(context, { it })
     suspend fun export(
         session: SessionSummary,
         onProgress: suspend (SessionZipProgress) -> Unit = {}
@@ -97,7 +102,7 @@ class SessionZipExporter(private val context: Context) {
                 appendExportSessionInfo(session, result)
             }.isSuccess
             result.copy(sessionInfoUpdated = infoUpdated)
-        }
+        }.recoverCatching { throw zipPublicationFailure(it) }
     }
 
     private suspend fun exportWithMediaStore(
@@ -122,34 +127,38 @@ class SessionZipExporter(private val context: Context) {
             }
         ) ?: error("Не удалось создать ZIP в MediaStore")
 
-        val writeResult = try {
-            resolver.openOutputStream(zipUri, "w")?.buffered(BUFFER_SIZE)?.use { output ->
-                ZipOutputStream(output).use { zip ->
-                    writeEntries(zip, rootName, sources, readme, onProgress)
+        var encodedBytes = 0L
+        val writeResult = publishSessionZip(
+            write = {
+                val raw = resolver.openOutputStream(zipUri, "w")
+                    ?: error("Не удалось открыть ZIP для записи")
+                raw.use {
+                    val counted = CountingOutputStream(raw)
+                    val written = ZipOutputStream(wrapOutput(counted).buffered(BUFFER_SIZE)).use { zip ->
+                        writeEntries(zip, rootName, sources, readme, onProgress)
+                    }
+                    encodedBytes = counted.bytesWritten
+                    check(encodedBytes > 0L) { "ZIP пуст после записи" }
+                    written
                 }
-            } ?: error("Не удалось открыть ZIP для записи")
-        } catch (exception: Exception) {
-            resolver.delete(zipUri, null, null)
-            throw exception
-        }
-
-        resolver.update(
-            zipUri,
-            ContentValues().apply {
-                put(MediaStore.Files.FileColumns.IS_PENDING, 0)
             },
-            null,
-            null
+            publish = {
+                currentCoroutineContext().ensureActive()
+                check(resolver.update(
+                    zipUri,
+                    ContentValues().apply { put(MediaStore.Files.FileColumns.IS_PENDING, 0) },
+                    null,
+                    null
+                ) == 1) { "Не удалось опубликовать ZIP" }
+            },
+            discard = { resolver.delete(zipUri, null, null) }
         )
-        val size = resolver.query(
-            zipUri,
-            arrayOf(MediaStore.Files.FileColumns.SIZE),
-            null,
-            null,
-            null
-        )?.use { cursor ->
-            if (cursor.moveToFirst()) cursor.getLong(0).coerceAtLeast(0L) else 0L
-        } ?: 0L
+        // The archive is already committed. A metadata query failure must not turn
+        // that successful export into an error; the stream counted its real bytes.
+        val size = runCatching {
+            resolver.query(zipUri, arrayOf(MediaStore.Files.FileColumns.SIZE), null, null, null)
+                ?.use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else 0L }
+        }.getOrNull()?.takeIf { it > 0L } ?: encodedBytes
 
         return SessionZipExportResult(
             fileName = fileName,
@@ -179,22 +188,23 @@ class SessionZipExporter(private val context: Context) {
             error("Не удалось создать папку экспорта")
         }
         val zipFile = uniqueFile(exportDirectory, requestedFileName)
-        val writeResult = try {
-            ZipOutputStream(
-                FileOutputStream(zipFile).buffered(BUFFER_SIZE)
-            ).use { zip ->
-                writeEntries(zip, rootName, sources, readme, onProgress)
+        val writeResult = publishSessionZip(
+            write = {
+                FileOutputStream(zipFile).use { raw ->
+                    ZipOutputStream(wrapOutput(raw).buffered(BUFFER_SIZE)).use { zip ->
+                        writeEntries(zip, rootName, sources, readme, onProgress)
+                    }
+                }
+            },
+            publish = {
+                currentCoroutineContext().ensureActive()
+                MediaScannerConnection.scanFile(
+                    context, arrayOf(zipFile.absolutePath), arrayOf("application/zip"), null
+                )
+            },
+            discard = {
+                check(!zipFile.exists() || zipFile.delete()) { "Не удалось удалить незавершённый ZIP" }
             }
-        } catch (exception: Exception) {
-            zipFile.delete()
-            throw exception
-        }
-
-        MediaScannerConnection.scanFile(
-            context,
-            arrayOf(zipFile.absolutePath),
-            arrayOf("application/zip"),
-            null
         )
         return SessionZipExportResult(
             fileName = zipFile.name,
@@ -241,36 +251,10 @@ class SessionZipExporter(private val context: Context) {
                 skipped++
                 return@forEachIndexed
             }
-            val input = try {
-                source.open()
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Exception) {
-                null
-            }
-            if (input == null) {
-                skipped++
-                return@forEachIndexed
-            }
-
-            var entryOpened = false
-            try {
-                input.buffered(BUFFER_SIZE).use {
-                    zip.putNextEntry(ZipEntry(entryName))
-                    entryOpened = true
-                    it.copyTo(zip, BUFFER_SIZE)
-                }
-                zip.closeEntry()
-                entryOpened = false
+            if (writeSessionZipEntry(zip, entryName, source.open)) {
                 added++
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Exception) {
+            } else {
                 skipped++
-                if (entryOpened) {
-                    runCatching { zip.closeEntry() }
-                        .getOrElse { throw it }
-                }
             }
         }
         return WriteResult(added = added, skipped = skipped)
