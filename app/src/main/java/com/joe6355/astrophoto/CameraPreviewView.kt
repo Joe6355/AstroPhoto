@@ -42,7 +42,6 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import java.io.File
-import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -1390,7 +1389,7 @@ class CameraPreviewView @JvmOverloads constructor(
         jpegBytes: ByteArray,
         requestedFileName: String?,
         relativeDirectory: String?
-    ): String {
+    ): String = withCapturedJpegStorageErrors {
         val fileName = requestedFileName ?: "AstroPhoto_${
             SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         }.jpg"
@@ -1411,24 +1410,21 @@ class CameraPreviewView @JvmOverloads constructor(
                 values
             ) ?: error("Галерея не предоставила место для файла")
 
-            try {
-                resolver.openOutputStream(imageUri)?.use { output ->
-                    output.write(jpegBytes)
-                } ?: error("Не удалось открыть файл для записи")
-
-                val completedValues = ContentValues().apply {
-                    put(MediaStore.Images.Media.IS_PENDING, 0)
-                }
-                resolver.update(imageUri, completedValues, null, null)
-            } catch (exception: Exception) {
-                resolver.delete(imageUri, null, null)
-                throw exception
-            }
+            writePendingCapturedJpeg(
+                bytes = jpegBytes,
+                openOutput = { resolver.openOutputStream(imageUri) },
+                publish = {
+                    resolver.update(imageUri, ContentValues().apply {
+                        put(MediaStore.Images.Media.IS_PENDING, 0)
+                    }, null, null)
+                },
+                discard = { resolver.delete(imageUri, null, null) }
+            )
         } else {
-            saveLegacyJpeg(jpegBytes, fileName, relativeDirectory)
+            return@withCapturedJpegStorageErrors saveLegacyJpeg(jpegBytes, fileName, relativeDirectory)
         }
 
-        return fileName
+        fileName
     }
 
     private fun galleryRelativePath(relativeDirectory: String?): String =
@@ -1439,7 +1435,7 @@ class CameraPreviewView @JvmOverloads constructor(
         jpegBytes: ByteArray,
         fileName: String,
         relativeDirectory: String?
-    ) {
+    ): String {
         if (ContextCompat.checkSelfPermission(
                 context,
                 Manifest.permission.WRITE_EXTERNAL_STORAGE
@@ -1459,16 +1455,13 @@ class CameraPreviewView @JvmOverloads constructor(
             error("Не удалось создать папку Pictures/AstroPhoto")
         }
 
-        val photoFile = File(astroPhotoDirectory, fileName)
-        FileOutputStream(photoFile).use { output ->
-            output.write(jpegBytes)
-        }
-        MediaScannerConnection.scanFile(
-            context,
-            arrayOf(photoFile.absolutePath),
-            arrayOf("image/jpeg"),
-            null
-        )
+        val photoFile = writeLegacyCapturedJpeg(jpegBytes, File(astroPhotoDirectory, fileName))
+        runCatching {
+            MediaScannerConnection.scanFile(
+                context, arrayOf(photoFile.absolutePath), arrayOf("image/jpeg"), null
+            )
+        }.onFailure { Log.w("AstroPhotoCapture", "JPEG saved but media scan request failed", it) }
+        return photoFile.name
     }
 
     @Synchronized
