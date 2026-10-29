@@ -28,6 +28,36 @@ import org.junit.runner.RunWith
 /** Explicit QA-only editor audit; never edits or deletes an existing session. */
 @RunWith(AndroidJUnit4::class)
 class EditorFullResolutionDeviceTest {
+    @Test fun narrowPreviewRemainsEditableWhenNativeCropIsValid() = runBlocking {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("editorPreviewCrop") == "true")
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        require(context.packageName == EDITOR_QA_PACKAGE)
+        val cases = listOf(
+            Triple(1024 to 128,4096 to 512,CropSettings()),
+            Triple(128 to 1024,512 to 4096,CropSettings()),
+            Triple(1024 to 128,4096 to 512,CropSettings(5f,7f,10f,20f)),
+            Triple(128 to 1024,512 to 4096,CropSettings(30f,30f,5f,7f))
+        )
+        val proof = JSONArray()
+        for ((previewSize,nativeSize,crop) in cases) {
+            val native = editorCropPixels(nativeSize.first,nativeSize.second,crop)
+            assertTrue(native.finalWidth >= 200 && native.finalHeight >= 200)
+            val original = Bitmap.createBitmap(previewSize.first,previewSize.second,Bitmap.Config.ARGB_8888)
+            original.eraseColor(0xFF203040.toInt())
+            val rendered = ProcessedImageEditor(context).renderPreview(original,ImageAdjustments(),crop)
+            try {
+                assertNotNull("Valid native ${nativeSize.first}x${nativeSize.second} must not be blocked by preview ${previewSize.first}x${previewSize.second}",rendered)
+                val actual = requireNotNull(rendered)
+                assertTrue(actual.width > 0 && actual.height > 0)
+                assertEquals(0xFF203040.toInt(),original.getPixel(0,0))
+                proof.put(JSONObject().put("previewWidth",actual.width).put("previewHeight",actual.height)
+                    .put("nativeWidth",native.finalWidth).put("nativeHeight",native.finalHeight))
+            } finally { rendered?.recycle();original.recycle() }
+        }
+        val directory = File(context.cacheDir,"editor_preview_crop_20261029").apply { mkdirs() }
+        File(directory,"preview-proof.json").writeText(JSONObject().put("cases",proof).toString(2))
+    }
+
     @Test fun recordPreviousFullSizeRendering() = runBlocking {
         assumeTrue(InstrumentationRegistry.getArguments().getString("editorReference") == "true")
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -79,6 +109,85 @@ class EditorFullResolutionDeviceTest {
         }
         output.writeText(JSONObject().put("cases", cases).toString(2))
         assertTrue(cases.length() == 8)
+    }
+
+    @Test fun narrowSourcesSupportNativeManualAndAutomaticCropExports() = runBlocking {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("editorPreviewCrop") == "true")
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        require(context.packageName == EDITOR_QA_PACKAGE)
+        val directory = File(context.cacheDir,"editor_preview_crop_20261029").apply { mkdirs() }
+        val session = editorAuditSession("CROP")
+        val editor = ProcessedImageEditor(context)
+        val results = JSONArray()
+        val inputs = listOf(
+            Triple("wide.jpg",4096 to 512,CropSettings(5f,7f,10f,20f)),
+            Triple("tall.png",512 to 4096,CropSettings(30f,30f,5f,7f))
+        )
+        for ((name,dimensions,manual) in inputs) {
+            val png = File(directory,name.substringBeforeLast('.')+"-input.png")
+            writeEditorCropFixture(png,dimensions.first,dimensions.second)
+            val input = if (name.endsWith(".jpg")) {
+                val bitmap = requireNotNull(BitmapFactory.decodeFile(png.path))
+                try { File(directory,name).also { file ->
+                    file.outputStream().use { assertTrue(bitmap.compress(Bitmap.CompressFormat.JPEG,92,it)) }
+                } } finally { bitmap.recycle() }
+            } else png
+            val source = editorFileSource(input)
+            val loaded = requireNotNull(editor.loadPreview(source))
+            assertEquals(dimensions.first,loaded.sourceWidth)
+            assertEquals(dimensions.second,loaded.sourceHeight)
+            assertTrue(minOf(loaded.bitmap.width,loaded.bitmap.height)<200)
+            val full = requireNotNull(BitmapFactory.decodeFile(input.path))
+            try {
+                val automatic = editor.detectBlackEdges(loaded.bitmap,loaded.sourceWidth,loaded.sourceHeight)
+                assertTrue("Native-sized border crop must be accepted",automatic.found)
+                for ((mode,crop) in listOf("manual" to manual,"automatic" to automatic.settings)) {
+                    val displayed = requireNotNull(editor.renderPreview(loaded.bitmap,ImageAdjustments(),crop))
+                    try { assertTrue(displayed.width>0 && displayed.height>0) } finally { displayed.recycle() }
+                    val expectedSize = editorCropPixels(dimensions.first,dimensions.second,crop)
+                    val expected = requireNotNull(editor.renderPreview(full,ImageAdjustments(),crop))
+                    try {
+                        val saved = editor.saveEditedCopy(session,source,ImageAdjustments(),crop).getOrThrow()
+                        assertTrue(saved.sessionInfoUpdated)
+                        assertEquals(expectedSize.finalWidth,saved.width)
+                        assertEquals(expectedSize.finalHeight,saved.height)
+                        val decoded = editorDecode(context,editorSavedSource(context,session,saved))
+                        try {
+                            assertEquals(editorPixelHash(expected),editorPixelHash(decoded))
+                            results.put(JSONObject().put("input",source.fileName).put("mode",mode).put("file",saved.fileName)
+                                .put("width",saved.width).put("height",saved.height)
+                                .put("pixelSha256",editorPixelHash(decoded)))
+                        } finally { decoded.recycle() }
+                    } finally { expected.recycle() }
+                }
+            } finally { loaded.bitmap.recycle();full.recycle() }
+        }
+        // A small preview may be valid, but a genuinely undersized native crop must still fail.
+        val invalid = File(directory,"invalid-native.png")
+        writeEditorCropFixture(invalid,800,400)
+        val before = editorOutputIds(context,session)
+        val info = File(context.filesDir,"session-info/${session.folderName}.txt")
+        val infoBefore = info.readBytes()
+        val failed = editor.saveEditedCopy(session,editorFileSource(invalid),ImageAdjustments(),
+            CropSettings(topPercent=30f,bottomPercent=30f))
+        assertTrue(failed.isFailure)
+        assertEquals(before,editorOutputIds(context,session))
+        assertArrayEquals(infoBefore,info.readBytes())
+        val strong = Bitmap.createBitmap(200,100,Bitmap.Config.ARGB_8888)
+        try {
+            strong.eraseColor(0xFF000000.toInt())
+            val pixels=IntArray(200*100) { i ->
+                if(i%200 in 10 until 190 && i/200 in 30 until 70) 0xFF708090.toInt() else 0xFF000000.toInt()
+            }
+            strong.setPixels(pixels,0,200,0,0,200,100)
+            val rejected = editor.detectBlackEdges(strong,800,400)
+            assertFalse(rejected.found)
+            assertTrue(rejected.aggressive)
+        } finally { strong.recycle() }
+        File(directory,"native-crop-proof.json").writeText(JSONObject().put("folder",session.folderName)
+            .put("cases",results).put("invalidNativeCropRejected",true)
+            .put("invalidCropLeavesOutputsAndMetadataUnchanged",true).toString(2))
+        assertEquals(4,results.length())
     }
 
     @Test fun streamedExportsMatchAllPreviousPixelsAndProviderSources() = runBlocking {
@@ -296,6 +405,23 @@ private fun editorDecode(context: Context,source: ProcessedResult): Bitmap =
 private fun editorLargeColor(x: Int,y: Int): Int = 0xFF000000.toInt() or
     ((x*255/(EDITOR_LARGE_WIDTH-1)) shl 16) or ((y*255/(EDITOR_LARGE_HEIGHT-1)) shl 8) or
     (48+((x/31+y/17)%2)*120)
+
+private fun writeEditorCropFixture(file: File,sourceWidth: Int,sourceHeight: Int) {
+    file.outputStream().use { output ->
+        PngStreamEncoder.encode(object : PngImageSource {
+            override val width=sourceWidth
+            override val height=sourceHeight
+            override fun readArgbRow(y: Int,destination: IntArray) {
+                for(x in destination.indices) {
+                    val border=x<width/16 || x>=width-width/16 || y<height/16 || y>=height-height/16
+                    val color=0xFF000000.toInt() or
+                        ((64+(x*17+y*3)%128) shl 16) or ((64+(x*7+y*19)%128) shl 8) or (64+(x+y*11)%128)
+                    destination[x]=if(border) 0xFF000000.toInt() else color
+                }
+            }
+        },output)
+    }
+}
 
 private data class EditorAuditCase(val name: String, val adjustments: ImageAdjustments, val crop: CropSettings)
 

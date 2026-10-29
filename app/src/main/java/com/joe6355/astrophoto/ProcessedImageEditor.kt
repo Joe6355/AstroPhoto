@@ -204,7 +204,7 @@ class ProcessedImageEditor internal constructor(
                 ?: return@runCatching null
             try {
                 applyInPlace(adjusted, adjustments)
-                applyCrop(adjusted, crop).also {
+                applyPreviewCrop(adjusted, crop).also {
                     if (it !== adjusted) adjusted.recycle()
                 }
             } catch (error: Throwable) {
@@ -343,8 +343,11 @@ class ProcessedImageEditor internal constructor(
         }
 
     suspend fun detectBlackEdges(bitmap: Bitmap): AutoCropResult =
+        detectBlackEdges(bitmap, bitmap.width, bitmap.height)
+
+    suspend fun detectBlackEdges(bitmap: Bitmap, sourceWidth: Int, sourceHeight: Int): AutoCropResult =
         withContext(Dispatchers.Default) {
-            detectAutoCrop(bitmap)
+            detectAutoCrop(bitmap, sourceWidth, sourceHeight)
         }
 
     suspend fun saveEditedCopy(
@@ -483,8 +486,8 @@ class ProcessedImageEditor internal constructor(
         }
     }
 
-    private fun applyCrop(bitmap: Bitmap, crop: CropSettings): Bitmap {
-        val pixels = editorCropPixels(bitmap.width, bitmap.height, crop)
+    private fun applyPreviewCrop(bitmap: Bitmap, crop: CropSettings): Bitmap {
+        val pixels = editorPreviewCropPixels(bitmap.width, bitmap.height, crop)
         if (
             pixels.left == 0 &&
             pixels.right == 0 &&
@@ -503,10 +506,10 @@ class ProcessedImageEditor internal constructor(
     }
 
 
-    private fun detectAutoCrop(bitmap: Bitmap): AutoCropResult {
+    private fun detectAutoCrop(bitmap: Bitmap, sourceWidth: Int, sourceHeight: Int): AutoCropResult {
         val width = bitmap.width
         val height = bitmap.height
-        if (width < MIN_CROP_SIZE || height < MIN_CROP_SIZE) {
+        if (sourceWidth < MIN_CROP_SIZE || sourceHeight < MIN_CROP_SIZE) {
             return AutoCropResult(CropSettings(), found = false, aggressive = false)
         }
         val pixels = IntArray(width * height)
@@ -572,7 +575,7 @@ class ProcessedImageEditor internal constructor(
             topPercent = rawTop.coerceAtMost(30f),
             bottomPercent = rawBottom.coerceAtMost(30f)
         )
-        return if (isSafeCrop(settings, width, height)) {
+        return if (isSafeCrop(settings, sourceWidth, sourceHeight)) {
             AutoCropResult(settings, found = true, aggressive = aggressive)
         } else {
             AutoCropResult(
@@ -817,6 +820,8 @@ fun ProcessedImageEditorScreen(
         width = sourceWidth,
         height = sourceHeight
     )
+    val nativeCropValid = sourceWidth > 0 && sourceHeight > 0 &&
+        isSafeCrop(crop, sourceWidth, sourceHeight)
 
     fun updateCrop(updated: CropSettings) {
         if (
@@ -995,7 +1000,7 @@ fun ProcessedImageEditorScreen(
                                 return@launch
                             }
                             try {
-                                val detected = editor.detectBlackEdges(uncropped)
+                                val detected = editor.detectBlackEdges(uncropped, sourceWidth, sourceHeight)
                                 if (!detected.found) {
                                     status = if (detected.aggressive) {
                                         "Автообрезка слишком агрессивная и не применена."
@@ -1132,6 +1137,14 @@ fun ProcessedImageEditorScreen(
                 color = AstroColors.Warning
             )
         }
+        if (original != null && !nativeCropValid) {
+            Text(
+                text = "Для сохранения после обрезки нужно не меньше 200×200 пикселей.",
+                modifier = Modifier.padding(top = 6.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = AstroColors.Warning
+            )
+        }
         Button(
             onClick = {
                 if (original == null) return@Button
@@ -1162,7 +1175,7 @@ fun ProcessedImageEditorScreen(
                     )
                 }
             },
-            enabled = original != null && processed != null && !saving,
+            enabled = original != null && processed != null && nativeCropValid && !saving,
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 56.dp)

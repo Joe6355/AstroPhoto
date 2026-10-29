@@ -31,6 +31,24 @@ internal class EditorColorTransform(settings: ImageAdjustments) {
 }
 
 internal fun editorCropPixels(width: Int, height: Int, crop: CropSettings): CropPixels {
+    return editorCropGeometry(width, height, crop).also { pixels ->
+        require(pixels.finalWidth >= 200 && pixels.finalHeight >= 200) {
+            "Обрезка даёт слишком маленькое изображение"
+        }
+    }
+}
+
+/** Preview sampling must not change which native-resolution crops can be edited. */
+internal fun editorPreviewCropPixels(width: Int, height: Int, crop: CropSettings): CropPixels {
+    val pixels = editorCropGeometry(width, height, crop)
+    // Both rounded edges can consume a two-pixel preview; keep one display pixel.
+    val right = minOf(pixels.right, width - pixels.left - 1)
+    val bottom = minOf(pixels.bottom, height - pixels.top - 1)
+    return pixels.copy(right = right, bottom = bottom,
+        finalWidth = width - pixels.left - right, finalHeight = height - pixels.top - bottom)
+}
+
+private fun editorCropGeometry(width: Int, height: Int, crop: CropSettings): CropPixels {
     require(width > 0 && height > 0)
     val left = (width * crop.leftPercent.coerceIn(0f, 30f) / 100f).roundToInt()
     val right = (width * crop.rightPercent.coerceIn(0f, 30f) / 100f).roundToInt()
@@ -38,7 +56,6 @@ internal fun editorCropPixels(width: Int, height: Int, crop: CropSettings): Crop
     val bottom = (height * crop.bottomPercent.coerceIn(0f, 30f) / 100f).roundToInt()
     val finalWidth = width - left - right
     val finalHeight = height - top - bottom
-    require(finalWidth >= 200 && finalHeight >= 200) { "Обрезка даёт слишком маленькое изображение" }
     return CropPixels(left, right, top, bottom, finalWidth, finalHeight)
 }
 
