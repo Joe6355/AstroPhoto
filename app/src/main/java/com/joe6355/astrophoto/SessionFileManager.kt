@@ -32,7 +32,7 @@ class SessionFileManager(private val context: Context) {
         session: SessionSummary,
         requestedName: String
     ): Result<SessionRenameResult> = withContext(Dispatchers.IO) {
-        runCatching {
+        guardedSessionOperation(session.folderName) {
             val safeName = sanitizeManagedName(requestedName)
             require(safeName.isNotBlank()) { "Имя сессии не может быть пустым" }
             val duplicate = SessionBrowserRepository(context)
@@ -104,7 +104,7 @@ class SessionFileManager(private val context: Context) {
         session: SessionSummary,
         onProgress: suspend (current: Int, total: Int) -> Unit = { _, _ -> }
     ): Result<SessionDeleteResult> = withContext(Dispatchers.IO) {
-        runCatching {
+        guardedSessionOperation(session.folderName) {
             val publicCounts = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 deleteMediaStoreSession(session.folderName, onProgress)
             } else {

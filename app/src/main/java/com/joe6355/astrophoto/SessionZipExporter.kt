@@ -45,7 +45,7 @@ class SessionZipExporter(private val context: Context) {
         session: SessionSummary,
         onProgress: suspend (SessionZipProgress) -> Unit = {}
     ): Result<SessionZipExportResult> = withContext(Dispatchers.IO) {
-        runCatching {
+        guardedSessionOperation(session.folderName) {
             val safeSessionName = sanitizeName(session.sessionName)
                 .ifBlank { sanitizeName(session.folderName) }
                 .ifBlank { "Session" }

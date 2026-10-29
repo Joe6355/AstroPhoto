@@ -278,8 +278,7 @@ private class ProcessedResultsRepository(private val context: Context) {
         session: SessionSummary,
         result: ProcessedResult
     ): Result<Boolean> = withContext(Dispatchers.IO) {
-        runCatching {
-            check(!SessionProcessingCoordinator.isActive(session.folderName)) { RESULT_PROCESSING_MESSAGE }
+        guardedSessionOperation(session.folderName) {
             val deleted = if (result.contentUri != null) {
                 require(
                     mediaStoreResultBelongsToSession(
@@ -323,8 +322,7 @@ private class ProcessedResultsRepository(private val context: Context) {
         result: ProcessedResult,
         requestedName: String
     ): Result<ProcessedRenameResult> = withContext(Dispatchers.IO) {
-        runCatching {
-            check(!SessionProcessingCoordinator.isActive(session.folderName)) { RESULT_PROCESSING_MESSAGE }
+        guardedSessionOperation(session.folderName) {
             val extension = processedImageExtension(result.fileName)
                 ?: error("Unsupported processed image format")
             val requestedBase = if (processedImageExtension(requestedName) != null) {

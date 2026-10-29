@@ -117,7 +117,7 @@ class CroppedFramesRepository(private val context: Context) {
 
     suspend fun deleteCrop(session: SessionSummary, entry: CropManifestEntry): Result<Unit> =
         withContext(Dispatchers.IO) {
-            runCatching {
+            guardedSessionOperation(session.folderName) {
                 val stagedDelete = stageStoredFileDeletion(session, entry.croppedFileName)
                 try {
                     val manifest = (

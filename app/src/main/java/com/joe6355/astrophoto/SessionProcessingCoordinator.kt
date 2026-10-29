@@ -68,6 +68,7 @@ object SessionProcessingCoordinator {
         if (jobs[sessionFolder]?.isCompleted == false) return null
         val application = context.applicationContext
         val recoveryStore = ProcessingRecoveryStore(application)
+        val access = sessionAccess.acquire(sessionFolder) ?: return null
         etaEstimators[sessionFolder] = ProcessingEtaEstimator()
         val job = scope.launch(start = CoroutineStart.LAZY) {
             try {
@@ -82,6 +83,7 @@ object SessionProcessingCoordinator {
         // Register before Main.immediate can run even an immediately completing block.
         jobs[sessionFolder] = job
         job.invokeOnCompletion {
+            access.close()
             synchronized(lock) {
                 if (jobs[sessionFolder] === job) {
                     jobs.remove(sessionFolder)

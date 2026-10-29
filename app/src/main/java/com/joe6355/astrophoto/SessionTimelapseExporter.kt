@@ -93,7 +93,7 @@ class SessionTimelapseExporter(private val context: Context) {
         fps: Int,
         onProgress: suspend (SessionTimelapseProgress) -> Unit = {}
     ): Result<SessionTimelapseResult> = withContext(Dispatchers.IO) {
-        runCatching {
+        guardedSessionOperation(session.folderName) {
             require(fps in SUPPORTED_FPS) {
                 "Поддерживается ${SUPPORTED_FPS.sorted().joinToString()} кадров/с"
             }
