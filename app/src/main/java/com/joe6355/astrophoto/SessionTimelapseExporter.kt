@@ -85,7 +85,11 @@ internal fun timelapseOutputSize(
     return width to height
 }
 
-class SessionTimelapseExporter(private val context: Context) {
+class SessionTimelapseExporter internal constructor(
+    private val context: Context,
+    private val exportTime: () -> Date
+) {
+    constructor(context: Context) : this(context, { Date() })
     private val framesRepository = SessionFramesRepository(context)
     private val marksStore = FrameMarksStore(context)
 
@@ -130,9 +134,10 @@ class SessionTimelapseExporter(private val context: Context) {
                 },
                 discard = { destination.abort() }
             )
+            val (publishedName, publishedLocation) = destination.publishedNameAndLocation()
             SessionTimelapseResult(
-                fileName = destination.fileName,
-                location = destination.location,
+                fileName = publishedName,
+                location = publishedLocation,
                 contentUri = destination.contentUri?.toString(),
                 filePath = destination.file?.absolutePath,
                 sizeBytes = sizeBytes,
@@ -288,7 +293,7 @@ class SessionTimelapseExporter(private val context: Context) {
             .replace(Regex("[^A-Za-zА-Яа-я0-9._-]+"), "_")
             .trim('_')
             .ifBlank { "Session" }
-        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(exportTime())
         val fileName = "AstroPhoto_${safeName}_$timestamp.mp4"
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             createMediaStoreDestination(fileName)
@@ -461,6 +466,18 @@ private class VideoDestination(
                 null
             )?.use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0).coerceAtLeast(0L) else 0L }
         } ?: 0L
+    }
+
+    fun publishedNameAndLocation(): Pair<String, String> {
+        // MediaStore may append a suffix on collision. This is after commit:
+        // a failed optional query must not turn a saved video into an error.
+        val actualName = contentUri?.let { uri ->
+            runCatching {
+                context.contentResolver.query(uri, arrayOf(MediaStore.Video.Media.DISPLAY_NAME), null, null, null)
+                    ?.use { if (it.moveToFirst()) it.getString(0) else null }
+            }.getOrNull()
+        }?.takeIf { it.isNotBlank() } ?: fileName
+        return actualName to "${location.substringBeforeLast('/')}/$actualName"
     }
 
     fun abort() {
