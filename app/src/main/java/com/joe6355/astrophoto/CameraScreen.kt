@@ -209,6 +209,7 @@ internal fun CameraScreen(
     var darkFramesMessage by remember { mutableStateOf<String?>(null) }
     var darkFramesJob by remember { mutableStateOf<Job?>(null) }
     var storageInfo by remember { mutableStateOf<StorageSpaceInfo?>(null) }
+    var storageCheckRunning by remember { mutableStateOf(false) }
     var storageWarningInfo by remember { mutableStateOf<StorageSpaceInfo?>(null) }
     var storageWarningTarget by remember { mutableStateOf("съёмки") }
     var pendingStorageAction by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -275,22 +276,28 @@ internal fun CameraScreen(
         targetName: String,
         onApproved: () -> Unit
     ) {
+        if (storageCheckRunning) return
+        storageCheckRunning = true
         coroutineScope.launch {
-            val checked = storageChecker.estimate(
-                session = currentSession,
-                format = StorageCaptureFormat.JPEG,
-                frameCount = frameCount
-            )
-            storageInfo = checked
-            if (checked.availableBytes == null) {
-                saveLocationStatus = checked.errorMessage
-                onApproved()
-            } else if (checked.mayBeInsufficient) {
-                storageWarningInfo = checked
-                storageWarningTarget = targetName
-                pendingStorageAction = onApproved
-            } else {
-                onApproved()
+            try {
+                val checked = storageChecker.estimate(
+                    session = currentSession,
+                    format = StorageCaptureFormat.JPEG,
+                    frameCount = frameCount
+                )
+                storageInfo = checked
+                if (checked.availableBytes == null) {
+                    saveLocationStatus = checked.errorMessage
+                    onApproved()
+                } else if (checked.mayBeInsufficient) {
+                    storageWarningInfo = checked
+                    storageWarningTarget = targetName
+                    pendingStorageAction = onApproved
+                } else {
+                    onApproved()
+                }
+            } finally {
+                storageCheckRunning = false
             }
         }
     }
@@ -846,7 +853,7 @@ internal fun CameraScreen(
                 startCapture(captureType)
             }
         }
-        proceed()
+        checkStorageBeforeCapture(captureType, 1, "снимка", proceed)
     }
 
     fun proceedSeriesStart() {
@@ -1522,48 +1529,18 @@ internal fun CameraScreen(
             )
         }
         storageWarningInfo?.let { warning ->
-            AlertDialog(
+            CaptureStorageWarningDialog(
+                warning = warning,
+                targetName = storageWarningTarget,
                 onDismissRequest = {
                     storageWarningInfo = null
                     pendingStorageAction = null
                 },
-                title = { Text("Может не хватить места для $storageWarningTarget") },
-                text = {
-                    Text(
-                        "Нужно примерно ${formatStorageSize(warning.estimatedBytes)}, " +
-                            "свободно ${
-                                warning.availableBytes?.let(::formatStorageSize)
-                                    ?: "неизвестно"
-                            }.${
-                                if (warning.criticallyLow) {
-                                    "\nСвободного места меньше 500 MB."
-                                } else {
-                                    ""
-                                }
-                            }"
-                    )
-                },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            val action = pendingStorageAction
-                            storageWarningInfo = null
-                            pendingStorageAction = null
-                            action?.invoke()
-                        }
-                    ) {
-                        Text("Начать всё равно")
-                    }
-                },
-                dismissButton = {
-                    TextButton(
-                        onClick = {
-                            storageWarningInfo = null
-                            pendingStorageAction = null
-                        }
-                    ) {
-                        Text("Отмена")
-                    }
+                onConfirm = {
+                    val action = pendingStorageAction
+                    storageWarningInfo = null
+                    pendingStorageAction = null
+                    action?.invoke()
                 }
             )
         }

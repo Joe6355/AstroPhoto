@@ -6,6 +6,7 @@ import android.os.Environment
 import android.os.StatFs
 import android.provider.MediaStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Locale
@@ -52,7 +53,15 @@ class StorageSpaceChecker(private val context: Context) {
         frameCount: Int
     ): StorageSpaceInfo = withContext(Dispatchers.IO) {
         val available = readAvailableSpace()
-        val average = averageFrameSize(session, format) ?: DEFAULT_JPEG_BYTES
+        // Historical frame metadata is optional. Permission/provider failures
+        // must not break the camera or discard the independently read free space.
+        val average = try {
+            averageFrameSize(session, format)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        } ?: DEFAULT_JPEG_BYTES
         val estimated = (average.toDouble() * frameCount.coerceAtLeast(1) * 1.2)
             .toLong()
         available.copy(
