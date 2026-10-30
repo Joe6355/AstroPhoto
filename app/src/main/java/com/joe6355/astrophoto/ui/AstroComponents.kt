@@ -54,6 +54,7 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.joe6355.astrophoto.ui.theme.AstroColors
@@ -130,7 +131,7 @@ fun AstroPrimaryButton(
         shape = MaterialTheme.shapes.small,
         contentPadding = PaddingValues(horizontal = AstroSpacing.Xl, vertical = 12.dp)
     ) {
-        Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(text, textAlign = TextAlign.Center)
     }
 }
 
@@ -149,7 +150,7 @@ fun AstroSecondaryButton(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         contentPadding = PaddingValues(horizontal = AstroSpacing.Lg, vertical = AstroSpacing.Sm)
     ) {
-        Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(text, textAlign = TextAlign.Center)
     }
 }
 
@@ -165,7 +166,7 @@ fun AstroTextButton(
         enabled = enabled,
         modifier = modifier.heightIn(min = 48.dp)
     ) {
-        Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(text, textAlign = TextAlign.Center)
     }
 }
 
