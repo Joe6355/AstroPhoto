@@ -1,0 +1,53 @@
+{
+  "tag": "v0.9.0-beta.4",
+  "kind": "prerelease",
+  "applicationId": "com.joe6355.astrophoto",
+  "versionName": "0.9.0-beta.4",
+  "versionCode": 5,
+  "tagTargetRevision": "454224bb2e3b53fe87c1ba686470a2e1408c565b",
+  "releaseUrl": "https://github.com/Joe6355/AstroPhoto/releases/tag/v0.9.0-beta.4",
+  "assets": [
+    {
+      "name": "ACCEPTANCE_RU.md",
+      "bytes": 12273,
+      "sha256": "50032f8676c27cc211027411c757bc25a37a9119f1b78a77a2f76210c62e4b56",
+      "url": "https://github.com/Joe6355/AstroPhoto/releases/download/v0.9.0-beta.4/ACCEPTANCE_RU.md"
+    },
+    {
+      "name": "AstroPhoto-0.9.0-beta.4-testing.zip",
+      "bytes": 2080302,
+      "sha256": "5bd6fe62864b605f8509389b572826496fa5823e076e12680528f754a3e231fb",
+      "url": "https://github.com/Joe6355/AstroPhoto/releases/download/v0.9.0-beta.4/AstroPhoto-0.9.0-beta.4-testing.zip"
+    },
+    {
+      "name": "AstroPhoto-0.9.0-beta.4.apk",
+      "bytes": 2243038,
+      "sha256": "8da7d7e2f1f41c265cd6c004a758c4d40ad1bddc5e83717243109cc7bf47c163",
+      "url": "https://github.com/Joe6355/AstroPhoto/releases/download/v0.9.0-beta.4/AstroPhoto-0.9.0-beta.4.apk"
+    },
+    {
+      "name": "BETA_TESTING_RU.md",
+      "bytes": 5133,
+      "sha256": "0393b3675e06c9057aa8e627b78abf29918c7870e766fa3e64ecad8f07f80921",
+      "url": "https://github.com/Joe6355/AstroPhoto/releases/download/v0.9.0-beta.4/BETA_TESTING_RU.md"
+    },
+    {
+      "name": "candidate.json",
+      "bytes": 947,
+      "sha256": "31582e2e27396f8565c9d55ba44d0db76884eede63f79cd86da7762b93949e7e",
+      "url": "https://github.com/Joe6355/AstroPhoto/releases/download/v0.9.0-beta.4/candidate.json"
+    },
+    {
+      "name": "CONTINUE_HERE_RU.md",
+      "bytes": 10612,
+      "sha256": "c5542068d96935ddfedb3ebfd4420eecdef05bdea1c3e2c5835f0dcb7ee8b067",
+      "url": "https://github.com/Joe6355/AstroPhoto/releases/download/v0.9.0-beta.4/CONTINUE_HERE_RU.md"
+    },
+    {
+      "name": "SHA256SUMS.txt",
+      "bytes": 537,
+      "sha256": "e5e0e9a60e9b4c2284ef46145121c060619821d60bfe1980c9e4a00d8f16b5a2",
+      "url": "https://github.com/Joe6355/AstroPhoto/releases/download/v0.9.0-beta.4/SHA256SUMS.txt"
+    }
+  ]
+}
