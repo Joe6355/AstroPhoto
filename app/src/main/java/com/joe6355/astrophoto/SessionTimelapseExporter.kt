@@ -20,6 +20,7 @@ import android.os.Build
 import android.os.Environment
 import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
+import android.util.Log
 import android.view.Surface
 import androidx.core.graphics.createBitmap
 import androidx.core.net.toUri
@@ -110,35 +111,38 @@ class SessionTimelapseExporter(private val context: Context) {
                 ?: error("Не удалось прочитать первый JPEG-кадр")
             val (width, height) = timelapseOutputSize(firstSize.first, firstSize.second)
             val destination = createDestination(session)
-            try {
-                encode(
-                    frames = frames,
-                    width = width,
-                    height = height,
-                    fps = fps,
-                    muxer = destination.muxer,
-                    onProgress = onProgress
-                )
-                destination.finish()
-                SessionTimelapseResult(
-                    fileName = destination.fileName,
-                    location = destination.location,
-                    contentUri = destination.contentUri?.toString(),
-                    filePath = destination.file?.absolutePath,
-                    sizeBytes = destination.sizeBytes(),
-                    frameCount = frames.size,
-                    width = width,
-                    height = height,
-                    fps = fps,
-                    durationMillis = frames.size * 1_000L / fps
-                )
-            } catch (error: Throwable) {
-                destination.abort()
-                throw error
-            } finally {
-                destination.close()
-            }
-        }
+            val sizeBytes = publishSessionTimelapse(
+                write = {
+                    encode(
+                        frames = frames,
+                        width = width,
+                        height = height,
+                        fps = fps,
+                        muxer = destination.muxer,
+                        onProgress = onProgress
+                    )
+                    destination.sizeBytes()
+                },
+                closeOutput = { destination.close() },
+                publish = {
+                    currentCoroutineContext().ensureActive()
+                    destination.finish()
+                },
+                discard = { destination.abort() }
+            )
+            SessionTimelapseResult(
+                fileName = destination.fileName,
+                location = destination.location,
+                contentUri = destination.contentUri?.toString(),
+                filePath = destination.file?.absolutePath,
+                sizeBytes = sizeBytes,
+                frameCount = frames.size,
+                width = width,
+                height = height,
+                fps = fps,
+                durationMillis = frames.size * 1_000L / fps
+            )
+        }.recoverCatching { throw timelapsePublicationFailure(it) }
     }
 
     private suspend fun encode(
@@ -149,22 +153,23 @@ class SessionTimelapseExporter(private val context: Context) {
         muxer: MediaMuxer,
         onProgress: suspend (SessionTimelapseProgress) -> Unit
     ) {
-        val format = MediaFormat.createVideoFormat(MIME_TYPE, width, height).apply {
-            setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-            setInteger(MediaFormat.KEY_BIT_RATE, videoBitRate(width, height, fps))
-            setInteger(MediaFormat.KEY_FRAME_RATE, fps)
-            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
-        }
-        val codec = MediaCodec.createEncoderByType(MIME_TYPE)
+        var codec: MediaCodec? = null
         var inputSurface: CodecInputSurface? = null
         var renderer: BitmapRenderer? = null
         var targetBitmap: Bitmap? = null
         var codecStarted = false
         var muxerStarted = false
-        try {
-            codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-            inputSurface = CodecInputSurface(codec.createInputSurface())
-            codec.start()
+        completeTimelapseEncoding(encode = {
+            val format = MediaFormat.createVideoFormat(MIME_TYPE, width, height).apply {
+                setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+                setInteger(MediaFormat.KEY_BIT_RATE, videoBitRate(width, height, fps))
+                setInteger(MediaFormat.KEY_FRAME_RATE, fps)
+                setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+            }
+            val encoder = MediaCodec.createEncoderByType(MIME_TYPE).also { codec = it }
+            encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            inputSurface = CodecInputSurface(encoder.createInputSurface())
+            encoder.start()
             codecStarted = true
             inputSurface.makeCurrent()
             renderer = BitmapRenderer()
@@ -196,7 +201,7 @@ class SessionTimelapseExporter(private val context: Context) {
                 } finally {
                     decoded.recycle()
                 }
-                val drain = drainEncoder(codec, muxer, bufferInfo, false, trackIndex)
+                val drain = drainEncoder(encoder, muxer, bufferInfo, false, trackIndex)
                 trackIndex = drain.trackIndex
                 muxerStarted = muxerStarted || drain.muxerStarted
                 onProgress(
@@ -208,24 +213,27 @@ class SessionTimelapseExporter(private val context: Context) {
                 )
             }
 
-            codec.signalEndOfInputStream()
+            encoder.signalEndOfInputStream()
             var endReached = false
             while (!endReached) {
-                val drain = drainEncoder(codec, muxer, bufferInfo, true, trackIndex)
+                val drain = drainEncoder(encoder, muxer, bufferInfo, true, trackIndex)
                 trackIndex = drain.trackIndex
                 muxerStarted = muxerStarted || drain.muxerStarted
                 endReached = drain.endReached
             }
             check(muxerStarted) { "Кодек не создал видеодорожку" }
-        } finally {
-            targetBitmap?.recycle()
-            renderer?.release()
-            inputSurface?.release()
-            if (codecStarted) runCatching { codec.stop() }
-            codec.release()
-            if (muxerStarted) runCatching { muxer.stop() }
-            muxer.release()
-        }
+        }, stopMuxer = {
+            if (muxerStarted) muxer.stop()
+        }, releaseResources = {
+            releaseTimelapseResources(
+                { targetBitmap?.recycle() },
+                { renderer?.release() },
+                { inputSurface?.release() },
+                { if (codecStarted) codec?.stop() },
+                { codec?.release() },
+                { muxer.release() }
+            )
+        })
     }
 
     private fun drainEncoder(
@@ -302,20 +310,30 @@ class SessionTimelapseExporter(private val context: Context) {
                 put(MediaStore.Video.Media.IS_PENDING, 1)
             }
         ) ?: error("Не удалось создать MP4 в MediaStore")
-        val descriptor = resolver.openFileDescriptor(uri, "w")
-            ?: run {
-                resolver.delete(uri, null, null)
-                error("Не удалось открыть MP4 для записи")
-            }
-        return VideoDestination(
-            context = context,
-            fileName = fileName,
-            location = "${relativePath.trimEnd('/')}/$fileName",
-            contentUri = uri,
-            file = null,
-            descriptor = descriptor,
-            muxer = MediaMuxer(descriptor.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-        )
+        var descriptor: ParcelFileDescriptor? = null
+        var muxer: MediaMuxer? = null
+        return withOwnedOutputCleanup({
+            releaseTimelapseResources(
+                { muxer?.release() },
+                { descriptor?.close() },
+                { resolver.delete(uri, null, null) }
+            )
+        }) {
+            val opened = resolver.openFileDescriptor(uri, "w")
+                ?.also { descriptor = it }
+                ?: error("Не удалось открыть MP4 для записи")
+            val created = MediaMuxer(opened.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+                .also { muxer = it }
+            VideoDestination(
+                context = context,
+                fileName = fileName,
+                location = "${relativePath.trimEnd('/')}/$fileName",
+                contentUri = uri,
+                file = null,
+                descriptor = opened,
+                muxer = created
+            )
+        }
     }
 
     @Suppress("DEPRECATION")
@@ -323,21 +341,26 @@ class SessionTimelapseExporter(private val context: Context) {
         val movies = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
         val directory = File(movies, "AstroPhoto")
         check(directory.exists() || directory.mkdirs()) { "Не удалось создать папку Movies/AstroPhoto" }
-        var file = File(directory, fileName)
-        var suffix = 2
-        while (file.exists()) {
-            file = File(directory, fileName.removeSuffix(".mp4") + "_$suffix.mp4")
-            suffix++
+        val file = reserveTimelapseFile(File(directory, fileName))
+        var muxer: MediaMuxer? = null
+        return withOwnedOutputCleanup({
+            releaseTimelapseResources(
+                { muxer?.release() },
+                { check(!file.exists() || file.delete()) { "Не удалось удалить незавершённый MP4" } }
+            )
+        }) {
+            val created = MediaMuxer(file.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+                .also { muxer = it }
+            VideoDestination(
+                context = context,
+                fileName = file.name,
+                location = file.absolutePath,
+                contentUri = null,
+                file = file,
+                descriptor = null,
+                muxer = created
+            )
         }
-        return VideoDestination(
-            context = context,
-            fileName = file.name,
-            location = file.absolutePath,
-            contentUri = null,
-            file = file,
-            descriptor = null,
-            muxer = MediaMuxer(file.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-        )
     }
 
     companion object {
@@ -406,9 +429,7 @@ private class VideoDestination(
     private val descriptor: ParcelFileDescriptor?,
     val muxer: MediaMuxer
 ) {
-    private var completed = false
-
-    fun finish() {
+    fun finish(): Int =
         if (contentUri != null) {
             context.contentResolver.update(
                 contentUri,
@@ -417,29 +438,38 @@ private class VideoDestination(
                 null
             )
         } else if (file != null) {
-            MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), arrayOf("video/mp4"), null)
+            // The completed file is already saved. A scanner failure must not delete it.
+            val savedPath = file.absolutePath
+            runCatching {
+                MediaScannerConnection.scanFile(context, arrayOf(savedPath), arrayOf("video/mp4"), null)
+            }.onFailure { Log.w("SessionTimelapseExporter", "MP4 saved but media scan failed", it) }
+            1
+        } else {
+            error("MP4 не имеет адреса сохранения")
         }
-        completed = true
-    }
 
-    fun sizeBytes(): Long = contentUri?.let { uri ->
-        context.contentResolver.query(
-            uri,
-            arrayOf(MediaStore.Video.Media.SIZE),
-            null,
-            null,
-            null
-        )?.use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0).coerceAtLeast(0L) else 0L }
-    } ?: file?.length() ?: 0L
+    fun sizeBytes(): Long {
+        // Read the actual size before closing/committing; provider metadata may lag.
+        descriptor?.statSize?.takeIf { it > 0L }?.let { return it }
+        file?.let { return it.length() }
+        return contentUri?.let { uri ->
+            context.contentResolver.query(
+                uri,
+                arrayOf(MediaStore.Video.Media.SIZE),
+                null,
+                null,
+                null
+            )?.use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0).coerceAtLeast(0L) else 0L }
+        } ?: 0L
+    }
 
     fun abort() {
         if (contentUri != null) context.contentResolver.delete(contentUri, null, null)
-        file?.delete()
+        file?.let { check(!it.exists() || it.delete()) { "Не удалось удалить незавершённый MP4" } }
     }
 
     fun close() {
         descriptor?.close()
-        if (!completed) abort()
     }
 }
 
