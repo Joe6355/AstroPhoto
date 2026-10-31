@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "checkedOn": "2026-10-31",
+  "scope": "bounded_optimized_qa_runtime_not_main_acceptance",
+  "sourceCommit": "b0d104e32c818470ccc84c3fc2703abd8c341002",
+  "applicationId": "com.joe6355.astrophoto.qa20261017",
+  "versionName": "0.9.0-beta.5",
+  "versionCode": 6,
+  "device": {
+    "model": "23021RAA2Y",
+    "android": "13"
+  },
+  "build": {
+    "result": "success",
+    "elapsed": "2m11s",
+    "productionSourceChanged": false
+  },
+  "qaApks": {
+    "qa-debug-restore.apk": {
+      "bytes": 14762592,
+      "sha256": "ead3754b16ba3fc6d4db8b607b5b5dca49d3435c2682f2d246b5414e3ec2a928",
+      "certificateSha256": "0e1ad0972929f280be98b250e1a37967982422883d8860b9d3ae9182a79f2eeb"
+    },
+    "qa-release.apk": {
+      "bytes": 2249957,
+      "sha256": "ec9557e1051832d72a6d33abf6de1b54dec8dd3ae392880adb847f1551c7e278",
+      "certificateSha256": "0e1ad0972929f280be98b250e1a37967982422883d8860b9d3ae9182a79f2eeb"
+    }
+  },
+  "releaseInstall": {
+    "phase": "release",
+    "apkSha256": "ec9557e1051832d72a6d33abf6de1b54dec8dd3ae392880adb847f1551c7e278",
+    "versionCode": 6,
+    "uidAndDataInodeUnchanged": true,
+    "runAsAvailable": false,
+    "installedWithReplaceOnly": true,
+    "downgradeFlagUsed": false
+  },
+  "debugRestore": {
+    "phase": "debug",
+    "apkSha256": "ead3754b16ba3fc6d4db8b607b5b5dca49d3435c2682f2d246b5414e3ec2a928",
+    "versionCode": 6,
+    "uidAndDataInodeUnchanged": true,
+    "runAsAvailable": true,
+    "installedWithReplaceOnly": true,
+    "downgradeFlagUsed": false
+  },
+  "data": {
+    "qaBeforeFiles": 566,
+    "qaFinalFiles": 568,
+    "qaOriginalFilesByteIdentical": 564,
+    "derivedCheckpointFilesRestoredFromVerifiedFreshBackup": [
+      "files/jpeg-profile-registration-checkpoints/4e111b9a53d78442c192344bdff7d30527c26733d74ee8db2c66afd2cd0b426d/full-resolution.bin.sha256",
+      "files/jpeg-profile-registration-checkpoints/4e111b9a53d78442c192344bdff7d30527c26733d74ee8db2c66afd2cd0b426d/registration.bin",
+      "files/jpeg-profile-registration-checkpoints/4e111b9a53d78442c192344bdff7d30527c26733d74ee8db2c66afd2cd0b426d/registration.bin.sha256"
+    ],
+    "missing": [],
+    "changed": [
+      "files/profileInstalled",
+      "files/profileinstaller_profileWrittenFor_lastUpdateTime.dat"
+    ],
+    "added": [
+      "files/jpeg-processing-journal/run-739896da81a24248b3f516fadbbc32ad.properties",
+      "files/frame-marks/Session_20261031_182949_PC_CAMERA_SCENE_20261031.json"
+    ],
+    "allPublicFilesUnchanged": 1785,
+    "allLegacyPrivateFilesUnchanged": 222,
+    "allThreePreferenceXmlByteIdentical": true,
+    "fontScale": "0.81",
+    "stayAwake": "0",
+    "foreground": "MIUI Launcher",
+    "qaStopped": true,
+    "noUninstallOrClear": true
+  },
+  "mainAndLegacyPackagesUnchanged": true,
+  "fullMainPrivateHashingAvailable": false,
+  "oldDebugCheckpointReuseUnderR8Confirmed": false,
+  "mainPreparedArchiveUnchanged": true,
+  "checks": {
+    "releaseNonDebuggable": true,
+    "coldStartStatus": "ok",
+    "coldStartTotalTimeMs": 1423,
+    "aboutVersion": "0.9.0-beta.5",
+    "viewer": "1440×1920 · 100%",
+    "profileInputFrames": 4,
+    "profilePassedFrames": 1,
+    "profileContinuationCancelled": true
+  },
+  "sourceCi": [
+    {
+      "sha": "44c24f75c3769e83bc4042fea61be8d07b793849",
+      "runId": 41219017637,
+      "conclusion": "success"
+    },
+    {
+      "sha": "b0d104e32c818470ccc84c3fc2703abd8c341002",
+      "runId": 41220391664,
+      "conclusion": "success"
+    }
+  ]
+}
