@@ -1,0 +1,96 @@
+{
+  "status": "prepared_unsigned_reference",
+  "sourceCommit": "44c24f75c3769e83bc4042fea61be8d07b793849",
+  "candidate": {
+    "schemaVersion": 1,
+    "sourceCommit": "44c24f75c3769e83bc4042fea61be8d07b793849",
+    "embeddedSourceRevision": "44c24f75c3769e83bc4042fea61be8d07b793849",
+    "applicationId": "com.joe6355.astrophoto",
+    "versionName": "0.9.0-beta.5",
+    "versionCode": 6,
+    "variant": "release",
+    "debuggable": false,
+    "minSdk": 26,
+    "targetSdk": 36,
+    "signingStatus": "unsigned",
+    "installedOnPhone": false,
+    "phoneAcceptance": "not_performed",
+    "expectedSigningCertificateSha256": "79e37ad16c7cceaf6bae398d926e548e3f64ea0a6e248975cceb2a6e3d374f93",
+    "apk": {
+      "file": "AstroPhoto-0.9.0-beta.5-unsigned.apk",
+      "bytes": 2234846,
+      "sha256": "f43061d5b2c98f5b225063459d8074670dd2465ec7746ef049b0962d30c7f436"
+    },
+    "mapping": {
+      "file": "mapping-unsigned.txt",
+      "bytes": 57160057,
+      "sha256": "6944a4c2004ad682b030a0b9190a2883aaaab1124a9c9b3d23af5b8219cf0aae"
+    },
+    "buildInputGitObjects": {
+      "app": "32afc7ceb727a086edaa71fb2df67acaedafb956",
+      "gradle": "d90a105d97bc185e2b15c7946df6ed6e081b67e2",
+      "build.gradle.kts": "18318bec5606eb601a449bbf68dab1765c773fd5",
+      "settings.gradle.kts": "0ae9695dbf547f35da6ff0e375cd275cc8b9131d",
+      "gradle.properties": "99fc155814191cc379ea11c9bf78f64f70935932",
+      "gradlew": "ef07e0162b183eb9d19a2c9ba7035c283af9f8dd",
+      "gradlew.bat": "db3a6ac207e507b0bc1635a9f2c18d3b174e682e"
+    },
+    "lintRelease": {
+      "Warning": 10
+    },
+    "pcSigningWorkflow": "Build-SignedRelease.ps1 rebuilds from clean main and produces matching signed APK/mapping",
+    "createdAt": "2026-10-31T16:27:51.359322+00:00"
+  },
+  "archive": {
+    "file": "AstroPhoto-0.9.0-beta.5-preparation.zip",
+    "bytes": 5604446,
+    "sha256": "7fe4b810be43f16c49a0f39c0e3cbdb99e361f8d214e7d3acc926a0e9c0e2920"
+  },
+  "files": {
+    "AstroPhoto-0.9.0-beta.5-unsigned.apk": {
+      "bytes": 2234846,
+      "sha256": "f43061d5b2c98f5b225063459d8074670dd2465ec7746ef049b0962d30c7f436"
+    },
+    "candidate-unsigned.json": {
+      "bytes": 1598,
+      "sha256": "b38395e5473f7770523120dcd995589b17c00432cd491f9c279ee56693521460"
+    },
+    "CANDIDATE_NOTES_RU.md": {
+      "bytes": 1518,
+      "sha256": "108cf6896eb3e9d31146145e236c0b9225ce685844039e18829796728ebe96b2"
+    },
+    "mapping-unsigned.txt": {
+      "bytes": 57160057,
+      "sha256": "6944a4c2004ad682b030a0b9190a2883aaaab1124a9c9b3d23af5b8219cf0aae"
+    },
+    "PC_SIGNING_RU.md": {
+      "bytes": 5196,
+      "sha256": "71fc28306d4ed760ee75d662e83f153b4c0064e1657146e68ce594d4ab5bce51"
+    },
+    "SHA256SUMS.txt": {
+      "bytes": 456,
+      "sha256": "1188e39c8ae5ea5fc0a30e4f44ead7ef27ca5609c76fdb82f069ac4eabdae273"
+    }
+  },
+  "checks": {
+    "releaseBuild": "success",
+    "releaseBuildElapsed": "8m 27s",
+    "lintRelease": {
+      "Warning": 10
+    },
+    "embeddedSourceRevisionVerified": true,
+    "unsignedStateVerified": true,
+    "zipCrcAndMemberHashesVerified": true,
+    "signerSyntaxChecked": true,
+    "signerRefusesWithoutKey": true,
+    "phoneUsed": false,
+    "signedCandidateReceived": false,
+    "phoneAcceptancePassed": false,
+    "exportedMarkdownLinksVerified": true
+  },
+  "sourceCi": {
+    "url": "https://github.com/Joe6355/AstroPhoto/actions/runs/41219017637",
+    "lastObservedStatus": "in_progress",
+    "checkedAt": "2026-10-31T16:29:16Z"
+  }
+}
