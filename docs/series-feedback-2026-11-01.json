@@ -36,6 +36,11 @@
       "sha256": "fdac7f2afcacecf958d4986b13e6cc7db173ef594cf93b579eaa7c26c5014a09",
       "bytes": 1658865,
       "qaTargetApkUnchanged": true
+    },
+    "ci": {
+      "sha": "046c81ff888a2cdb6cf07abf6a30ed6d846ea494",
+      "runId": 41244873691,
+      "conclusion": "success"
     }
   },
   "hardwareProof": {
@@ -127,11 +132,19 @@
   "finalStayAwake": "0",
   "productionSourcesChanged": false,
   "mainReferenceStillApplies": "1a216856138eb8cb172c85b77546b7cf271a5f6c",
-  "physicalHumanConfirmation": "not_received",
+  "physicalHumanConfirmation": "owner_confirmed_sound_and_vibration",
   "processingCompletionFeedbackTested": false,
   "limitations": [
     "Direct SeriesCaptureRequest flags; settings UI was not toggled in this pass",
     "Final two JPEG fully decoded; two earlier incomplete attempts left own JPEG",
     "Full main-private hashing unavailable"
-  ]
+  ],
+  "ownerConfirmation": {
+    "receivedOn": "2026-11-01",
+    "reply": "Да, и звук, и вибрация",
+    "soundHeard": true,
+    "vibrationFelt": true,
+    "scope": "QA series completion on Xiaomi 23021RAA2Y",
+    "newPhoneTestPerformedForThisUpdate": false
+  }
 }
