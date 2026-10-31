@@ -40,7 +40,7 @@ class SeriesNotificationStopDeviceTest {
                 startTimerSeconds = if (mode == "timer") 10 else 0,
                 exposureTimeNs = if (mode == "capture") 3_000_000_000L else 1_000_000_000L,
                 iso = 400, focusDistance = 0f, focusMode = "INFINITY", jpegQuality = 92,
-                sessionFolder = folder, relativeDirectory = "Pictures/AstroPhoto/$folder/Lights/JPEG/",
+                sessionFolder = folder, relativeDirectory = "AstroPhoto/$folder/Lights/JPEG",
                 filePrefix = "QA_$mode", vibrationAfterSeries = false, soundAfterSeries = false
             )
             try {

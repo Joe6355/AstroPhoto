@@ -25,8 +25,10 @@
 Когда ПК доступен, [собрать и подписать актуальный main прежним ключом](BETA5_SIGN_ON_PC_RU.md). CI проверять именно для [исходной ревизии1a21685](https://github.com/Joe6355/AstroPhoto/actions/runs/41240812438). Более поздние коммиты документов допустимы, если входы APK прежние:
 
 ```powershell
-git diff --exit-code 1a216856138eb8cb172c85b77546b7cf271a5f6c HEAD -- app gradle build.gradle.kts settings.gradle.kts gradle.properties gradlew gradlew.bat
+git diff --exit-code 1a216856138eb8cb172c85b77546b7cf271a5f6c HEAD -- app gradle build.gradle.kts settings.gradle.kts gradle.properties gradlew gradlew.bat ':(exclude)app/src/androidTest'
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-SignedRelease.ps1 -ApplicationId com.joe6355.astrophoto
 ```
 
 В signed-candidate.zip использовать его собственные APK/candidate.json/mapping.txt вместе. Неподписанный APK ноутбука поверх основной установки не устанавливать, ключ QA для неё не подходит. После получения кандидата — новый фактический срез, replace-обновление основной версии и короткая проверка сохранённых сессий и трёх исправлений beta.5. Новую версию ради документации не повышать. Опубликованную beta.4 и её вложения не заменять.
+
+Проверка производственных входов исключает `app/src/androidTest`: после1a21685 добавлена [проверка сигналов серии](series-feedback-2026-11-01.md) и исправлен путь старого opt-in теста остановки. Это не изменение release-кода; APK/mapping из проверенного эталона остаются прежними.
