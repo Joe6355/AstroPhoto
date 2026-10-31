@@ -30,7 +30,10 @@ jobs:
         run: chmod +x gradlew
 
       - name: Unit tests, lint and debug/release builds
-        run: ./gradlew testDebugUnitTest lintDebug lintRelease assembleDebug assembleDebugAndroidTest assembleRelease --stacktrace
+        run: >-
+          ./gradlew testDebugUnitTest lintDebug lintRelease assembleDebug assembleDebugAndroidTest assembleRelease
+          "-Dorg.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8"
+          --max-workers=2 --stacktrace
 
       - name: Upload reports
         if: always()
