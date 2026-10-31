@@ -31,8 +31,8 @@ android {
             .getOrElse("com.joe6355.astrophoto")
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.9.0-beta.4"
+        versionCode = 6
+        versionName = "0.9.0-beta.5"
 
         manifestPlaceholders["astrophotoAppLabel"] = providers
             .gradleProperty("astrophoto.installAppLabel").getOrElse("@string/app_name")

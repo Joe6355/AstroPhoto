@@ -51,7 +51,7 @@ try {
         throw 'Неверный package ID или неоднозначный APK в выходных метаданных.'
     }
     $element = $metadata.elements[0]
-    if ([long]$element.versionCode -le 3) { throw 'Для обновления установленной версии нужен versionCode выше 3.' }
+    if ([long]$element.versionCode -le 5) { throw 'Для обновления beta.4 нужен versionCode не ниже 6.' }
     $apk = [IO.Path]::GetFullPath((Join-Path $outputRoot $element.outputFile))
     if (-not $apk.StartsWith($outputRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
         throw 'Путь APK выходит за пределы выходной папки сборки.'
@@ -60,6 +60,12 @@ try {
     if ($LASTEXITCODE -ne 0 -or $badging -notmatch "package: name='([^']+)'") { throw 'Не удалось проверить манифест APK.' }
     if ($Matches[1] -ne $ApplicationId -or $badging -match 'application-debuggable') {
         throw 'APK имеет неверный package ID или включённую отладку.'
+    }
+    if ($badging -notmatch "versionCode='([^']+)'" -or [long]$Matches[1] -ne [long]$element.versionCode) {
+        throw 'Версия APK не совпадает с метаданными сборки.'
+    }
+    if ($badging -notmatch "versionName='([^']+)'" -or $Matches[1] -ne $element.versionName) {
+        throw 'Название версии APK не совпадает с метаданными сборки.'
     }
     $signature = (& $apksigner verify --verbose --print-certs $apk) -join "`n"
     if ($LASTEXITCODE -ne 0 -or $signature -notmatch 'Signer #1 certificate SHA-256 digest: ([a-f0-9]+)') {
@@ -78,6 +84,8 @@ try {
     New-Item -ItemType Directory -Path $folder | Out-Null
     $copy = Join-Path $folder ("AstroPhoto-" + $element.versionName + '.apk')
     Copy-Item -LiteralPath $apk -Destination $copy
+    $mappingCopy = Join-Path $folder 'mapping.txt'
+    Copy-Item -LiteralPath 'app/build/outputs/mapping/release/mapping.txt' -Destination $mappingCopy
     $report = [ordered]@{
         sourceCommit = $sourceCommit
         applicationId = $ApplicationId
@@ -87,12 +95,17 @@ try {
         apkSha256 = (Get-FileHash -LiteralPath $copy -Algorithm SHA256).Hash.ToLowerInvariant()
         apkBytes = (Get-Item -LiteralPath $copy).Length
         debuggable = $false
+        mappingFile = 'mapping.txt'
+        mappingSha256 = (Get-FileHash -LiteralPath $mappingCopy -Algorithm SHA256).Hash.ToLowerInvariant()
     }
-    $report | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $folder 'candidate.json') -Encoding UTF8
-    Copy-Item -LiteralPath 'app/build/outputs/mapping/release/mapping.txt' -Destination (Join-Path $folder 'mapping.txt')
+    $candidateJson = Join-Path $folder 'candidate.json'
+    $report | ConvertTo-Json | Set-Content -LiteralPath $candidateJson -Encoding UTF8
+    $archive = Join-Path $folder ("AstroPhoto-" + $element.versionName + '-signed-candidate.zip')
+    Compress-Archive -LiteralPath $copy,$candidateJson,$mappingCopy -DestinationPath $archive
     Write-Output "Готовый подписанный кандидат: $copy"
     Write-Output "SHA-256: $($report.apkSha256)"
-    Write-Output 'APK и candidate.json можно перенести на ноутбук для проверки обновления.'
+    Write-Output "Архив для переноса на ноутбук: $archive"
+    Write-Output 'В архиве только APK, candidate.json и соответствующий mapping.txt; ключи не включаются.'
 } finally {
     Pop-Location
 }
