@@ -33,6 +33,7 @@ class RealDeviceProcessingAuditTest {
         val requestedCount = when (mode) {
             "average3", "cancel", "invalid" -> 3
             "average10", "deep10", "deepreg10" -> 10
+            "darkSparseFour" -> 4
             "median35", "sigma35" -> 35
             "deepAll", "darkSparseAll" -> frames.size
             else -> error("Unknown audit mode: $mode")
@@ -123,7 +124,7 @@ class RealDeviceProcessingAuditTest {
             }
             return@runBlocking
         }
-        if (mode == "darkSparseAll") {
+        if (mode == "darkSparseAll" || mode == "darkSparseFour") {
             val refused = withTimeout(5 * 60 * 1000L) {
                 stacker.profileStack(destination, selected, AstroProcessingProfile.DEEP_SKY, onProgress = progress)
             }
@@ -133,14 +134,17 @@ class RealDeviceProcessingAuditTest {
                 ?: error("Expected a typed registration refusal, got ${refused.exceptionOrNull()}")
             assertEquals(JpegProfileProcessingOutcome.FAILED_REGISTRATION, failure.outcome)
             assertEquals(1, failure.acceptedFrames)
-            assertEquals(20, failure.totalFrames)
+            assertEquals("The refusal must count all input JPEGs, including quality rejections",
+                requestedCount, failure.totalFrames)
             assertEquals(4, failure.minimumFrames)
+            assertTrue(failure.canContinueWithUserApproval)
             assertTrue(failure.message.orEmpty().contains("кадры очень тёмные"))
             assertTrue(failure.message.orEmpty().contains("Проверьте исходники и экспозицию"))
             val dialogText = profileContinuationMessage(AstroProcessingProfile.DEEP_SKY,
                 requireNotNull(failure.acceptedFrames), requireNotNull(failure.totalFrames),
                 requireNotNull(failure.minimumFrames), failure.inputAdvice)
             assertTrue(dialogText.contains("кадры очень тёмные"))
+            assertTrue(dialogText.contains("1 из $requestedCount кадров"))
             if (android.os.Build.VERSION.SDK_INT >= 29) {
                 val images = android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI
                 requireNotNull(context.contentResolver.query(images, arrayOf(android.provider.MediaStore.Images.Media._ID),
@@ -149,7 +153,7 @@ class RealDeviceProcessingAuditTest {
                     assertEquals("A refused profile must not publish an image", 0, cursor.count)
                 }
             }
-            report("QA_PASS mode=darkSparseAll outcome=FAILED_REGISTRATION accepted=1 total=20 noOutput=true")
+            report("QA_PASS mode=$mode outcome=FAILED_REGISTRATION accepted=1 total=$requestedCount noOutput=true")
             return@runBlocking
         }
         val result = withTimeout(20 * 60 * 1000L) {

@@ -872,7 +872,8 @@ class JpegStacker internal constructor(
                 }
                 requireMinimumRegisteredFrames(
                     acceptedFrames,
-                    selectedFrames.size,
+                    // Include JPEGs rejected before registration in the user-facing total.
+                    frames.size,
                     profile,
                     userApprovedInsufficientProfileFrames.get(),
                     inputAdvice = registrationInputAdvice(analyzedFrames.map { it.analysis })
@@ -881,7 +882,7 @@ class JpegStacker internal constructor(
                     warnings,
                     userApprovedInsufficientProfileFrames.get(),
                     acceptedFrames,
-                    selectedFrames.size,
+                    frames.size,
                     profile.minimumFrames
                 )
                 pipelineTiming.record(
