@@ -8,13 +8,16 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -49,11 +52,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -217,36 +222,63 @@ fun <T> AstroSegmentedControl(
     modifier: Modifier = Modifier,
     enabled: Boolean = true
 ) {
-    Row(
+    val textStyle = MaterialTheme.typography.labelMedium
+    val textMeasurer = rememberTextMeasurer()
+    val labels = options.map(label)
+    val widestWordPx = labels.maxOfOrNull {
+        textMeasurer.measure(it, style = textStyle).multiParagraph.minIntrinsicWidth
+    } ?: 0f
+    val minimumCellWidth = maxOf(
+        48.dp,
+        with(LocalDensity.current) { widestWordPx.toDp() } + AstroSpacing.Sm * 2 + 1.dp
+    )
+    val gap = 2.dp
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
-            .clip(MaterialTheme.shapes.small),
-        horizontalArrangement = Arrangement.spacedBy(2.dp)
+            .clip(MaterialTheme.shapes.small)
     ) {
-        options.forEach { option ->
-            val isSelected = option == selected
-            Surface(
-                modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = 48.dp)
-                    .semantics {
-                        this.selected = isSelected
-                        role = Role.RadioButton
+        val columnsThatFit = ((maxWidth + gap) / (minimumCellWidth + gap)).toInt()
+            .coerceIn(1, options.size.coerceAtLeast(1))
+        val rowCount = (options.size + columnsThatFit - 1) / columnsThatFit
+        // Balance the rows so four choices become 2 × 2 rather than 3 + 1.
+        val columns = if (rowCount == 0) 1 else (options.size + rowCount - 1) / rowCount
+        Column(verticalArrangement = Arrangement.spacedBy(gap)) {
+            options.chunked(columns).forEach { row ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min),
+                    horizontalArrangement = Arrangement.spacedBy(gap)
+                ) {
+                    row.forEach { option ->
+                        val isSelected = option == selected
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .heightIn(min = 48.dp)
+                                .semantics {
+                                    this.selected = isSelected
+                                    role = Role.RadioButton
+                                }
+                                .clickable(enabled = enabled) { onSelected(option) },
+                            color = if (isSelected) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant
+                            },
+                            contentColor = if (isSelected) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(AstroSpacing.Sm)) {
+                                Text(label(option), modifier = Modifier.fillMaxWidth(),
+                                    style = textStyle, textAlign = TextAlign.Center)
+                            }
+                        }
                     }
-                    .clickable(enabled = enabled) { onSelected(option) },
-                color = if (isSelected) {
-                    MaterialTheme.colorScheme.primaryContainer
-                } else {
-                    MaterialTheme.colorScheme.surfaceVariant
-                },
-                contentColor = if (isSelected) {
-                    MaterialTheme.colorScheme.onPrimaryContainer
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                }
-            ) {
-                Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(AstroSpacing.Sm)) {
-                    Text(label(option), style = MaterialTheme.typography.labelMedium, maxLines = 2)
+                    repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
                 }
             }
         }

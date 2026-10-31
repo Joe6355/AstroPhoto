@@ -1,0 +1,287 @@
+{
+  "schemaVersion": 1,
+  "checkedOn": "2026-11-01",
+  "baseCommit": "67ea8c58a5ddaebad2c0117aa4ebfea05c771940",
+  "device": {
+    "model": "23021RAA2Y",
+    "android": "13"
+  },
+  "qa": {
+    "versionCode": 6,
+    "versionName": "0.9.0-beta.5",
+    "applicationId": "com.joe6355.astrophoto.qa20261017",
+    "certificateSha256": "0e1ad0972929f280be98b250e1a37967982422883d8860b9d3ae9182a79f2eeb",
+    "files": {
+      "qa-fixed.apk": {
+        "bytes": 15112487,
+        "sha256": "af5c62a81fe5429dafb72551df4ca273f26b1060f4cb3a293c341325472d5984"
+      },
+      "qa-test-fixed.apk": {
+        "bytes": 1653033,
+        "sha256": "a2c0fdd09397b998b5d96e0f405f80c254f33b13ec78546a4b7de13fb5fd461b"
+      }
+    },
+    "uidAndInodeUnchanged": true,
+    "replaceOnly": true,
+    "productionFileSha256": "f62c239035ec5517784769421c8edb5bd2888f88ffe11fa096d4c5da030748a3"
+  },
+  "baseline": {
+    "tests": 3,
+    "failures": 2,
+    "elapsedSeconds": 9.381,
+    "largeFontWordSplittingAndClippingReproduced": true,
+    "normalFontPassed": true
+  },
+  "fixed": {
+    "tests": 3,
+    "passed": 3,
+    "elapsedSeconds": 11.084,
+    "cases": [
+      {
+        "fontScale": 2,
+        "widthDp": 320,
+        "labels": [
+          {
+            "label": "Светлая",
+            "lines": [
+              "Светлая"
+            ],
+            "visualOverflow": false,
+            "splitWord": false,
+            "clipped": false,
+            "didOverflowHeight": false,
+            "didOverflowWidth": false,
+            "widthPx": 393,
+            "heightPx": 77,
+            "paragraphHeightPx": 77,
+            "paragraphWidthPx": 393
+          },
+          {
+            "label": "Тёмная",
+            "lines": [
+              "Тёмная"
+            ],
+            "visualOverflow": false,
+            "splitWord": false,
+            "clipped": false,
+            "didOverflowHeight": false,
+            "didOverflowWidth": false,
+            "widthPx": 393,
+            "heightPx": 77,
+            "paragraphHeightPx": 77,
+            "paragraphWidthPx": 393
+          },
+          {
+            "label": "Очень тёмная",
+            "lines": [
+              "Очень",
+              "тёмная"
+            ],
+            "visualOverflow": false,
+            "splitWord": false,
+            "clipped": false,
+            "didOverflowHeight": false,
+            "didOverflowWidth": false,
+            "widthPx": 393,
+            "heightPx": 171,
+            "paragraphHeightPx": 171,
+            "paragraphWidthPx": 393
+          },
+          {
+            "label": "Красная",
+            "lines": [
+              "Красная"
+            ],
+            "visualOverflow": false,
+            "splitWord": false,
+            "clipped": false,
+            "didOverflowHeight": false,
+            "didOverflowWidth": false,
+            "widthPx": 393,
+            "heightPx": 77,
+            "paragraphHeightPx": 77,
+            "paragraphWidthPx": 393
+          }
+        ]
+      },
+      {
+        "fontScale": 2,
+        "widthDp": 240,
+        "labels": [
+          {
+            "label": "Светлая",
+            "lines": [
+              "Светлая"
+            ],
+            "visualOverflow": false,
+            "splitWord": false,
+            "clipped": false,
+            "didOverflowHeight": false,
+            "didOverflowWidth": false,
+            "widthPx": 283,
+            "heightPx": 77,
+            "paragraphHeightPx": 77,
+            "paragraphWidthPx": 283
+          },
+          {
+            "label": "Тёмная",
+            "lines": [
+              "Тёмная"
+            ],
+            "visualOverflow": false,
+            "splitWord": false,
+            "clipped": false,
+            "didOverflowHeight": false,
+            "didOverflowWidth": false,
+            "widthPx": 283,
+            "heightPx": 77,
+            "paragraphHeightPx": 77,
+            "paragraphWidthPx": 283
+          },
+          {
+            "label": "Очень тёмная",
+            "lines": [
+              "Очень",
+              "тёмная"
+            ],
+            "visualOverflow": false,
+            "splitWord": false,
+            "clipped": false,
+            "didOverflowHeight": false,
+            "didOverflowWidth": false,
+            "widthPx": 283,
+            "heightPx": 171,
+            "paragraphHeightPx": 171,
+            "paragraphWidthPx": 283
+          },
+          {
+            "label": "Красная",
+            "lines": [
+              "Красная"
+            ],
+            "visualOverflow": false,
+            "splitWord": false,
+            "clipped": false,
+            "didOverflowHeight": false,
+            "didOverflowWidth": false,
+            "widthPx": 283,
+            "heightPx": 77,
+            "paragraphHeightPx": 77,
+            "paragraphWidthPx": 283
+          }
+        ]
+      },
+      {
+        "fontScale": 1,
+        "widthDp": 360,
+        "labels": [
+          {
+            "label": "Светлая",
+            "lines": [
+              "Светлая"
+            ],
+            "visualOverflow": false,
+            "splitWord": false,
+            "clipped": false,
+            "didOverflowHeight": false,
+            "didOverflowWidth": false,
+            "widthPx": 199,
+            "heightPx": 39,
+            "paragraphHeightPx": 39,
+            "paragraphWidthPx": 199
+          },
+          {
+            "label": "Тёмная",
+            "lines": [
+              "Тёмная"
+            ],
+            "visualOverflow": false,
+            "splitWord": false,
+            "clipped": false,
+            "didOverflowHeight": false,
+            "didOverflowWidth": false,
+            "widthPx": 199,
+            "heightPx": 39,
+            "paragraphHeightPx": 39,
+            "paragraphWidthPx": 199
+          },
+          {
+            "label": "Очень тёмная",
+            "lines": [
+              "Очень",
+              "тёмная"
+            ],
+            "visualOverflow": false,
+            "splitWord": false,
+            "clipped": false,
+            "didOverflowHeight": false,
+            "didOverflowWidth": false,
+            "widthPx": 199,
+            "heightPx": 86,
+            "paragraphHeightPx": 86,
+            "paragraphWidthPx": 199
+          },
+          {
+            "label": "Красная",
+            "lines": [
+              "Красная"
+            ],
+            "visualOverflow": false,
+            "splitWord": false,
+            "clipped": false,
+            "didOverflowHeight": false,
+            "didOverflowWidth": false,
+            "widthPx": 199,
+            "heightPx": 39,
+            "paragraphHeightPx": 39,
+            "paragraphWidthPx": 199
+          }
+        ]
+      }
+    ],
+    "selectionAndCallbackCheckedForAllFourOptions": true
+  },
+  "actualSettingsAtSystemFontScale": 2.0,
+  "actualRedThemeClickChecked": true,
+  "qaBuild": "BUILD SUCCESSFUL in 2m21s",
+  "lintDebug": {
+    "Warning": 14
+  },
+  "dataPreservation": {
+    "groups": {
+      "public": {
+        "before": 1785,
+        "after": 1785,
+        "missing": [],
+        "changed": [],
+        "added": []
+      },
+      "legacyPrivate": {
+        "before": 222,
+        "after": 222,
+        "missing": [],
+        "changed": [],
+        "added": []
+      },
+      "qaPrivate": {
+        "before": 568,
+        "after": 568,
+        "missing": [],
+        "changed": [
+          "files/profileInstalled"
+        ],
+        "added": []
+      }
+    },
+    "packagesIdentical": false,
+    "systemSettingsIdentical": true
+  },
+  "allOriginalUidAndDataInodesUnchanged": true,
+  "mainAndLegacyApksUnchanged": true,
+  "originalPreferenceFilesRestored": 3,
+  "finalFontScale": "0.81",
+  "finalStayAwake": "0",
+  "qaStopped": true,
+  "productionPixelAlgorithmsChanged": false,
+  "mainSigningAndUpdatePerformed": false
+}
