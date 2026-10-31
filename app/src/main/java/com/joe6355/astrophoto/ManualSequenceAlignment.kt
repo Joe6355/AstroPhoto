@@ -336,9 +336,9 @@ internal suspend fun <T> runManualStackingOperation(
     } catch (reportError: Exception) {
         error.addSuppressed(reportError)
     }
-    Result.failure(error)
+    Result.failure(storageWriteFailure(error, PROCESSING_STORAGE_FULL_MESSAGE))
 } catch (error: Exception) {
-    Result.failure(error)
+    Result.failure(storageWriteFailure(error, PROCESSING_STORAGE_FULL_MESSAGE))
 }
 
 internal fun ManualAlignmentPathReport.toStableFields(): Map<String, String> = linkedMapOf(

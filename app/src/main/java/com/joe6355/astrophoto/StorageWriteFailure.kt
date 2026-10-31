@@ -3,6 +3,9 @@ package com.joe6355.astrophoto
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
 
+internal const val PROCESSING_STORAGE_FULL_MESSAGE =
+    "Недостаточно свободного места для обработки. Освободите место и повторите обработку."
+
 private val NO_SPACE_CODE = Regex("\\bENOSPC\\b", RegexOption.IGNORE_CASE)
 
 internal fun storageWriteFailure(error: Throwable, message: String): Throwable {

@@ -1903,11 +1903,12 @@ class JpegStacker internal constructor(
                 "Profile ${profile.title} failed at $currentStage: ${error.message}",
                 error
             )
+            val failure = storageWriteFailure(error, PROCESSING_STORAGE_FULL_MESSAGE)
             return@withContext Result.failure(
                 IllegalStateException(
                     "Ошибка на этапе: $currentStage. " +
-                        (error.message ?: "Неизвестная ошибка"),
-                    error
+                        (failure.message ?: "Неизвестная ошибка"),
+                    failure
                 )
             )
         }
