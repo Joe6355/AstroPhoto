@@ -283,5 +283,7 @@
   "finalStayAwake": "0",
   "qaStopped": true,
   "productionPixelAlgorithmsChanged": false,
-  "mainSigningAndUpdatePerformed": false
+  "mainSigningAndUpdatePerformed": false,
+  "mainUnsignedReferenceSourceCommit": "1a216856138eb8cb172c85b77546b7cf271a5f6c",
+  "mainUnsignedReferenceReport": "beta5-preparation-2026-11-01.md"
 }
