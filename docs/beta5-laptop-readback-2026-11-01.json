@@ -1,0 +1,49 @@
+{
+  "checkedAt": "2026-11-01T15:16:23.925228+00:00",
+  "versionName": "0.9.0-beta.5",
+  "versionCode": 6,
+  "apkSha256": "6321f48492a74a9ed92513952ef60393eccfb9ac4d2f0e18cbaebe345202423f",
+  "certificateSha256": "79e37ad16c7cceaf6bae398d926e548e3f64ea0a6e248975cceb2a6e3d374f93",
+  "embeddedSourceCommit": "e5090518bb444f095a71b6c8eb1efdc37ef460b1",
+  "nonDebuggable": true,
+  "reinstalled": false,
+  "phoneDataModified": false,
+  "status": "matched_pc_signed_beta5_without_reinstall",
+  "preservationReadback": {
+    "public": {
+      "beforeLaptopFiles": 1789,
+      "currentFiles": 1793,
+      "missing": 0,
+      "changed": 0,
+      "added": 4
+    },
+    "legacyPrivate": {
+      "beforeLaptopFiles": 222,
+      "currentFiles": 222,
+      "missing": 0,
+      "changed": 0,
+      "added": 0
+    },
+    "qaPrivate": {
+      "beforeLaptopFiles": 568,
+      "currentFiles": 568,
+      "missing": 0,
+      "changed": 0,
+      "added": 0
+    }
+  },
+  "pcReport": "beta5-main-update-2026-11-01.md",
+  "pcCommitsAcceptedByFastForward": [
+    "e5090518bb444f095a71b6c8eb1efdc37ef460b1",
+    "d01dead5938114eade84e7738371d3e8ddd6675b"
+  ],
+  "previousSourceAndReportCiSuccessful": [
+    41298230181,
+    41317531706
+  ],
+  "allFourNewCopiesMatchOriginalHashes": true,
+  "completeMainPrivateHashingAvailable": false,
+  "uiOrProcessingTestsRepeated": false,
+  "originalPcArchiveTransferredInThisTurn": false,
+  "apkVerificationSource": "read-only pull of installed main APK"
+}
