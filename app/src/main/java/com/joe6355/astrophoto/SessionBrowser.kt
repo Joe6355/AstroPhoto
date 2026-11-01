@@ -69,7 +69,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.core.content.ContextCompat
@@ -534,16 +533,15 @@ internal fun SessionSummaryCard(
                 else MaterialTheme.colorScheme.surface
         )
     ) {
+        Text(
+            text = session.sessionName,
+            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 12.dp, end = 12.dp),
+            style = MaterialTheme.typography.titleSmall
+        )
         Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically) {
             SessionCover(session, Modifier.size(56.dp, 64.dp).clip(MaterialTheme.shapes.small), maxSize = 192)
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(
-                    text = session.sessionName,
-                    style = MaterialTheme.typography.titleSmall,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
                 if (active) {
                     Text("Активная", color = MaterialTheme.colorScheme.primary,
                         style = MaterialTheme.typography.labelMedium)

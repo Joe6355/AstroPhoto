@@ -100,25 +100,42 @@ fun AstroTopBar(
     onBack: (() -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {}
 ) {
-    Row(
+    val titleBelowActions = LocalDensity.current.fontScale >= 1.5f
+    Column(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = 56.dp)
-            .padding(horizontal = AstroSpacing.Md),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(AstroSpacing.Sm)
+            .padding(horizontal = AstroSpacing.Md)
     ) {
-        if (onBack != null) {
-            AstroTextButton(text = "Назад", onClick = onBack)
+        Row(
+            modifier = Modifier.fillMaxWidth().heightIn(
+                min = if (titleBelowActions && onBack == null) 0.dp else 56.dp
+            ),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(AstroSpacing.Sm)
+        ) {
+            if (onBack != null) {
+                AstroTextButton(text = "Назад", onClick = onBack)
+            }
+            if (titleBelowActions) {
+                Spacer(Modifier.weight(1f))
+            } else {
+                Text(
+                    text = title,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            actions()
         }
-        Text(
-            text = title,
-            modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.titleLarge,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        actions()
+        if (titleBelowActions) {
+            Text(
+                text = title,
+                modifier = Modifier.fillMaxWidth().padding(bottom = AstroSpacing.Sm),
+                style = MaterialTheme.typography.titleLarge
+            )
+        }
     }
 }
 

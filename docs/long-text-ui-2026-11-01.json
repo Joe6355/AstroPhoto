@@ -1,0 +1,234 @@
+{
+  "schemaVersion": 1,
+  "checkedOn": "2026-11-01",
+  "baseCommit": "10bf088f53f2706f2c5385392cbfa9ea4601bcc6",
+  "productionWorkingTreeModifiedAtQaBuild": true,
+  "productionFileGitBlobs": {
+    "app/src/main/java/com/joe6355/astrophoto/ui/AstroComponents.kt": "cc7f423c9076159248d800fd01c609e4d4f94fed",
+    "app/src/main/java/com/joe6355/astrophoto/SessionBrowser.kt": "1cbff8c183373e6d2c2039af6dcde31c0aa9c5ff",
+    "app/src/main/java/com/joe6355/astrophoto/ProcessedResults.kt": "14461892e0e2dede9a243a86b3ecd19a251d9981"
+  },
+  "device": {
+    "model": "23021RAA2Y",
+    "android": "13"
+  },
+  "qaPackage": "com.joe6355.astrophoto.qa20261017",
+  "appApks": {
+    "com.joe6355.astrophoto": {
+      "apkSha256": "6321f48492a74a9ed92513952ef60393eccfb9ac4d2f0e18cbaebe345202423f",
+      "uid": 10505,
+      "ceDataInode": 1427204,
+      "versionCode": 6,
+      "versionName": "0.9.0-beta.5"
+    },
+    "com.example.astrophoto": {
+      "apkSha256": "08e3e74e8e60033d1e101f347a546d8b4069f0cd8a86e4163b1d608f6043a595",
+      "uid": 10503,
+      "ceDataInode": 1221503,
+      "versionCode": 3,
+      "versionName": "0.9.0-beta.2"
+    },
+    "com.joe6355.astrophoto.qa20261017": {
+      "apkSha256": "ab021111c97d621c1e3bd028688fdc51e4ed0142ee68d105524135aedf5348ff",
+      "uid": 10354,
+      "ceDataInode": 1499328,
+      "versionCode": 6,
+      "versionName": "0.9.0-beta.5"
+    }
+  },
+  "qaApk": {
+    "sha256": "ab021111c97d621c1e3bd028688fdc51e4ed0142ee68d105524135aedf5348ff",
+    "bytes": 16530039,
+    "package": "com.joe6355.astrophoto.qa20261017"
+  },
+  "finalTestApk": {
+    "sha256": "657ee14c0b48300a2e0d02d9d243f4a9b67b1375c944806757ee91a720836f7d",
+    "bytes": 1701461,
+    "package": "com.joe6355.astrophoto.qa20261017.test"
+  },
+  "newQaInstalledWithReplace": true,
+  "mainAndLegacyApksUnchanged": true,
+  "allAppUidsAndDataInodesUnchanged": true,
+  "rendering": {
+    "widthDp": 320,
+    "largeFontScale": 2,
+    "normalHeaderFontScale": 1,
+    "redNight": true,
+    "systemFontChanged": false,
+    "systemThemeChanged": false
+  },
+  "scenarios": {
+    "session-header": {
+      "label": "Ночная съёмка Млечного Пути у реки — проверка длинного названия и последних слов",
+      "fontScale": 2,
+      "widthDp": 320,
+      "lines": 6,
+      "exceedsMaxLines": false,
+      "ellipsis": false,
+      "heightOverflow": false,
+      "paintedOutsideWidth": false
+    },
+    "normal-header": {
+      "label": "Сессия",
+      "fontScale": 1,
+      "widthDp": 320,
+      "lines": 1,
+      "exceedsMaxLines": false,
+      "ellipsis": false,
+      "heightOverflow": false,
+      "paintedOutsideWidth": false
+    },
+    "session-card": {
+      "label": "Ночная съёмка Млечного Пути у реки — проверка длинного названия и последних слов",
+      "fontScale": 2,
+      "widthDp": 320,
+      "lines": 5,
+      "exceedsMaxLines": false,
+      "ellipsis": false,
+      "heightOverflow": false,
+      "paintedOutsideWidth": false
+    },
+    "result-name": {
+      "label": "Edited_20261101_milky_way_after_stack_full_resolution_quality_check_control_ending.png",
+      "fontScale": 2,
+      "widthDp": 320,
+      "lines": 5,
+      "exceedsMaxLines": false,
+      "ellipsis": false,
+      "heightOverflow": false,
+      "paintedOutsideWidth": false,
+      "openActionLines": 1,
+      "openActionClipped": false,
+      "openActionWidthPx": 298,
+      "openActionParagraphWidthPx": 594,
+      "openActionInkWidthPx": 298,
+      "presetActionLines": 1,
+      "presetActionClipped": false,
+      "presetActionWidthPx": 297,
+      "presetActionParagraphWidthPx": 638,
+      "presetActionInkWidthPx": 298
+    },
+    "result-error": {
+      "label": "Файл не удалось открыть",
+      "fontScale": 2,
+      "widthDp": 320,
+      "lines": 2,
+      "exceedsMaxLines": false,
+      "ellipsis": false,
+      "heightOverflow": false,
+      "paintedOutsideWidth": false,
+      "messageLeftInsetDp": 12,
+      "openActionLines": 1,
+      "openActionClipped": false,
+      "openActionWidthPx": 298,
+      "openActionParagraphWidthPx": 594,
+      "openActionInkWidthPx": 298,
+      "presetActionLines": 1,
+      "presetActionClipped": false,
+      "presetActionWidthPx": 297,
+      "presetActionParagraphWidthPx": 638,
+      "presetActionInkWidthPx": 298
+    }
+  },
+  "nativeAttempts": [
+    {
+      "stage": "baseline",
+      "total": 5,
+      "failures": 4,
+      "elapsedSeconds": 14.601,
+      "successfulMethods": [
+        "normalFontHeaderRemainsCompactAndNavigationWorks"
+      ]
+    },
+    {
+      "stage": "fixed",
+      "total": 5,
+      "failures": 2,
+      "elapsedSeconds": 15.403,
+      "successfulMethods": [
+        "longSessionHeaderKeepsFullNameAndNavigationAtTwoHundredPercent",
+        "sessionCardShowsFullDistinguishableNameAtTwoHundredPercent",
+        "normalFontHeaderRemainsCompactAndNavigationWorks"
+      ]
+    },
+    {
+      "stage": "checked",
+      "total": 2,
+      "failures": 2,
+      "elapsedSeconds": 7.559,
+      "successfulMethods": []
+    },
+    {
+      "stage": "final",
+      "total": 2,
+      "failures": 0,
+      "elapsedSeconds": 9.231,
+      "successfulMethods": [
+        "resultCardShowsFullFileNameAtTwoHundredPercent",
+        "resultErrorUsesCardWidthAndActionsRemainReachable"
+      ]
+    }
+  ],
+  "allFiveScenariosEventuallyPassed": true,
+  "normalHeaderAndSessionScenariosNotRepeatedAfterPassing": true,
+  "appApkUnchangedWhileRefiningTestMeasurement": true,
+  "screenshotsVisuallyInspected": true,
+  "qaBuildAndLintSeconds": 294,
+  "lintDebug": {
+    "Warning": 14
+  },
+  "finalTestCompileSeconds": 5,
+  "dataPreservation": {
+    "groups": {
+      "public": {
+        "before": 1807,
+        "after": 1807,
+        "missing": [],
+        "changed": [],
+        "added": []
+      },
+      "legacyPrivate": {
+        "before": 222,
+        "after": 222,
+        "missing": [],
+        "changed": [],
+        "added": []
+      },
+      "qaPrivate": {
+        "before": 574,
+        "after": 574,
+        "missing": [],
+        "changed": [
+          "files/profileInstalled"
+        ],
+        "added": []
+      }
+    },
+    "packagesIdentical": false,
+    "systemSettingsIdentical": true
+  },
+  "qaOriginalFilesByteExactExceptProfileInstalled": 573,
+  "originalPreferenceFilesRestored": 3,
+  "qaBackup": {
+    "qaPrivateFilesBackedUpAndHashed": 574,
+    "tarBytes": 187525632,
+    "originalApkBackedUp": true,
+    "originalStayAwake": "0",
+    "temporaryStayAwake": "3",
+    "phoneUnlockedBeforeSettingStayAwake": true
+  },
+  "finalFontScale": "0.81",
+  "finalStayAwake": "0",
+  "qaStoppedAndHomePressed": true,
+  "fixturesDeletedOnlyByOwnInsertedUris": true,
+  "mainPrivateFullHashingAvailable": false,
+  "imageAlgorithmsChanged": false,
+  "rawReintroduced": false,
+  "mainUiUpdateWithThisFixInstalled": false,
+  "releaseBuildForThisFixPreparedYet": false,
+  "previousCiVerified": {
+    "sha": "10bf088f53f2706f2c5385392cbfa9ea4601bcc6",
+    "conclusion": "success",
+    "url": "https://github.com/Joe6355/AstroPhoto/actions/runs/41329826156"
+  }
+}

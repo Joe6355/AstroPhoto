@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -1184,6 +1185,12 @@ private fun ProcessedResultCard(
         )
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
+            Text(
+                text = result.fileName,
+                modifier = Modifier.fillMaxWidth(),
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(text = result.type.title, color = MaterialTheme.colorScheme.secondary)
             Row(
                 modifier = Modifier
                     .fillMaxWidth(),
@@ -1204,7 +1211,7 @@ private fun ProcessedResultCard(
                             contentScale = ContentScale.Crop
                         )
                     } ?: if (thumbnailFailed || hasKnownProblem) {
-                        Text("Ошибка", color = AstroColors.Error)
+                        Text("Ошибка", color = AstroColors.Error, style = MaterialTheme.typography.labelMedium)
                     } else if (thumbnailLoading) {
                         CircularProgressIndicator()
                     } else {
@@ -1219,33 +1226,6 @@ private fun ProcessedResultCard(
                         .weight(1f)
                         .padding(start = 12.dp)
                 ) {
-                    Text(
-                        text = result.fileName,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = result.type.title,
-                        color = MaterialTheme.colorScheme.secondary
-                    )
-                    if (
-                        result.type == ProcessedResultType.RECOVERED_STARS ||
-                        result.type == ProcessedResultType.EXPERIMENTAL_STARS
-                    ) {
-                        Text(
-                            text = "Проверьте возможные артефакты",
-                            color = AstroColors.Warning,
-                            style = MaterialTheme.typography.labelSmall
-                        )
-                    }
-                    if (hasKnownProblem) {
-                        Text(
-                            text = result.errorMessage ?: "Файл не удалось открыть",
-                            color = AstroColors.Error,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
                     Text(
                         text = "${formatProcessedDate(result.createdAtMillis)} • " +
                             formatProcessedSize(result.sizeBytes),
@@ -1267,6 +1247,24 @@ private fun ProcessedResultCard(
                         enabled = canOpen
                     )
                 }
+            }
+            if (
+                result.type == ProcessedResultType.RECOVERED_STARS ||
+                result.type == ProcessedResultType.EXPERIMENTAL_STARS
+            ) {
+                Text(
+                    text = "Проверьте возможные артефакты",
+                    color = AstroColors.Warning,
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+            if (hasKnownProblem) {
+                Text(
+                    text = result.errorMessage ?: "Файл не удалось открыть",
+                    modifier = Modifier.fillMaxWidth(),
+                    color = AstroColors.Error,
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
             if (!compareMode) {
                 ProcessedResultActions(
@@ -1293,6 +1291,7 @@ internal fun <T> disposeCapturedResource(
 }
 
 @Composable
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 fun ProcessedResultActions(
     canOpen: Boolean,
     canEdit: Boolean,
@@ -1305,26 +1304,23 @@ fun ProcessedResultActions(
     fileActionsEnabled: Boolean = true
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
-    Row(
+    FlowRow(
         modifier = modifier
             .fillMaxWidth()
             .testTag(AstroTestTags.ResultActions),
-        verticalAlignment = Alignment.CenterVertically
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Button(
             onClick = onOpen,
-            enabled = canOpen,
-            modifier = Modifier.weight(1f)
+            enabled = canOpen
         ) {
             Text("Открыть")
         }
         AstroSecondaryButton(
             text = "Пресеты",
             onClick = onEdit,
-            enabled = canEdit && fileActionsEnabled,
-            modifier = Modifier
-                .weight(1f)
-                .padding(start = 8.dp)
+            enabled = canEdit && fileActionsEnabled
         )
         Box {
             IconButton(
