@@ -225,10 +225,18 @@
   "imageAlgorithmsChanged": false,
   "rawReintroduced": false,
   "mainUiUpdateWithThisFixInstalled": false,
-  "releaseBuildForThisFixPreparedYet": false,
+  "releaseBuildForThisFixPreparedYet": true,
   "previousCiVerified": {
     "sha": "10bf088f53f2706f2c5385392cbfa9ea4601bcc6",
     "conclusion": "success",
     "url": "https://github.com/Joe6355/AstroPhoto/actions/runs/41329826156"
+  },
+  "releasePreparation": {
+    "sourceCommit": "1810fbf8e9601143f64709b2ff2a997aac929901",
+    "report": "beta5-long-text-preparation-2026-11-01.json",
+    "apkSha256": "2d888bd6fe5a6e3e68ed4426eae5bc987ad7073fbcf15c7a6919e27e9c472e37",
+    "mappingSha256": "ab8a43c751d67239f2baea4f4a043c9681c0e17af5410dfe6379bd2f1657868c",
+    "archiveSha256": "ab26f028f8f75043665e75e364028e87bb6c959bbbfcf1e857378ce06d90afed",
+    "signedOrInstalledOnMain": false
   }
 }
