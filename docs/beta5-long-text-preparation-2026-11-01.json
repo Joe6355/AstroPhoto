@@ -83,9 +83,9 @@
   "supersedesUnsignedReferenceSource": "1a216856138eb8cb172c85b77546b7cf271a5f6c",
   "sourceCiAtHandoff": {
     "sha": "1810fbf8e9601143f64709b2ff2a997aac929901",
-    "checkedAt": "2026-11-01T17:58:43.585222+00:00",
-    "status": "in_progress",
-    "conclusion": null,
+    "checkedAt": "2026-11-01T18:02:40.212817+00:00",
+    "status": "completed",
+    "conclusion": "success",
     "url": "https://github.com/Joe6355/AstroPhoto/actions/runs/41333255739"
   }
 }
