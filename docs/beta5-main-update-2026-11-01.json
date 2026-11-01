@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "checkedOn": "2026-11-01",
+  "status": "passed_limited_signed_main_update",
+  "device": {
+    "model": "23021RAA2Y",
+    "android": "13"
+  },
+  "candidate": {
+    "sourceCommit": "e5090518bb444f095a71b6c8eb1efdc37ef460b1",
+    "applicationId": "com.joe6355.astrophoto",
+    "versionName": "0.9.0-beta.5",
+    "versionCode": 6,
+    "certificateSha256": "79e37ad16c7cceaf6bae398d926e548e3f64ea0a6e248975cceb2a6e3d374f93",
+    "apkSha256": "6321f48492a74a9ed92513952ef60393eccfb9ac4d2f0e18cbaebe345202423f",
+    "apkBytes": 2243038,
+    "debuggable": false,
+    "mappingFile": "mapping.txt",
+    "mappingSha256": "faa3ef54797c91997383baefe9127bf4893371bfe40139384a9dcb3dcd5b4002"
+  },
+  "archive": {
+    "localRelativePath": "artifacts/pc-signed-release-20261101_182757/AstroPhoto-0.9.0-beta.5-signed-candidate.zip",
+    "bytes": 5581745,
+    "sha256": "d0f1c6b6fd98ffebd2844586af9f3674d37d58e353ec9987cef9ec45458ee006",
+    "entriesVerified": 3
+  },
+  "sourceCi": {
+    "head_sha": "e5090518bb444f095a71b6c8eb1efdc37ef460b1",
+    "conclusion": "success",
+    "html_url": "https://github.com/Joe6355/AstroPhoto/actions/runs/41298230181"
+  },
+  "installation": {
+    "replaceOnly": true,
+    "success": true,
+    "coldStartMs": 1712,
+    "nonDebuggable": true,
+    "uidDataDirectoryPermissionsPreservedImmediatelyAfterUpdate": true,
+    "otherApplicationsUnchangedAtPostInstallSnapshot": true
+  },
+  "preservationImmediatelyAfterUpdate": {
+    "shared": 1789,
+    "legacyPrivate": 222,
+    "qaPrivate": 568,
+    "missing": 0,
+    "changed": 0,
+    "added": 0,
+    "backupTarFilesMatched": {
+      "com.example.astrophoto": 222,
+      "com.joe6355.astrophoto.qa20261017": 568
+    }
+  },
+  "checks": {
+    "mainSettingsPreservedImmediatelyAfterUpdate": true,
+    "versionShownInAbout": true,
+    "largeFont": {
+      "fontScale": "2.0",
+      "selectedTheme": "Красная",
+      "themeLabelBounds": {
+        "Красная": "[565,1539][1014,1616]",
+        "Очень тёмная": "[66,1539][515,1616]",
+        "Светлая": "[66,1401][515,1478]",
+        "Тёмная": "[565,1401][1014,1478]"
+      }
+    },
+    "originalThemeRestoredInUi": true,
+    "fontRestoreCommandCompleted": true,
+    "counter": {
+      "passed": true,
+      "acceptedFrames": 1,
+      "totalFrames": 4,
+      "cancelled": true,
+      "dialogText": "Продолжить с прошедшими кадрами?\nПроверку прошли 1 из 4 кадров. Для режима «Улучшение фото» обычно нужно минимум 4. Отклонённые кадры не будут использованы. Результат может быть шумнее или содержать меньше деталей.\n\nВ большинстве исходных JPEG недостаточно надёжных звёзд: кадры очень тёмные. Проверьте исходники и экспозицию; для выравнивания нужны звёзды в разных частях кадра.\nОтмена\nПродолжить обработку"
+    },
+    "storageMessageIncludedInDex": true,
+    "mainEnospcRuntimeFaultInjected": false
+  },
+  "ownFixture": {
+    "sessionFolder": "/sdcard/Pictures/AstroPhoto/Session_20261101_184828_PC_BETA5_UPDATE_20261101",
+    "copiedFrames": 4,
+    "allDecoded": true,
+    "size": [
+      1440,
+      1920
+    ]
+  },
+  "notVerified": {
+    "completeMainPrivateBytes": true,
+    "mainEnospcRuntimeFaultInjection": true,
+    "fullPhysicalStorage": true,
+    "otherPhonesAndRealNightSky": true
+  },
+  "nextSteps": [
+    "Do not repeat this signed update or closed UI checks without new cause",
+    "Continue remaining device/night/resource cases in RELEASE_CHECKLIST.md",
+    "Keep published beta.4 and signing keys intact"
+  ],
+  "finalComparison": {
+    "passed": true,
+    "originalSharedFilesPreserved": 1789,
+    "sharedFilesAfter": 1793,
+    "ownNewJpegCopies": 4,
+    "legacyPrivatePreserved": 222,
+    "qaPrivatePreserved": 568,
+    "missing": 0,
+    "changed": 0,
+    "newPngFiles": 0,
+    "originalCameraAndActiveSessionPreserved": true,
+    "visibleSettingsPreserved": true,
+    "systemSettingsPreserved": true,
+    "otherApplicationsUnchanged": true,
+    "finalColdStartMs": 562,
+    "adbPort": 5038,
+    "ownAddedFiles": [
+      "/sdcard/Pictures/AstroPhoto/Session_20261101_184828_PC_BETA5_UPDATE_20261101/Lights/JPEG/AstroPhoto_20261030_213831.jpg",
+      "/sdcard/Pictures/AstroPhoto/Session_20261101_184828_PC_BETA5_UPDATE_20261101/Lights/JPEG/AstroSeries_20261030_213939_001.jpg",
+      "/sdcard/Pictures/AstroPhoto/Session_20261101_184828_PC_BETA5_UPDATE_20261101/Lights/JPEG/AstroSeries_20261030_213939_002.jpg",
+      "/sdcard/Pictures/AstroPhoto/Session_20261101_184828_PC_BETA5_UPDATE_20261101/Lights/JPEG/AstroSeries_20261030_213939_003.jpg"
+    ]
+  }
+}
