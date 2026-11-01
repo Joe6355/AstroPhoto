@@ -1,0 +1,130 @@
+{
+  "schemaVersion": 1,
+  "checkedOn": "2026-11-01",
+  "baseCommit": "5ad7d04a365ad0814a49aa0d05b25848b048471b",
+  "device": {
+    "model": "23021RAA2Y",
+    "android": "13"
+  },
+  "targetPackage": "com.joe6355.astrophoto.qa20261017",
+  "appApks": {
+    "com.joe6355.astrophoto": {
+      "apkSha256": "6321f48492a74a9ed92513952ef60393eccfb9ac4d2f0e18cbaebe345202423f",
+      "uid": 10505,
+      "ceDataInode": 1427204,
+      "versionCode": 6,
+      "versionName": "0.9.0-beta.5"
+    },
+    "com.example.astrophoto": {
+      "apkSha256": "08e3e74e8e60033d1e101f347a546d8b4069f0cd8a86e4163b1d608f6043a595",
+      "uid": 10503,
+      "ceDataInode": 1221503,
+      "versionCode": 3,
+      "versionName": "0.9.0-beta.2"
+    },
+    "com.joe6355.astrophoto.qa20261017": {
+      "apkSha256": "af5c62a81fe5429dafb72551df4ca273f26b1060f4cb3a293c341325472d5984",
+      "uid": 10354,
+      "ceDataInode": 1499328,
+      "versionCode": 6,
+      "versionName": "0.9.0-beta.5"
+    }
+  },
+  "nativeTest": {
+    "passed": 1,
+    "elapsedSeconds": 13.312,
+    "testApk": {
+      "sha256": "0a154d4457a7a5009d09a038495423b283479dad4fc077ab220b9bcf5282defe",
+      "bytes": 1669645,
+      "qaTargetApkUnchanged": true
+    },
+    "realProductionUiComponent": "JpegStackingBlock",
+    "realCoordinatorAndServiceUsed": true,
+    "directNotifyCompletionFeedbackInvocation": false,
+    "minimumSdkForOptInAudit": 31,
+    "finalCompileAfterSdkAnnotationSeconds": 7
+  },
+  "processingAndHardwareProof": {
+    "folder": "Session_QA_ProcessingFeedback_fa24b78e-ad6d-4cb7-869c-520b289f290d",
+    "sourceCount": 2,
+    "musicVolume": 11,
+    "musicVolumeMax": 15,
+    "cases": [
+      {
+        "enabled": true,
+        "completedCallbacks": 1,
+        "musicPlaybackObserved": true,
+        "vibrations": [
+          "startTime: 11-01 20:31:40.874, endTime: 11-01 20:31:41.078, durationMs: 204, status: finished, effect: Mono{mEffect=Composed{segments=[Step{amplitude=1.0, frequencyHz=0.0, duration=200}], repeat=-1}}, originalEffect: Mono{mEffect=Composed{segments=[Step{amplitude=-1.0, frequencyHz=0.0, duration=200}], repeat=-1}}, scale: 0,00, attrs: VibrationAttributes: Usage=TOUCH Audio Usage= USAGE_UNKNOWN Flags=0, uid: 10354, opPkg: com.joe6355.astrophoto.qa20261017, reason: null"
+        ],
+        "ownAudioTracksDuringFeedback": [
+          "F1     4816    yes  21978   31257    6221 A  0x000 00000001 00000001  48000  3   1  0   -12     0     0     0  00000000    960     960 f         0*       0       new"
+        ],
+        "ownAudioTracksAfterCleanup": [],
+        "cleanupObservedAfterWaitMs": 2247
+      },
+      {
+        "enabled": false,
+        "completedCallbacks": 2,
+        "musicPlaybackObserved": false,
+        "vibrations": [],
+        "ownAudioTracksDuringFeedback": [],
+        "ownAudioTracksAfterCleanup": [],
+        "cleanupObservedAfterWaitMs": 118
+      }
+    ],
+    "outputs": [
+      "Stacked_20261101_203140.png",
+      "Stacked_20261101_203144.png"
+    ],
+    "decodedOutputWidth": 64,
+    "decodedOutputHeight": 64,
+    "sourcesUnchanged": true,
+    "activeSessionUnchanged": true
+  },
+  "dataPreservation": {
+    "groups": {
+      "public": {
+        "before": 1793,
+        "after": 1797,
+        "missing": [],
+        "changed": [],
+        "added": [
+          "/sdcard/Pictures/AstroPhoto/Session_QA_ProcessingFeedback_fa24b78e-ad6d-4cb7-869c-520b289f290d/Lights/JPEG/QA_source_1.jpg",
+          "/sdcard/Pictures/AstroPhoto/Session_QA_ProcessingFeedback_fa24b78e-ad6d-4cb7-869c-520b289f290d/Lights/JPEG/QA_source_2.jpg",
+          "/sdcard/Pictures/AstroPhoto/Session_QA_ProcessingFeedback_fa24b78e-ad6d-4cb7-869c-520b289f290d/Processed/Stacked_20261101_203140.png",
+          "/sdcard/Pictures/AstroPhoto/Session_QA_ProcessingFeedback_fa24b78e-ad6d-4cb7-869c-520b289f290d/Processed/Stacked_20261101_203144.png"
+        ]
+      },
+      "legacyPrivate": {
+        "before": 222,
+        "after": 222,
+        "missing": [],
+        "changed": [],
+        "added": []
+      },
+      "qaPrivate": {
+        "before": 568,
+        "after": 570,
+        "missing": [],
+        "changed": [],
+        "added": [
+          "files/frame-marks/Session_QA_ProcessingFeedback_fa24b78e-ad6d-4cb7-869c-520b289f290d.json",
+          "files/session-info/Session_QA_ProcessingFeedback_fa24b78e-ad6d-4cb7-869c-520b289f290d.txt"
+        ]
+      }
+    },
+    "packagesIdentical": true,
+    "systemSettingsIdentical": true
+  },
+  "all568OriginalQaFilesByteIdentical": true,
+  "qaOriginalPreferenceFilesRestored": 3,
+  "finalFontScale": "0.81",
+  "finalStayAwake": "0",
+  "qaStopped": true,
+  "physicalHumanConfirmation": "not_received",
+  "mainReleaseRuntimeTestedInThisBlock": false,
+  "productionSourcesChanged": false,
+  "mainSignedReferenceStillApplies": "e5090518bb444f095a71b6c8eb1efdc37ef460b1",
+  "astronomicalQualityEvaluated": false
+}
