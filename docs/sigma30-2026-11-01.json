@@ -1,0 +1,188 @@
+{
+  "schemaVersion": 1,
+  "checkedOn": "2026-11-01",
+  "baseCommit": "608807d64260068a788d376085de6c8f5cc25645",
+  "device": {
+    "model": "23021RAA2Y",
+    "android": "13"
+  },
+  "targetPackage": "com.joe6355.astrophoto.qa20261017",
+  "appApks": {
+    "com.joe6355.astrophoto": {
+      "apkSha256": "6321f48492a74a9ed92513952ef60393eccfb9ac4d2f0e18cbaebe345202423f",
+      "uid": 10505,
+      "ceDataInode": 1427204,
+      "versionCode": 6,
+      "versionName": "0.9.0-beta.5"
+    },
+    "com.example.astrophoto": {
+      "apkSha256": "08e3e74e8e60033d1e101f347a546d8b4069f0cd8a86e4163b1d608f6043a595",
+      "uid": 10503,
+      "ceDataInode": 1221503,
+      "versionCode": 3,
+      "versionName": "0.9.0-beta.2"
+    },
+    "com.joe6355.astrophoto.qa20261017": {
+      "apkSha256": "af5c62a81fe5429dafb72551df4ca273f26b1060f4cb3a293c341325472d5984",
+      "uid": 10354,
+      "ceDataInode": 1499328,
+      "versionCode": 6,
+      "versionName": "0.9.0-beta.5"
+    }
+  },
+  "nativeTest": {
+    "class": "SigmaIntegrationDeviceTest",
+    "passed": 1,
+    "elapsedSeconds": 43.278,
+    "finalCompileSeconds": 7,
+    "testApk": {
+      "sha256": "b93df94d99e6a551faf97c70e76767acdf5eca7ab0a19541bdbf0f46f5d25970",
+      "bytes": 1689602,
+      "qaTargetApkUnchanged": true
+    },
+    "onlyTestApkInstalled": true,
+    "minimumSdk": 29,
+    "tag": "laptop_20261101C"
+  },
+  "capture": {
+    "folder": "Session_QA_Sigma30_62fa9bf7-bec8-44fc-9927-54761c2a2b46",
+    "tag": "laptop_20261101C",
+    "processId": 16259,
+    "originalCameraId": "0",
+    "nativeExposureMaximumNs": 33536611620,
+    "temporaryQaExposureMaximumNs": 10000000000,
+    "limitedRearIds": [
+      "0"
+    ],
+    "physicalNativeLimitBelowThirtySecondsTested": false,
+    "cameraIdUnderLimit": "0",
+    "uiPlannedFrameCount": 3,
+    "uiPlannedExposureNs": 10000000000,
+    "confirmationDialogMatchesPlan": true,
+    "cameraConfiguredBeforeCapture": true,
+    "frames": [
+      {
+        "file": "AstroSeries_20261101_220221_001.jpg",
+        "width": 1440,
+        "height": 1920,
+        "exposureSeconds": 10,
+        "iso": 400
+      },
+      {
+        "file": "AstroSeries_20261101_220221_002.jpg",
+        "width": 1440,
+        "height": 1920,
+        "exposureSeconds": 10,
+        "iso": 400
+      },
+      {
+        "file": "AstroSeries_20261101_220221_003.jpg",
+        "width": 1440,
+        "height": 1920,
+        "exposureSeconds": 10,
+        "iso": 400
+      }
+    ],
+    "actualTotalExposureSeconds": 30,
+    "lightFrames": 3,
+    "darkFrames": 0,
+    "completed": true
+  },
+  "captureResults": [
+    {
+      "cameraId": "0",
+      "frame": "9",
+      "requestedExposureNs": "10000000000",
+      "actualExposureNs": "10000000000",
+      "requestedSensorIso": "400",
+      "actualSensorIso": "400",
+      "sensorTimestampNs": "779857788355975"
+    },
+    {
+      "cameraId": "0",
+      "frame": "25",
+      "requestedExposureNs": "10000000000",
+      "actualExposureNs": "10000000000",
+      "requestedSensorIso": "400",
+      "actualSensorIso": "400",
+      "sensorTimestampNs": "779868790791392"
+    },
+    {
+      "cameraId": "0",
+      "frame": "38",
+      "requestedExposureNs": "10000000000",
+      "actualExposureNs": "10000000000",
+      "requestedSensorIso": "400",
+      "actualSensorIso": "400",
+      "sensorTimestampNs": "779879592857954"
+    }
+  ],
+  "jpegTimestampsMatchCamera2": true,
+  "dataPreservation": {
+    "groups": {
+      "public": {
+        "before": 1804,
+        "after": 1807,
+        "missing": [],
+        "changed": [],
+        "added": [
+          "/sdcard/Pictures/AstroPhoto/Session_QA_Sigma30_62fa9bf7-bec8-44fc-9927-54761c2a2b46/Lights/JPEG/AstroSeries_20261101_220221_001.jpg",
+          "/sdcard/Pictures/AstroPhoto/Session_QA_Sigma30_62fa9bf7-bec8-44fc-9927-54761c2a2b46/Lights/JPEG/AstroSeries_20261101_220221_002.jpg",
+          "/sdcard/Pictures/AstroPhoto/Session_QA_Sigma30_62fa9bf7-bec8-44fc-9927-54761c2a2b46/Lights/JPEG/AstroSeries_20261101_220221_003.jpg"
+        ]
+      },
+      "legacyPrivate": {
+        "before": 222,
+        "after": 222,
+        "missing": [],
+        "changed": [],
+        "added": []
+      },
+      "qaPrivate": {
+        "before": 573,
+        "after": 574,
+        "missing": [],
+        "changed": [],
+        "added": [
+          "files/session-info/Session_QA_Sigma30_62fa9bf7-bec8-44fc-9927-54761c2a2b46.txt"
+        ]
+      }
+    },
+    "packagesIdentical": true,
+    "systemSettingsIdentical": true
+  },
+  "originalQaPreferenceFilesRestored": 3,
+  "qaPrivateBackupFilesVerified": 573,
+  "qaPrivateBackupTarBytes": 187524608,
+  "qaActiveSessionRestoredToAbsent": true,
+  "temporaryCapabilityPreferencesRestoredToAbsent": true,
+  "finalFontScale": "0.81",
+  "finalStayAwake": "0",
+  "qaStoppedAndHomePressed": true,
+  "preliminaryAttempts": [
+    {
+      "elapsedSeconds": 14.974,
+      "capturedFrames": 0,
+      "testNavigationIssue": "Vertical parent was not revealed before scrolling nested horizontal row",
+      "allOriginalFilesAndSettingsExactAfterRestore": true
+    },
+    {
+      "elapsedSeconds": 8.567,
+      "capturedFrames": 0,
+      "testNavigationIssue": "Hidden compact button selected instead of visible expanded-panel start",
+      "allOriginalFilesAndSettingsExactAfterRestore": true
+    }
+  ],
+  "productionSourcesChanged": false,
+  "mainSignedReferenceStillApplies": "e5090518bb444f095a71b6c8eb1efdc37ef460b1",
+  "mainReleaseRuntimeTestedInThisBlock": false,
+  "physicalNativeLimitBelowThirtySecondsTested": false,
+  "nightSceneQualityEvaluated": false,
+  "automaticStackAfterCaptureRun": false,
+  "mainPrivateFullHashingAvailable": false,
+  "previousCiVerified": {
+    "sha": "608807d64260068a788d376085de6c8f5cc25645",
+    "conclusion": "success",
+    "url": "https://github.com/Joe6355/AstroPhoto/actions/runs/41326001410"
+  }
+}
