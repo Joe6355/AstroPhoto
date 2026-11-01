@@ -122,9 +122,102 @@
   "finalFontScale": "0.81",
   "finalStayAwake": "0",
   "qaStopped": true,
-  "physicalHumanConfirmation": "not_received",
+  "physicalHumanConfirmation": "owner_confirmed_sound_and_vibration_on_announced_repeat",
   "mainReleaseRuntimeTestedInThisBlock": false,
   "productionSourcesChanged": false,
   "mainSignedReferenceStillApplies": "e5090518bb444f095a71b6c8eb1efdc37ef460b1",
-  "astronomicalQualityEvaluated": false
+  "astronomicalQualityEvaluated": false,
+  "ownerConfirmation": {
+    "receivedOn": "2026-11-01",
+    "initialReply": "Не заметил",
+    "readyReply": "Телефон в руке, готов",
+    "repeatReply": "Да, оба сигнала были",
+    "soundHeard": true,
+    "vibrationFelt": true,
+    "scope": "QA manual Average/OFF processing completion"
+  },
+  "observerRepeat": {
+    "reason": "Owner did not notice the first signal; announced repeat after readiness confirmation",
+    "nativeTestPassed": true,
+    "elapsedSeconds": 10.516,
+    "processingAndHardwareProof": {
+      "folder": "Session_QA_ProcessingFeedback_45ef13f7-33d5-4d6c-b7bb-0216809cff48",
+      "sourceCount": 2,
+      "musicVolume": 11,
+      "musicVolumeMax": 15,
+      "cases": [
+        {
+          "enabled": true,
+          "completedCallbacks": 1,
+          "musicPlaybackObserved": true,
+          "vibrations": [
+            "startTime: 11-01 20:43:26.085, endTime: 11-01 20:43:26.289, durationMs: 204, status: finished, effect: Mono{mEffect=Composed{segments=[Step{amplitude=1.0, frequencyHz=0.0, duration=200}], repeat=-1}}, originalEffect: Mono{mEffect=Composed{segments=[Step{amplitude=-1.0, frequencyHz=0.0, duration=200}], repeat=-1}}, scale: 0,00, attrs: VibrationAttributes: Usage=TOUCH Audio Usage= USAGE_UNKNOWN Flags=0, uid: 10354, opPkg: com.joe6355.astrophoto.qa20261017, reason: null"
+          ],
+          "ownAudioTracksDuringFeedback": [
+            "F1     4818    yes  27403   31305    6223 A  0x000 00000001 00000001  48000  3   1  0   -12     0     0     0  00000000    960     960 f         0*       0       new"
+          ],
+          "ownAudioTracksAfterCleanup": [],
+          "cleanupObservedAfterWaitMs": 2327
+        },
+        {
+          "enabled": false,
+          "completedCallbacks": 2,
+          "musicPlaybackObserved": false,
+          "vibrations": [],
+          "ownAudioTracksDuringFeedback": [],
+          "ownAudioTracksAfterCleanup": [],
+          "cleanupObservedAfterWaitMs": 64
+        }
+      ],
+      "outputs": [
+        "Stacked_20261101_204325.png",
+        "Stacked_20261101_204329.png"
+      ],
+      "decodedOutputWidth": 64,
+      "decodedOutputHeight": 64,
+      "sourcesUnchanged": true,
+      "activeSessionUnchanged": true
+    },
+    "dataPreservation": {
+      "groups": {
+        "public": {
+          "before": 1797,
+          "after": 1801,
+          "missing": [],
+          "changed": [],
+          "added": [
+            "/sdcard/Pictures/AstroPhoto/Session_QA_ProcessingFeedback_45ef13f7-33d5-4d6c-b7bb-0216809cff48/Lights/JPEG/QA_source_1.jpg",
+            "/sdcard/Pictures/AstroPhoto/Session_QA_ProcessingFeedback_45ef13f7-33d5-4d6c-b7bb-0216809cff48/Lights/JPEG/QA_source_2.jpg",
+            "/sdcard/Pictures/AstroPhoto/Session_QA_ProcessingFeedback_45ef13f7-33d5-4d6c-b7bb-0216809cff48/Processed/Stacked_20261101_204325.png",
+            "/sdcard/Pictures/AstroPhoto/Session_QA_ProcessingFeedback_45ef13f7-33d5-4d6c-b7bb-0216809cff48/Processed/Stacked_20261101_204329.png"
+          ]
+        },
+        "legacyPrivate": {
+          "before": 222,
+          "after": 222,
+          "missing": [],
+          "changed": [],
+          "added": []
+        },
+        "qaPrivate": {
+          "before": 570,
+          "after": 572,
+          "missing": [],
+          "changed": [],
+          "added": [
+            "files/frame-marks/Session_QA_ProcessingFeedback_45ef13f7-33d5-4d6c-b7bb-0216809cff48.json",
+            "files/session-info/Session_QA_ProcessingFeedback_45ef13f7-33d5-4d6c-b7bb-0216809cff48.txt"
+          ]
+        }
+      },
+      "packagesIdentical": true,
+      "systemSettingsIdentical": true
+    },
+    "all570OriginalQaFilesByteIdentical": true,
+    "qaOriginalPreferenceFilesRestored": 3,
+    "finalFontScale": "0.81",
+    "finalStayAwake": "0",
+    "appPackagesIdentical": true,
+    "newAppOrTestApkInstalled": false
+  }
 }
