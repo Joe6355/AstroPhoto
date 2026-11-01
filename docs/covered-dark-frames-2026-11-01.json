@@ -1,0 +1,203 @@
+{
+  "schemaVersion": 1,
+  "checkedOn": "2026-11-01",
+  "baseCommit": "d346c06337f5b14aa82beedf3b8f4abd1fd09934",
+  "device": {
+    "model": "23021RAA2Y",
+    "android": "13"
+  },
+  "targetPackage": "com.joe6355.astrophoto.qa20261017",
+  "appApks": {
+    "com.joe6355.astrophoto": {
+      "apkSha256": "6321f48492a74a9ed92513952ef60393eccfb9ac4d2f0e18cbaebe345202423f",
+      "uid": 10505,
+      "ceDataInode": 1427204,
+      "versionCode": 6,
+      "versionName": "0.9.0-beta.5"
+    },
+    "com.example.astrophoto": {
+      "apkSha256": "08e3e74e8e60033d1e101f347a546d8b4069f0cd8a86e4163b1d608f6043a595",
+      "uid": 10503,
+      "ceDataInode": 1221503,
+      "versionCode": 3,
+      "versionName": "0.9.0-beta.2"
+    },
+    "com.joe6355.astrophoto.qa20261017": {
+      "apkSha256": "af5c62a81fe5429dafb72551df4ca273f26b1060f4cb3a293c341325472d5984",
+      "uid": 10354,
+      "ceDataInode": 1499328,
+      "versionCode": 6,
+      "versionName": "0.9.0-beta.5"
+    }
+  },
+  "nativeTest": {
+    "class": "CoveredDarkFramesDeviceTest",
+    "passed": 1,
+    "elapsedSeconds": 10.533,
+    "compileSeconds": 7,
+    "testApk": {
+      "sha256": "5a73d1cdc679f1e07be9f26589a7aece3556521b2c38e136875475bd0415c9c2",
+      "bytes": 1678007
+    },
+    "onlyTestApkInstalled": true,
+    "minimumSdk": 29,
+    "optInArguments": {
+      "coveredDarkAudit": "true",
+      "coveredLensConfirmed": "true",
+      "coveredDarkTag": "laptop_20261101B",
+      "shellUiLaunch": "true"
+    },
+    "productionUi": "CameraScreen / Снять тёмные кадры"
+  },
+  "ownerConfirmation": {
+    "reply": "Закрыты, снимай",
+    "receivedBeforeCapture": true,
+    "allRearLensesCovered": true,
+    "ownerToldToUncoverAfterCapture": true
+  },
+  "capture": {
+    "folder": "Session_QA_CoveredDarks_8037283f-ac74-40d8-b479-b2826bcef7da",
+    "tag": "laptop_20261101B",
+    "requestedIso": 400,
+    "requestedExposureNs": 33333333,
+    "cameraSessionConfiguredBeforeCapture": true,
+    "ownerCoveredLensConfirmedBeforeCapture": true,
+    "frames": [
+      {
+        "file": "DarkFrames_20261101_211325_001.jpg",
+        "uri": "content://media/external/images/media/1000028977",
+        "width": 1440,
+        "height": 1920,
+        "iso": 400,
+        "exposureSeconds": 0.03333333333333333,
+        "meanLuma0to255": 0,
+        "p99Luma0to255": 0,
+        "fractionLumaAtMost8": 1
+      },
+      {
+        "file": "DarkFrames_20261101_211325_002.jpg",
+        "uri": "content://media/external/images/media/1000028978",
+        "width": 1440,
+        "height": 1920,
+        "iso": 400,
+        "exposureSeconds": 0.03333333333333333,
+        "meanLuma0to255": 0,
+        "p99Luma0to255": 0,
+        "fractionLumaAtMost8": 1
+      },
+      {
+        "file": "DarkFrames_20261101_211325_003.jpg",
+        "uri": "content://media/external/images/media/1000028979",
+        "width": 1440,
+        "height": 1920,
+        "iso": 400,
+        "exposureSeconds": 0.03333333333333333,
+        "meanLuma0to255": 0,
+        "p99Luma0to255": 0,
+        "fractionLumaAtMost8": 1
+      }
+    ],
+    "darkFrames": 3,
+    "lightFrames": 0,
+    "completed": true,
+    "astronomicalCalibrationQualityEvaluated": false
+  },
+  "lumaDefinition": "(54*R + 183*G + 19*B) >> 8; all decoded pixels",
+  "allRgbBytesZeroClaimed": false,
+  "dataPreservation": {
+    "groups": {
+      "public": {
+        "before": 1801,
+        "after": 1804,
+        "missing": [],
+        "changed": [],
+        "added": [
+          "/sdcard/Pictures/AstroPhoto/Session_QA_CoveredDarks_8037283f-ac74-40d8-b479-b2826bcef7da/Darks/JPEG/DarkFrames_20261101_211325_001.jpg",
+          "/sdcard/Pictures/AstroPhoto/Session_QA_CoveredDarks_8037283f-ac74-40d8-b479-b2826bcef7da/Darks/JPEG/DarkFrames_20261101_211325_002.jpg",
+          "/sdcard/Pictures/AstroPhoto/Session_QA_CoveredDarks_8037283f-ac74-40d8-b479-b2826bcef7da/Darks/JPEG/DarkFrames_20261101_211325_003.jpg"
+        ]
+      },
+      "legacyPrivate": {
+        "before": 222,
+        "after": 222,
+        "missing": [],
+        "changed": [],
+        "added": []
+      },
+      "qaPrivate": {
+        "before": 572,
+        "after": 573,
+        "missing": [],
+        "changed": [
+          "files/profileInstalled"
+        ],
+        "added": [
+          "files/session-info/Session_QA_CoveredDarks_8037283f-ac74-40d8-b479-b2826bcef7da.txt"
+        ]
+      }
+    },
+    "packagesIdentical": true,
+    "systemSettingsIdentical": true
+  },
+  "qaOriginalFilesByteIdenticalExceptProfileInstalled": 571,
+  "qaOriginalPreferenceFilesRestored": 3,
+  "qaPrivateBackupFilesVerified": 572,
+  "qaPrivateBackupTarBytes": 187523584,
+  "originalQaActiveSession": null,
+  "qaActiveSessionRestoredToAbsent": true,
+  "finalFontScale": "0.81",
+  "finalStayAwake": "0",
+  "qaStoppedAndHomePressed": true,
+  "initialExpiredAttempt": {
+    "waitSeconds": 120,
+    "capturedFrames": 0,
+    "lateAuthorizationSent": false,
+    "testCleanupDefect": "Second composeRule.setContent prohibited; replaced by mutable-state disposal",
+    "allOriginalFilesAndSettingsRestoredBeforeRetry": true,
+    "intermediateDataPreservation": {
+      "groups": {
+        "public": {
+          "before": 1801,
+          "after": 1801,
+          "missing": [],
+          "changed": [],
+          "added": []
+        },
+        "legacyPrivate": {
+          "before": 222,
+          "after": 222,
+          "missing": [],
+          "changed": [],
+          "added": []
+        },
+        "qaPrivate": {
+          "before": 572,
+          "after": 572,
+          "missing": [],
+          "changed": [],
+          "added": []
+        }
+      },
+      "packagesIdentical": true,
+      "systemSettingsIdentical": true
+    }
+  },
+  "productionSourcesChanged": false,
+  "mainSignedReferenceStillApplies": "e5090518bb444f095a71b6c8eb1efdc37ef460b1",
+  "mainReleaseRuntimeTestedInThisBlock": false,
+  "astronomicalCalibrationQualityEvaluated": false,
+  "longExposureTested": false,
+  "mainPrivateFullHashingAvailable": false,
+  "previousCiVerified": [
+    {
+      "sha": "bb9783f8326844adf6858e9a7f6b7421972fca19",
+      "conclusion": "success",
+      "url": "https://github.com/Joe6355/AstroPhoto/actions/runs/41322296039"
+    },
+    {
+      "sha": "d346c06337f5b14aa82beedf3b8f4abd1fd09934",
+      "conclusion": "success",
+      "url": "https://github.com/Joe6355/AstroPhoto/actions/runs/41323104050"
+    }
+  ]
+}
