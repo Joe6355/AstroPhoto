@@ -32,7 +32,7 @@ data class SavedCameraSettings(
     val soundAfterProcessing: Boolean = true,
     val histogramEnabled: Boolean = true,
     val saveTestShots: Boolean = false,
-    val jpegQuality: Int = 92,
+    val jpegQuality: Int = CameraSettingsStore.DEFAULT_JPEG_QUALITY,
     val fastPreviewEnabled: Boolean = true,
     val themeMode: String = AppThemeMode.DARK.name,
     val deletionProtectionEnabled: Boolean = true,
@@ -78,8 +78,8 @@ class CameraSettingsStore(context: Context) {
             soundAfterProcessing = preferences.getBoolean("sound_after_processing", true),
             histogramEnabled = preferences.getBoolean("histogram_enabled", true),
             saveTestShots = preferences.getBoolean("save_test_shots", false),
-            jpegQuality = preferences.getInt("jpeg_quality", 92)
-                .takeIf { it in JPEG_QUALITY_VALUES } ?: 92,
+            jpegQuality = preferences.getInt("jpeg_quality", DEFAULT_JPEG_QUALITY)
+                .takeIf { it in JPEG_QUALITY_VALUES } ?: DEFAULT_JPEG_QUALITY,
             fastPreviewEnabled = preferences.getBoolean(
                 "fast_preview_enabled",
                 !legacyApplyLongExposure
@@ -132,7 +132,8 @@ class CameraSettingsStore(context: Context) {
                 .putBoolean("save_test_shots", settings.saveTestShots)
                 .putInt(
                     "jpeg_quality",
-                    settings.jpegQuality.takeIf { it in JPEG_QUALITY_VALUES } ?: 92
+                    settings.jpegQuality.takeIf { it in JPEG_QUALITY_VALUES }
+                        ?: DEFAULT_JPEG_QUALITY
                 )
                 .putBoolean("fast_preview_enabled", settings.fastPreviewEnabled)
                 .putString("theme_mode", settings.themeMode)
@@ -168,6 +169,7 @@ class CameraSettingsStore(context: Context) {
     }
 
     companion object {
+        const val DEFAULT_JPEG_QUALITY = 100
         val JPEG_QUALITY_VALUES = setOf(85, 92, 100)
         val DARK_FRAME_COUNT_VALUES = listOf(0, 3, 5, 10, 20)
     }

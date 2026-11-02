@@ -208,7 +208,7 @@ class CameraPreviewView @JvmOverloads constructor(
     private var captureStageCallback: ((CameraCaptureStage) -> Unit)? = null
     private var requestedCaptureFileName: String? = null
     private var requestedCaptureRelativeDirectory: String? = null
-    private var jpegQuality = 92
+    private var jpegQuality = CameraSettingsStore.DEFAULT_JPEG_QUALITY
     private var exposureAnalysisEnabled = true
     private val exposureAnalyzer = ExposureAnalyzer(
         textureView = this,

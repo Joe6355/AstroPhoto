@@ -364,7 +364,9 @@ class SeriesCaptureForegroundService : Service() {
             iso = intent.getIntExtra(EXTRA_ISO, 400),
             focusDistance = intent.getFloatExtra(EXTRA_FOCUS_DISTANCE, 0f),
             focusMode = focusMode,
-            jpegQuality = intent.getIntExtra(EXTRA_JPEG_QUALITY, 92),
+            jpegQuality = intent.getIntExtra(
+                EXTRA_JPEG_QUALITY, CameraSettingsStore.DEFAULT_JPEG_QUALITY
+            ),
             sessionFolder = session,
             relativeDirectory = directory,
             filePrefix = prefix,
