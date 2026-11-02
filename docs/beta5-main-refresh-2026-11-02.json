@@ -80,7 +80,9 @@
     "restoredJpegQuality": 92,
     "coldStartConfirmed": true,
     "observedQualityBeforeRestoration": 100,
-    "qualityChangeCauseEstablished": false
+    "qualityChangeCauseEstablished": true,
+    "qualityChangeCause": "Owner explicitly selected JPEG100; confirmed on 2026-11-02 after the original check",
+    "qualityChangeCauseAtOriginalCheck": "unknown"
   },
   "ui": {
     "fontScale": "2.0",
