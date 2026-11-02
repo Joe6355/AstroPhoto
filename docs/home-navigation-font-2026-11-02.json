@@ -1,0 +1,209 @@
+{
+  "sourceBaseCommit": "76c45f76e1b23cee964a775b8be9a6fe0fc79849",
+  "homeScreenSourceSha256Lf": "7c19bfc915dfccd67507a0d635feefa26e14730e23dd595680806c77254345f0",
+  "sourceChanges": [
+    "HomeScreen.kt"
+  ],
+  "device": {
+    "serial": "emulator-5582",
+    "api": 33,
+    "image": "default/x86_64",
+    "model": "Android SDK built for x86_64",
+    "densityDpi": 540,
+    "widthDp": 320,
+    "theme": "dark",
+    "physicalPhoneUsed": false
+  },
+  "app": {
+    "applicationId": "com.joe6355.astrophoto.qa20261017",
+    "versionName": "0.9.0-beta.5",
+    "versionCode": 6,
+    "apkBytes": 16530448,
+    "sha256": "1bdcb50f71e58e59f459d4b30e42f798c1f212a965bdb9f6c95c34a042c1af07",
+    "installedApkSha256": "1bdcb50f71e58e59f459d4b30e42f798c1f212a965bdb9f6c95c34a042c1af07",
+    "installedOnlyOnOwnEmulator": true
+  },
+  "baseline": {
+    "apkSha256": "9e273452d764d0a72df04ea6dff2d04ab3f2754892cfa52a61c0246659ece92d",
+    "homeSourceUnchangedSinceB380bad": true,
+    "normal": {
+      "Настройки": {
+        "boundsPx": [
+          109,
+          1363,
+          341,
+          1485
+        ],
+        "heightPx": 122
+      },
+      "Камера": {
+        "boundsPx": [
+          456,
+          1383,
+          623,
+          1451
+        ],
+        "heightPx": 68
+      },
+      "Обработка": {
+        "boundsPx": [
+          738,
+          1363,
+          971,
+          1485
+        ],
+        "heightPx": 122
+      }
+    },
+    "large": {
+      "Настройки": {
+        "boundsPx": [
+          109,
+          834,
+          341,
+          1212
+        ],
+        "heightPx": 378
+      },
+      "Камера": {
+        "boundsPx": [
+          423,
+          834,
+          656,
+          1086
+        ],
+        "heightPx": 252
+      },
+      "Обработка": {
+        "boundsPx": [
+          738,
+          834,
+          971,
+          1212
+        ],
+        "heightPx": 378
+      }
+    },
+    "largeBrandBoundsPx": [
+      142,
+      155,
+      540,
+      390
+    ]
+  },
+  "fixed": {
+    "normal": {
+      "Настройки": {
+        "boundsPx": [
+          122,
+          1383,
+          362,
+          1451
+        ],
+        "heightPx": 68
+      },
+      "Камера": {
+        "boundsPx": [
+          457,
+          1383,
+          624,
+          1451
+        ],
+        "heightPx": 68
+      },
+      "Обработка": {
+        "boundsPx": [
+          719,
+          1383,
+          958,
+          1451
+        ],
+        "heightPx": 68
+      }
+    },
+    "large": {
+      "Настройки": {
+        "boundsPx": [
+          117,
+          225,
+          560,
+          351
+        ],
+        "heightPx": 126
+      },
+      "Камера": {
+        "boundsPx": [
+          651,
+          225,
+          963,
+          351
+        ],
+        "heightPx": 126
+      },
+      "Обработка": {
+        "boundsPx": [
+          319,
+          405,
+          761,
+          531
+        ],
+        "heightPx": 126
+      }
+    },
+    "largeBrandBoundsPx": [
+      142,
+      155,
+      604,
+      262
+    ],
+    "largeLongestSceneBoundsPx": [
+      183,
+      314,
+      730,
+      401
+    ],
+    "screenshotsVisuallyReviewed": true
+  },
+  "instrumentation": {
+    "passed": true,
+    "testClass": "HomeScreenTest",
+    "tests": 5,
+    "fontScale": 1.0,
+    "widthDp": 320,
+    "junitSeconds": 15.725,
+    "driverSeconds": 17.24,
+    "testRebuilt": false,
+    "phoneUsed": false
+  },
+  "build": {
+    "tasks": [
+      "assembleDebug",
+      "lintDebug"
+    ],
+    "success": true,
+    "durationSeconds": 254,
+    "lintSeverity": {
+      "Warning": 14
+    },
+    "initialArgumentParsingFailureSeconds": 32
+  },
+  "testApk": {
+    "sha256": "657ee14c0b48300a2e0d02d9d243f4a9b67b1375c944806757ee91a720836f7d",
+    "rebuilt": false
+  },
+  "captureOrProcessingStarted": false,
+  "photosUsedAsInput": false,
+  "mainPhoneUpdated": false,
+  "limits": [
+    "Debug QA on own Android13 emulator; no main release or physical phone acceptance",
+    "Visual inspection at 100% and 200%; no general theme/status matrix"
+  ],
+  "localEvidence": "artifacts/home-navigation-ui-2026-11-02/",
+  "cleanup": {
+    "ownEmulatorStopped": true,
+    "ownAdb5042Stopped": true,
+    "fontScaleResetToOneInOwnEmulator": true,
+    "densityOverrideClearedInOwnEmulator": true,
+    "physicalPhoneUsed": false
+  }
+}

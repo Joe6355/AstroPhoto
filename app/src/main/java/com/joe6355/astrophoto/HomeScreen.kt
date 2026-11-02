@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -62,6 +63,11 @@ fun AstroHomeScreen(
     BoxWithConstraints(modifier.fillMaxSize().safeDrawingPadding()) {
     val density = LocalDensity.current
     var supportingHeight by remember { mutableIntStateOf(0) }
+    var heroHeaderHeight by remember { mutableIntStateOf(0) }
+    val heroContentTopPadding = maxOf(
+        76.dp,
+        with(density) { heroHeaderHeight.toDp() } + 10.dp
+    )
     val heroHeight = if (supportingHeight == 0) 286.dp else
         (maxHeight - with(density) { supportingHeight.toDp() } - 48.dp).coerceAtLeast(286.dp)
     LazyColumn(
@@ -75,15 +81,19 @@ fun AstroHomeScreen(
                 Box(Modifier.fillMaxWidth().heightIn(min = heroHeight).clip(MaterialTheme.shapes.large)
                     .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.large)) {
                     OrbitArtwork(Modifier.matchParentSize(), scene = scene, animated = true)
-                    Row(Modifier.align(Alignment.TopStart).fillMaxWidth().padding(start = 22.dp, end = 8.dp, top = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically) {
-                        Text("AstroPhoto", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, color = heroText)
+                    FlowRow(Modifier.align(Alignment.TopStart).fillMaxWidth()
+                        .onSizeChanged { heroHeaderHeight = it.height }
+                        .padding(start = 22.dp, end = 8.dp, top = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("AstroPhoto", Modifier.align(Alignment.CenterVertically),
+                            style = MaterialTheme.typography.titleSmall, color = heroText)
                         androidx.compose.material3.TextButton(onClick = { sceneIndex = (sceneIndex + 1) % OrbitScene.entries.size },
-                            modifier = Modifier.testTag("home-scene-switch")) {
+                            modifier = Modifier.align(Alignment.CenterVertically).testTag("home-scene-switch")) {
                             Text("${scene.label} ›", color = heroAccent, style = MaterialTheme.typography.labelSmall)
                         }
                     }
-                    Column(Modifier.align(Alignment.BottomStart).padding(start = 22.dp, end = 22.dp, top = 76.dp, bottom = 22.dp),
+                    Column(Modifier.align(Alignment.BottomStart).padding(start = 22.dp, end = 22.dp, top = heroContentTopPadding, bottom = 22.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("ВАША СЛЕДУЮЩАЯ НОЧЬ", style = MaterialTheme.typography.labelMedium,
                             color = heroAccent, letterSpacing = 1.2.sp)
@@ -99,10 +109,11 @@ fun AstroHomeScreen(
                 Column {
                     AstroPrimaryButton("Начать съёмку", onOpenCamera,
                         Modifier.fillMaxWidth().testTag(AstroTestTags.HomePrimaryAction))
-                    Row(Modifier.fillMaxWidth().testTag(AstroTestTags.HomeSecondaryNavigation)) {
-                        AstroTextButton("Настройки", onOpenSettings, Modifier.weight(1f))
-                        AstroTextButton("Камера", onOpenCamera, Modifier.weight(1f))
-                        AstroTextButton("Обработка", onOpenSessions, Modifier.weight(1f))
+                    FlowRow(Modifier.fillMaxWidth().testTag(AstroTestTags.HomeSecondaryNavigation),
+                        horizontalArrangement = Arrangement.SpaceEvenly) {
+                        AstroTextButton("Настройки", onOpenSettings)
+                        AstroTextButton("Камера", onOpenCamera)
+                        AstroTextButton("Обработка", onOpenSessions)
                     }
                 }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
