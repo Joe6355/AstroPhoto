@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-02",
+  "timezone": "Asia/Yekaterinburg",
+  "sourceCommit": "b380badf4b620414b7de120f91650d2f5ac66542",
+  "changedProductionFiles": [
+    "app/src/main/java/com/joe6355/astrophoto/SessionFrames.kt",
+    "app/src/main/res/drawable/ic_session_placeholder.xml"
+  ],
+  "change": "Replace wrapping JPEG placeholder with a 32dp theme-tinted vector icon and content description",
+  "nativeProof": {
+    "checkedAtUtc": "2026-11-02T10:20:04.668423+00:00",
+    "sourceCommit": "b380badf4b620414b7de120f91650d2f5ac66542",
+    "test": "com.joe6355.astrophoto.LongTextLayoutDeviceTest#sessionCardShowsFullDistinguishableNameAtTwoHundredPercent",
+    "passed": true,
+    "api": 33,
+    "image": "default/x86_64",
+    "serial": "emulator-5582",
+    "fontScale": 2,
+    "widthDp": 320,
+    "redTheme": true,
+    "junitSeconds": 3.846,
+    "driverSeconds": 5.847,
+    "layout": {
+      "label": "Ночная съёмка Млечного Пути у реки — проверка длинного названия и последних слов",
+      "fontScale": 2,
+      "widthDp": 320,
+      "lines": 5,
+      "exceedsMaxLines": false,
+      "ellipsis": false,
+      "heightOverflow": false,
+      "paintedOutsideWidth": false
+    },
+    "appSha256": "9e273452d764d0a72df04ea6dff2d04ab3f2754892cfa52a61c0246659ece92d",
+    "appBytes": 16530328,
+    "testSha256": "657ee14c0b48300a2e0d02d9d243f4a9b67b1375c944806757ee91a720836f7d",
+    "testRebuilt": false,
+    "phoneUsed": false,
+    "photosReadOrWritten": false
+  },
+  "baselineEvidence": {
+    "date": "2026-11-01",
+    "localPath": "artifacts/long-text-ui-2026-11-01/fixed-session-card.png",
+    "sameCoverSourceBeforeChange": true,
+    "testRepeatedForBaseline": false
+  },
+  "visualInspection": {
+    "beforeViewed": true,
+    "afterViewed": true,
+    "brokenJpegLabelRemoved": true,
+    "iconFitsCover": true,
+    "visibleLabelsReadable": true
+  },
+  "build": {
+    "tasks": [
+      "assembleDebug",
+      "lintDebug"
+    ],
+    "success": true,
+    "seconds": 101,
+    "lint": {
+      "Error": 0,
+      "Fatal": 0,
+      "Warning": 14
+    }
+  },
+  "ci": {
+    "checkedAtUtc": "2026-11-02T10:24:28.357908+00:00",
+    "runs": [
+      {
+        "id": 41428181807,
+        "head_sha": "b380badf4b620414b7de120f91650d2f5ac66542",
+        "status": "in_progress",
+        "conclusion": null,
+        "html_url": "https://github.com/Joe6355/AstroPhoto/actions/runs/41428181807"
+      }
+    ]
+  },
+  "versionName": "0.9.0-beta.5",
+  "versionCode": 6,
+  "versionChanged": false,
+  "phoneApplicationsInstalledOrUpdated": false,
+  "phonePhotosOrSettingsReadOrWritten": false,
+  "phoneFileManifestRepeated": false,
+  "testCodeChanged": false,
+  "testApkRebuilt": false,
+  "emulatorAndOwnAdbServerStopped": true,
+  "actualPhotoDecodeBranchChanged": false,
+  "pixelAlgorithmsChanged": false,
+  "publicationWorkPerformed": false,
+  "scopeLimits": [
+    "One 320dp/200-percent/red-theme card, not all screens or colors",
+    "No new TalkBack audio, normal-font, photo thumbnail, R8 runtime or phone acceptance"
+  ],
+  "nextStep": "Only next signed current-main phone update, including this UI fix and Android14 fix; other deferred work remains deferred."
+}
