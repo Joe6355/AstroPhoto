@@ -1,0 +1,170 @@
+{
+  "api": 33,
+  "image": "default/x86_64",
+  "serial": "emulator-5582",
+  "widthDp": 320,
+  "results": [
+    {
+      "class": "ProcessingEtaPipelineDeviceTest",
+      "passed": true,
+      "tests": 1,
+      "junitSeconds": 10.163,
+      "driverSeconds": 11.439
+    },
+    {
+      "class": "ProcessingEtaDisplayDeviceTest",
+      "passed": true,
+      "tests": 1,
+      "junitSeconds": 5.289,
+      "driverSeconds": 6.481
+    }
+  ],
+  "appSha256": "ed7d4ee7ac3aace22dc6a852c72d58aa9d8c3080a203fd9178ed4e40ce4ee7ab",
+  "appBytes": 16531654,
+  "testSha256": "018607f31b917222e936c02a62a151c114a1a9e4fd9232bb5dd80bcfc8314187",
+  "physicalPhoneUsed": false,
+  "mainPhoneUpdated": false,
+  "pipeline": {
+    "controlledCallbackSlowdown": true,
+    "actualAveragePipeline": true,
+    "samples": 8,
+    "lateComparisons": [
+      {
+        "current": 192,
+        "total": 256,
+        "actualRemainingMillis": 3615,
+        "recentEtaMillis": 3619,
+        "previousEtaMillis": 2337
+      },
+      {
+        "current": 224,
+        "total": 256,
+        "actualRemainingMillis": 1807,
+        "recentEtaMillis": 1808,
+        "previousEtaMillis": 1275
+      }
+    ],
+    "recentMeanAbsoluteErrorMillis": 2.5,
+    "previousMeanAbsoluteErrorMillis": 904.5333333333334,
+    "sourceJpegHashesUnchanged": true,
+    "outputFullyDecoded": true,
+    "physicalNightAccuracyTested": false
+  },
+  "display": {
+    "sessionFolder": "Session_QA_ETA_UI_511300c0-39c4-4c27-86eb-28fae2385753",
+    "measuredEtaMillis": 5228,
+    "etaText": "QA ETA: анализ\nДо конца этапа ≈ 6 сек",
+    "screenAndNotificationAgree": true,
+    "progressCurrent": 2,
+    "progressTotal": 10,
+    "stageChangeClearsEta": true,
+    "stoppedThroughNotificationPendingIntent": true,
+    "notificationRemoved": true,
+    "photosReadOrWritten": false,
+    "realPipelineAccuracyTested": false
+  },
+  "installedApkSha256": "ed7d4ee7ac3aace22dc6a852c72d58aa9d8c3080a203fd9178ed4e40ce4ee7ab",
+  "verification": {
+    "unit": [
+      {
+        "name": "com.joe6355.astrophoto.ProcessingEtaEstimatorTest",
+        "tests": "14",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-02T15:07:36.021Z",
+        "time": "0.033"
+      },
+      {
+        "name": "com.joe6355.astrophoto.ui.AstroProgressPanelTest",
+        "tests": "2",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-02T15:07:36.480Z",
+        "time": "0.007"
+      },
+      {
+        "name": "com.joe6355.astrophoto.StackStorageFailureTest",
+        "tests": "10",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-02T15:07:36.068Z",
+        "time": "0.151"
+      },
+      {
+        "name": "com.joe6355.astrophoto.TiledManualStackingTest",
+        "tests": "4",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-02T15:07:36.226Z",
+        "time": "0.25"
+      },
+      {
+        "name": "com.joe6355.astrophoto.JpegV2Stage7Test",
+        "tests": "28",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-02T15:07:33.467Z",
+        "time": "1.758"
+      },
+      {
+        "name": "com.joe6355.astrophoto.LinearRgb16PipelineTest",
+        "tests": "5",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-02T15:07:35.235Z",
+        "time": "0.188"
+      },
+      {
+        "name": "com.joe6355.astrophoto.DarkSkyPostProcessingPrecisionTest",
+        "tests": "6",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-02T15:07:32.343Z",
+        "time": "1.11"
+      },
+      {
+        "name": "com.joe6355.astrophoto.PreStretchNoiseReductionTest",
+        "tests": "1",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-02T15:07:35.428Z",
+        "time": "0.588"
+      }
+    ],
+    "unitCount": 70,
+    "lint": {
+      "Warning": 14
+    },
+    "buildSeconds": 170
+  },
+  "sourceBaseCommit": "6a3bf9afadbc199196b712fbc3df713ed801607f",
+  "sourceFileHashesLf": {
+    "app/src/main/java/com/joe6355/astrophoto/ProcessingEtaEstimator.kt": "de4dd4576321ffd1fc83bf9c4e29f6d870f4ee823cbb33c7317c08cdc0a62270",
+    "app/src/main/java/com/joe6355/astrophoto/TiledManualStacking.kt": "77993155f1d4b6a4488fa27620e5a4dc9204da5961237f27c5a334a4edb04edd",
+    "app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/composition/FileBackedSkyForegroundComposer.kt": "d13776e23ea7b7a61c6678d85e93b1264080a5e15431843273155007f10ff058",
+    "app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/memory/JpegMemoryBudget.kt": "8c86a9521060db5b4b1283f227824b08430b9d3dbf2691ca3be7ccce988b3846",
+    "app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/postprocessing/FileBackedAdaptivePresetProcessor.kt": "f0d1d27c27c29bbe9550e1a0e2a0c26fa6d741104ff1939752b22ee4b24bcb5f",
+    "app/src/test/java/com/joe6355/astrophoto/ProcessingEtaEstimatorTest.kt": "47f54d419ed792472dbfbb5b9544a26592793034cc1e34007e012fbf200c04f7",
+    "app/src/test/java/com/joe6355/astrophoto/StackStorageFailureTest.kt": "213d0eb987ca54484c61478b330966e02606cfa820a383d49c60c8ca63ae8485",
+    "app/src/androidTest/java/com/joe6355/astrophoto/ProcessingEtaPipelineDeviceTest.kt": "b20f61b2308bdd1f197aeb997e9959213b0ed86281a0d5a1896094741f617f82"
+  },
+  "naturalPipelineTimingValidated": false,
+  "limits": [
+    "Controlled progress delays in real Average; not a universal accuracy percentage",
+    "ETA is per-stage and recalculated on real progress callbacks, not a second progress timer",
+    "Physical phone and main signed APK not used"
+  ],
+  "cleanup": {
+    "ownEmulatorStopped": true,
+    "ownAdb5042Stopped": true,
+    "physicalPhoneUsed": false
+  }
+}

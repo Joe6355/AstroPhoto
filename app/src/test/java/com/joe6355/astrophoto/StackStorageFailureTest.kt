@@ -10,6 +10,17 @@ import com.joe6355.astrophoto.processing.jpeg.v2.memory.JpegMemoryBudget
 import com.joe6355.astrophoto.processing.jpeg.v2.memory.RuntimeHeapSnapshot
 
 class StackStorageFailureTest {
+    @Test fun refusedMinimumTileUsesTheSameActionableMemoryFailure() {
+        val budget = JpegMemoryBudget(RuntimeHeapSnapshot(64L shl 20, 48L shl 20, 16L shl 20))
+        val decision = budget.chooseTile(16, 16, 16, 16, argbBuffers = 4, floatBuffers = 0)
+        assertFalse(decision.accepted)
+        val fault = runCatching { budget.requireAcceptedTile(decision, "fixture") }.exceptionOrNull()
+        val error = processingResourceFailure(requireNotNull(fault))
+        assertTrue(error.message.orEmpty().contains("оперативной памяти"))
+        assertTrue(error.message.orEmpty().contains("Закройте другие приложения"))
+        assertSame(fault, error.cause)
+    }
+
     @Test fun realOutOfMemoryIsActionableAndRetainsCauseAfterManualBoundary() = runBlocking {
         val fault = OutOfMemoryError("QA injection; no heap allocation")
         val result = runManualStackingOperation(onAlignmentFailure = {}) { throw fault }

@@ -74,7 +74,7 @@ internal object TiledManualStacking {
         val tile = budget.chooseTile(region.width, region.height, region.width, 32,
             argbBuffers = if (robust) frames.size + 5 else 11, floatBuffers = 0,
             residentBytes = maxOf(width, masterDark?.width ?: 0) * 160L + frames.size * 64L + 256L * 1024)
-        require(tile.accepted) { "Недостаточно безопасной памяти для тайлового стека" }
+        budget.requireAcceptedTile(tile, "manual-stack")
         val reference = frames.firstOrNull { it.originalFrameIndex == referenceOriginalFrameIndex }
         require(coverage?.report?.sampleLevelFilteringApplied != true || reference != null) {
             "Sensor-mask fallback requires the accepted reference frame"

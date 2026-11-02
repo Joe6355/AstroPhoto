@@ -79,7 +79,7 @@ class FileBackedSkyForegroundComposer {
                 floatBuffers = 3,
                 residentBytes = reference.width.toLong() * 128L
             )
-            require(tile.accepted) { "Insufficient safe memory for tiled sky composition" }
+            memoryBudget.requireAcceptedTile(tile, "sky-composition")
             if (tile.retryRequired) memoryTracker?.recordRetry()
             memoryTracker?.recordTile("composition", tile.tileWidth, tile.tileHeight)
             memoryTracker?.recordBoundary("composition", tile.estimatedBytes, 0)

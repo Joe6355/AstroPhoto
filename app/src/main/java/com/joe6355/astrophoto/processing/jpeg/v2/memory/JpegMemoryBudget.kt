@@ -47,6 +47,12 @@ class JpegMemoryBudget(
         }
     }
 
+    fun requireAcceptedTile(decision: MemoryPressureDecision, label: String) {
+        if (!decision.accepted) {
+            throw InsufficientJpegMemoryException(decision.estimatedBytes, safeWorkingBudgetBytes, label)
+        }
+    }
+
     fun chooseTile(
         outputWidth: Int,
         outputHeight: Int,

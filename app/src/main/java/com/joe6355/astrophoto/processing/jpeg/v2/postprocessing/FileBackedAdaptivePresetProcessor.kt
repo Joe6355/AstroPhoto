@@ -1217,7 +1217,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
             floatBuffers = 1,
             residentBytes = original.width.toLong() * 160L
         )
-        require(decision.accepted) { "Insufficient safe memory for Stage 4 $label" }
+        budget.requireAcceptedTile(decision, "stage4-$label")
         if (decision.retryRequired) tracker.recordRetry()
         tracker.recordTile("stage4-$label", decision.tileWidth, decision.tileHeight)
         tracker.recordBoundary("stage4-$label", decision.estimatedBytes, 0)
@@ -1296,7 +1296,7 @@ class FileBackedAdaptivePresetProcessor internal constructor(
             floatBuffers = 1,
             residentBytes = input.width.toLong() * (maxOf(4, halo * 2 + 3) * 16L + 24L)
         )
-        require(decision.accepted) { "Insufficient safe memory for Stage 4 $label" }
+        budget.requireAcceptedTile(decision, "stage4-$label")
         if (decision.retryRequired) tracker.recordRetry()
         tracker.recordTile("stage4-$label", decision.tileWidth, decision.tileHeight, halo)
         tracker.recordBoundary("stage4-$label", decision.estimatedBytes, 0)
