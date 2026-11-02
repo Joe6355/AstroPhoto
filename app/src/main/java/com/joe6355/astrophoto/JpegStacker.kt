@@ -84,6 +84,7 @@ import com.joe6355.astrophoto.processing.jpeg.v2.registration.restoreOrComputeRe
 import com.joe6355.astrophoto.processing.jpeg.v2.registration.buildTemporalFeatureFrames
 import com.joe6355.astrophoto.processing.jpeg.v2.memory.ImageAllocationEstimate
 import com.joe6355.astrophoto.processing.jpeg.v2.memory.JpegMemoryBudget
+import com.joe6355.astrophoto.processing.jpeg.v2.memory.InsufficientJpegMemoryException
 import com.joe6355.astrophoto.processing.jpeg.v2.memory.PipelineMemoryTracker
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.ResultCandidateStore
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedImage
@@ -941,8 +942,10 @@ class JpegStacker internal constructor(
                 )
                 memoryBudget.requireAllocation(integrationMaskEstimate)
                 memoryTracker.recordBoundary("integration-sky-mask", integrationMaskEstimate.bytes, 0)
-                require(memoryBudget.safeWorkingBudgetBytes >= MIN_PROFILE_WORKING_MEMORY_BYTES) {
-                    "Недостаточно безопасной рабочей памяти для JPEG-интеграции"
+                if (memoryBudget.safeWorkingBudgetBytes < MIN_PROFILE_WORKING_MEMORY_BYTES) {
+                    throw InsufficientJpegMemoryException(
+                        MIN_PROFILE_WORKING_MEMORY_BYTES, memoryBudget.safeWorkingBudgetBytes, "jpeg-integration"
+                    )
                 }
                 val maximumWorkingMemory = minOf(
                     memoryBudget.safeWorkingBudgetBytes,
@@ -1903,7 +1906,7 @@ class JpegStacker internal constructor(
                 "Profile ${profile.title} failed at $currentStage: ${error.message}",
                 error
             )
-            val failure = storageWriteFailure(error, PROCESSING_STORAGE_FULL_MESSAGE)
+            val failure = processingResourceFailure(error)
             return@withContext Result.failure(
                 IllegalStateException(
                     "Ошибка на этапе: $currentStage. " +

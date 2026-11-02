@@ -1,0 +1,142 @@
+{
+  "device": {
+    "serial": "emulator-5582",
+    "api": 33,
+    "widthDp": 320,
+    "image": "default/x86_64",
+    "physicalPhoneUsed": false
+  },
+  "appSha256": "54be7c073e0d7216ebfb89b929fa894de2f3adac8b577ab1f5274779707d50d2",
+  "appBytes": 16531296,
+  "testSha256": "82c4d4db98d2fe7435b4f445cf0bfe52b3aea5b75adc4d1a76b40da8027dcac2",
+  "results": [
+    {
+      "class": "StackStorageFailureDeviceTest",
+      "tests": 3,
+      "passed": true,
+      "junitSeconds": 0.624,
+      "driverSeconds": 2.127
+    },
+    {
+      "class": "CaptureStorageWarningDialogTest",
+      "tests": 4,
+      "passed": true,
+      "junitSeconds": 9.254,
+      "driverSeconds": 10.123
+    }
+  ],
+  "proofs": {
+    "manual-proof": {
+      "mode": "manual",
+      "message": "Недостаточно места в хранилище телефона для обработки. Освободите место и повторите обработку.",
+      "retryPassed": true,
+      "sourcesUnchanged": true,
+      "faultInjectedFromProgressCallback": true,
+      "actualDiskFilled": false
+    },
+    "manual-observed-before-assert": {
+      "message": "Недостаточно места в хранилище телефона для обработки. Освободите место и повторите обработку.",
+      "sourcesUnchanged": true,
+      "metadataUnchanged": true,
+      "noOutput": true,
+      "temporaryRunsRemoved": true
+    },
+    "profile-proof": {
+      "mode": "profile",
+      "message": "Ошибка на этапе: Анализ JPEG-кадров. Недостаточно места в хранилище телефона для обработки. Освободите место и повторите обработку.",
+      "retryPassed": false,
+      "sourcesUnchanged": true,
+      "faultInjectedFromProgressCallback": true,
+      "actualDiskFilled": false
+    },
+    "profile-observed-before-assert": {
+      "message": "Ошибка на этапе: Анализ JPEG-кадров. Недостаточно места в хранилище телефона для обработки. Освободите место и повторите обработку.",
+      "sourcesUnchanged": true,
+      "metadataUnchanged": true,
+      "noOutput": true,
+      "temporaryRunsRemoved": true
+    },
+    "memory-proof": {
+      "mode": "memory",
+      "message": "Не хватает оперативной памяти для обработки.\nЗакройте другие приложения и повторите. При повторном отказе выберите меньше кадров.",
+      "retryPassed": false,
+      "sourcesUnchanged": true,
+      "faultInjectedFromProgressCallback": true,
+      "actualDiskFilled": false
+    },
+    "memory-observed-before-assert": {
+      "message": "Не хватает оперативной памяти для обработки.\nЗакройте другие приложения и повторите. При повторном отказе выберите меньше кадров.",
+      "sourcesUnchanged": true,
+      "metadataUnchanged": true,
+      "noOutput": true,
+      "temporaryRunsRemoved": true
+    }
+  },
+  "actualDiskFilled": false,
+  "actualHeapExhausted": false,
+  "memoryFaultInjected": true,
+  "cameraShutterPressed": false,
+  "userSessionsUsed": false,
+  "emulatorKeptForNextEtaBlock": true,
+  "verification": {
+    "unit": [
+      {
+        "name": "com.joe6355.astrophoto.StackStorageFailureTest",
+        "tests": "9",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-02T14:52:16.279Z",
+        "time": "0.05"
+      },
+      {
+        "name": "com.joe6355.astrophoto.ManualAlignmentPathSelectionTest",
+        "tests": "12",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-02T14:52:15.915Z",
+        "time": "0.358"
+      },
+      {
+        "name": "com.joe6355.astrophoto.JpegV2Stage7Test",
+        "tests": "28",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-02T14:52:13.907Z",
+        "time": "1.953"
+      },
+      {
+        "name": "com.joe6355.astrophoto.TiledManualStackingTest",
+        "tests": "4",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-02T14:52:16.337Z",
+        "time": "0.28"
+      }
+    ],
+    "totalUnitTests": 53,
+    "lint": {
+      "Warning": 14
+    },
+    "buildSeconds": 222
+  },
+  "additionalSystem200Check": {
+    "systemFontScale": 2.0,
+    "passed": true,
+    "tests": 1,
+    "widthDp": 320,
+    "junitSeconds": 3.829,
+    "driverSeconds": 5.003,
+    "reasonForAdditionalRun": "Dialog has separate Android window; system font scale explicitly set to 200%",
+    "physicalPhoneUsed": false
+  },
+  "sourceBaseCommit": "38a0832da7096859dd6f81fd5b0d0323caa6d3eb",
+  "limits": [
+    "Injected faults, not a physically full disk or heap",
+    "Physical phone and main signed APK not used",
+    "ETA change remains next block"
+  ]
+}

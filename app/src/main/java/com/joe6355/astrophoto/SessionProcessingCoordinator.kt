@@ -77,7 +77,7 @@ object SessionProcessingCoordinator {
                 update(sessionFolder, "Обработка остановлена")
                 throw error
             } catch (error: Throwable) {
-                update(sessionFolder, error.message ?: "Ошибка обработки")
+                update(sessionFolder, processingResourceFailure(error).message ?: "Ошибка обработки")
             }
         }
         // Register before Main.immediate can run even an immediately completing block.

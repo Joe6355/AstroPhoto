@@ -454,7 +454,7 @@ fun JpegStackingBlock(
                     },
                     onFailure = {
                         Log.e("AstroPhotoProcessing", "Manual processing failed", it)
-                        val message = it.message ?: "Не удалось сохранить результат"
+                        val message = processingResourceFailure(it).message ?: "Не удалось сохранить результат"
                         reportProcessing(message)
                     }
                 )
@@ -463,7 +463,7 @@ fun JpegStackingBlock(
                 throw error
             } catch (error: Throwable) {
                 Log.e("AstroPhotoProcessing", "Manual processing crashed", error)
-                reportProcessing(error.message ?: "Не удалось выполнить обработку")
+                reportProcessing(processingResourceFailure(error).message ?: "Не удалось выполнить обработку")
             } finally {
                 stacking = false
                 processingJob = null
@@ -542,7 +542,7 @@ fun JpegStackingBlock(
                             )
                             status = "Обработка приостановлена: требуется подтверждение"
                         } else {
-                            status = error.message ?: "Профильная обработка не удалась"
+                            status = processingResourceFailure(error).message ?: "Профильная обработка не удалась"
                         }
                         reportProcessing(checkNotNull(status))
                     }
@@ -564,7 +564,7 @@ fun JpegStackingBlock(
                     profileResults = appendUniqueResult(profileResults, created)
                     reportProcessing("Готово: ${created.fileName}\n$POST_COMPLETION_WARNING")
                 } else {
-                    reportProcessing(error.message ?: "Профильная обработка не удалась")
+                    reportProcessing(processingResourceFailure(error).message ?: "Профильная обработка не удалась")
                 }
             } finally {
                 stacker.setUserApprovedInsufficientProfileFrames(false)

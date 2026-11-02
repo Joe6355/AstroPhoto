@@ -336,9 +336,11 @@ internal suspend fun <T> runManualStackingOperation(
     } catch (reportError: Exception) {
         error.addSuppressed(reportError)
     }
-    Result.failure(storageWriteFailure(error, PROCESSING_STORAGE_FULL_MESSAGE))
+    Result.failure(processingResourceFailure(error))
 } catch (error: Exception) {
-    Result.failure(storageWriteFailure(error, PROCESSING_STORAGE_FULL_MESSAGE))
+    Result.failure(processingResourceFailure(error))
+} catch (error: OutOfMemoryError) {
+    Result.failure(processingResourceFailure(error))
 }
 
 internal fun ManualAlignmentPathReport.toStableFields(): Map<String, String> = linkedMapOf(

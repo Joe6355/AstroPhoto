@@ -23,6 +23,26 @@ import org.junit.Test
 class StackStorageFailureDeviceTest {
     @get:Rule val timeout = org.junit.rules.Timeout.seconds(90)
 
+    @Test fun manualMemoryFailureKeepsSourcesAndRemovesOnlyTemporaryOutput() = runBlocking {
+        val fixture = fixture("memory")
+        val fault = OutOfMemoryError("QA injection; no actual memory exhaustion")
+        var injected = false
+        val failed = JpegStacker(fixture.context).stack(fixture.session, fixture.frames,
+            onProgress = { _, _ -> }, onAlignment = { current, _, message ->
+                if (message.startsWith("Тайловая интеграция") && current > 0) {
+                    injected = true
+                    throw fault
+                }
+            })
+        assertTrue(injected)
+        val error = requireNotNull(failed.exceptionOrNull())
+        fixture.verifyFailureIsSafe(error)
+        assertTrue(error.message.orEmpty().contains("оперативной памяти"))
+        assertTrue(error.message.orEmpty().contains("Закройте другие приложения"))
+        assertTrue(generateSequence(error) { it.cause }.any { it === fault })
+        fixture.report("memory", error, retryPassed = false)
+    }
+
     @Test fun manualStackReportsFullStorageCleansTemporaryFilesAndRetries() = runBlocking {
         val fixture = fixture("manual")
         val fault = IOException("write failed: ENOSPC (No space left on device)")
@@ -136,7 +156,7 @@ class StackStorageFailureDeviceTest {
     }
 
     private companion object {
-        const val EXPECTED_MESSAGE = "Недостаточно свободного места для обработки. Освободите место и повторите обработку."
+        const val EXPECTED_MESSAGE = "Недостаточно места в хранилище телефона для обработки. Освободите место и повторите обработку."
         fun hash(file: File): String = MessageDigest.getInstance("SHA-256").digest(file.readBytes())
             .joinToString("") { "%02x".format(it.toInt() and 255) }
     }

@@ -2,6 +2,14 @@ package com.joe6355.astrophoto.processing.jpeg.v2.memory
 
 import kotlin.math.max
 
+class InsufficientJpegMemoryException(
+    val requiredBytes: Long,
+    val availableBytes: Long,
+    label: String
+) : IllegalArgumentException(
+    "Unsafe JPEG allocation $label: $requiredBytes bytes, safe budget $availableBytes bytes"
+)
+
 data class RuntimeHeapSnapshot(
     val maxHeapBytes: Long,
     val totalHeapBytes: Long,
@@ -34,8 +42,8 @@ class JpegMemoryBudget(
     fun permits(estimate: ImageAllocationEstimate): Boolean = estimate.bytes <= safeWorkingBudgetBytes
 
     fun requireAllocation(estimate: ImageAllocationEstimate) {
-        require(permits(estimate)) {
-            "Unsafe JPEG allocation ${estimate.label}: ${estimate.bytes} bytes, safe budget $safeWorkingBudgetBytes bytes"
+        if (!permits(estimate)) {
+            throw InsufficientJpegMemoryException(estimate.bytes, safeWorkingBudgetBytes, estimate.label)
         }
     }
 

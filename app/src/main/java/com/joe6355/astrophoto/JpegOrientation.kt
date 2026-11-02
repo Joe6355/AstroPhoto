@@ -6,6 +6,7 @@ import android.graphics.Matrix
 import android.graphics.BitmapRegionDecoder
 import android.graphics.Rect
 import com.joe6355.astrophoto.processing.jpeg.v2.memory.JpegMemoryBudget
+import com.joe6355.astrophoto.processing.jpeg.v2.memory.InsufficientJpegMemoryException
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedImage
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.FileBackedImageWriter
 import com.joe6355.astrophoto.processing.jpeg.v2.storage.TemporaryPipelineFiles
@@ -130,7 +131,11 @@ internal suspend fun cacheOrientedJpeg(
             files.requireSpace(width.toLong() * height * 4L)
             val tile = budget.chooseTile(decoder.width, decoder.height, 512, 512,
                 argbBuffers = 3, floatBuffers = 0, residentBytes = width * 4L + 2L * 1024 * 1024)
-            require(tile.accepted) { "Недостаточно безопасной памяти для декодирования JPEG" }
+            if (!tile.accepted) {
+                throw InsufficientJpegMemoryException(
+                    tile.estimatedBytes, budget.safeWorkingBudgetBytes, "jpeg-decode"
+                )
+            }
             FileBackedImageWriter(files.file("$label.argb"), width, height).use { writer ->
                 val options = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 }
                 for (top in 0 until decoder.height step tile.tileHeight) {
