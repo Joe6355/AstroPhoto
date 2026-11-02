@@ -1,0 +1,265 @@
+{
+  "schemaVersion": 1,
+  "auditDate": "2026-11-02",
+  "timezone": "Asia/Yekaterinburg",
+  "assembledAtUtc": "2026-11-02T08:41:21.834808+00:00",
+  "releaseChannel": "RuStore",
+  "ownerReportedDeveloperAccountExists": false,
+  "ownerReportedStoreCardExists": false,
+  "baseline": {
+    "head": "22f6aa86e74192546116d9047b267b0aa6f12705",
+    "originMain": "22f6aa86e74192546116d9047b267b0aa6f12705",
+    "lastProductionChange": "1810fbf8e9601143f64709b2ff2a997aac929901",
+    "productionInputsEqualToSource": true,
+    "branch": "main",
+    "workingTreeCleanBeforeAudit": true
+  },
+  "ci": {
+    "source": [
+      {
+        "id": 41333255739,
+        "head_sha": "1810fbf8e9601143f64709b2ff2a997aac929901",
+        "status": "completed",
+        "conclusion": "success",
+        "html_url": "https://github.com/Joe6355/AstroPhoto/actions/runs/41333255739"
+      }
+    ],
+    "sourceUnitTests": {
+      "tests": 1360,
+      "failures": 0,
+      "skipped": 4,
+      "passed": 1356,
+      "duration": "10m35.66s",
+      "skippedClasses": [
+        {
+          "class": "com.joe6355.astrophoto.LocalAnalysisResolutionAuditTest",
+          "skipped": 1
+        },
+        {
+          "class": "com.joe6355.astrophoto.LocalFullResolutionCorrespondenceAuditTest",
+          "skipped": 1
+        },
+        {
+          "class": "com.joe6355.astrophoto.LocalSessionRegistrationAuditTest",
+          "skipped": 1
+        },
+        {
+          "class": "com.joe6355.astrophoto.LocalStellarArtifactAuditTest",
+          "skipped": 1
+        }
+      ]
+    },
+    "sourceLint": {
+      "debug": {
+        "summary": "14 warnings",
+        "hasErrorsInSummary": false
+      },
+      "release": {
+        "summary": "14 warnings",
+        "hasErrorsInSummary": false
+      }
+    },
+    "reportsArtifact": {
+      "sha256": "391958398eb36661b23cbcdb094a8899cdb0455aaf3d6ea7cafb8026b5ff66c0",
+      "matchesGithubDigest": true,
+      "allMembersCrcValid": true
+    },
+    "baselineCheckedAtUtc": "2026-11-02T08:34:53.098463+00:00",
+    "baseline": [
+      {
+        "id": 41334658602,
+        "head_sha": "22f6aa86e74192546116d9047b267b0aa6f12705",
+        "status": "completed",
+        "conclusion": "success",
+        "html_url": "https://github.com/Joe6355/AstroPhoto/actions/runs/41334658602"
+      }
+    ],
+    "instrumentationTestsCompiledByWorkflow": true,
+    "instrumentationTestsExecutedByWorkflow": false,
+    "newTestsExecutedDuringAudit": false
+  },
+  "phoneReadback": {
+    "checkedAt": "2026-11-01T18:14:18.225755+00:00",
+    "readOnly": true,
+    "model": "23021RAA2Y",
+    "android": "13",
+    "sdk": "33",
+    "packages": {
+      "com.joe6355.astrophoto": {
+        "versionCode": 6,
+        "versionName": "0.9.0-beta.5",
+        "uid": 10505,
+        "sha256": "6321f48492a74a9ed92513952ef60393eccfb9ac4d2f0e18cbaebe345202423f"
+      },
+      "com.joe6355.astrophoto.qa20261017": {
+        "versionCode": 6,
+        "versionName": "0.9.0-beta.5",
+        "uid": 10354,
+        "sha256": "ab021111c97d621c1e3bd028688fdc51e4ed0142ee68d105524135aedf5348ff"
+      },
+      "com.example.astrophoto": {
+        "versionCode": 3,
+        "versionName": "0.9.0-beta.2",
+        "uid": 10503,
+        "sha256": "08e3e74e8e60033d1e101f347a546d8b4069f0cd8a86e4163b1d608f6043a595"
+      }
+    }
+  },
+  "phoneReadbackLimit": "Read-only APK metadata on 2026-11-01; no application UI, file-preservation rehash or update during this audit. Device state after the pause was not assumed unchanged.",
+  "unsignedUiCandidate": {
+    "source": "1810fbf8e9601143f64709b2ff2a997aac929901",
+    "applicationId": "com.joe6355.astrophoto",
+    "versionName": "0.9.0-beta.5",
+    "versionCode": 6,
+    "debuggable": false,
+    "signed": false,
+    "apkSha256": "2d888bd6fe5a6e3e68ed4426eae5bc987ad7073fbcf15c7a6919e27e9c472e37",
+    "mappingSha256": "ab8a43c751d67239f2baea4f4a043c9681c0e17af5410dfe6379bd2f1657868c",
+    "report": "docs/beta5-long-text-preparation-2026-11-01.md",
+    "installedOnMain": false,
+    "containsFutureRuStorePrivacyChanges": false
+  },
+  "mainInstalledSource": "e5090518bb444f095a71b6c8eb1efdc37ef460b1",
+  "expectedMainCertificateSha256": "79e37ad16c7cceaf6bae398d926e548e3f64ea0a6e248975cceb2a6e3d374f93",
+  "build": {
+    "minSdk": 26,
+    "targetSdk": 36,
+    "compileSdk": "36.1",
+    "jdk": 21,
+    "releaseOptimized": true
+  },
+  "githubReleasesSnapshot": {
+    "checkedAtUtc": "2026-11-01T18:17:43.331581+00:00",
+    "releases": [
+      {
+        "tag": "v0.9.0-beta.4",
+        "prerelease": true,
+        "draft": false,
+        "assetCount": 7,
+        "url": "https://github.com/Joe6355/AstroPhoto/releases/tag/v0.9.0-beta.4"
+      }
+    ]
+  },
+  "inventory": {
+    "productionKotlinFiles": 243,
+    "productionKotlinLines": 61862,
+    "unitTestKotlinFiles": 168,
+    "androidTestKotlinFiles": 39,
+    "markers": [],
+    "networkCodeMarkers": [],
+    "trackedKeyOrApkPaths": [],
+    "licenseOrPrivacyPaths": [],
+    "apkLicenseOrNoticePaths": [
+      "META-INF/androidx/annotation/annotation/LICENSE.txt",
+      "META-INF/androidx/collection/collection-ktx/LICENSE.txt",
+      "META-INF/androidx/collection/collection/LICENSE.txt",
+      "META-INF/androidx/lifecycle/lifecycle-common-java8/LICENSE.txt",
+      "META-INF/androidx/lifecycle/lifecycle-common/LICENSE.txt"
+    ],
+    "largestProductionSources": [
+      {
+        "lines": 3118,
+        "path": "app/src/main/java/com/joe6355/astrophoto/CameraScreen.kt"
+      },
+      {
+        "lines": 3085,
+        "path": "app/src/main/java/com/joe6355/astrophoto/JpegStacker.kt"
+      },
+      {
+        "lines": 1636,
+        "path": "app/src/main/java/com/joe6355/astrophoto/SessionBrowser.kt"
+      },
+      {
+        "lines": 1634,
+        "path": "app/src/main/java/com/joe6355/astrophoto/CameraPreviewView.kt"
+      },
+      {
+        "lines": 1555,
+        "path": "app/src/main/java/com/joe6355/astrophoto/ProcessedResults.kt"
+      },
+      {
+        "lines": 1531,
+        "path": "app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/postprocessing/FileBackedAdaptivePresetProcessor.kt"
+      },
+      {
+        "lines": 1477,
+        "path": "app/src/main/java/com/joe6355/astrophoto/ProcessedImageEditor.kt"
+      },
+      {
+        "lines": 1313,
+        "path": "app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/enhancement/EnhancedGlobalToneProcessor.kt"
+      }
+    ]
+  },
+  "historicalFilePreservationSnapshot": {
+    "date": "2026-11-01",
+    "report": "docs/long-text-ui-2026-11-01.md",
+    "publicFiles": 1807,
+    "legacyPrivateFiles": 222,
+    "qaPrivateFiles": 574,
+    "publicFilesExact": 1807,
+    "legacyPrivateFilesExact": 222,
+    "qaPrivateFilesExact": 573,
+    "qaChangedFiles": [
+      "files/profileInstalled"
+    ],
+    "allThreePreferencesRestored": true,
+    "fullMainPrivateHashingAvailable": false,
+    "notRehashedDuringAudit": true
+  },
+  "releaseGates": [
+    {
+      "id": "privacy_and_data",
+      "status": "open",
+      "next": "Russian policy, in-app access, public URL, owner contact and decision/documentation of system backup."
+    },
+    {
+      "id": "new_android_runtime",
+      "status": "open",
+      "next": "Targeted API34 and API35+ system checks; foreground processing type on API34 is unverified, not a reproduced failure."
+    },
+    {
+      "id": "rustore_account_card_media",
+      "status": "open",
+      "next": "Developer account, store card, current screenshots/icon, category, age and support contact."
+    },
+    {
+      "id": "data_permissions_declaration",
+      "status": "open",
+      "next": "Complete from final manifest and actual local access/export/backup behavior."
+    },
+    {
+      "id": "final_signed_candidate",
+      "status": "open",
+      "next": "After required code changes: freeze version and source, successful CI, original key, APK/mapping/candidate; plan next changed versionCode above6."
+    },
+    {
+      "id": "targeted_update_acceptance",
+      "status": "open",
+      "next": "Preserve existing data, test only newly affected policy/UI/system paths on final signed APK."
+    },
+    {
+      "id": "rustore_moderation_publication",
+      "status": "open",
+      "next": "Upload exact candidate hash, record moderation and actual publication; not performed by audit."
+    }
+  ],
+  "wideStableReleaseEvidenceStillMissing": [
+    "New representative starry-night series",
+    "Another physical Camera2 device"
+  ],
+  "auditOnlyChangedDocuments": true,
+  "noAppInstallUninstallDataClearOrPhotoCaptureDuringAudit": true,
+  "algorithmsFrozen": true,
+  "nextStep": "Prepare privacy and local-data disclosures; then new-Android system checks and store materials before one final signing cycle.",
+  "scopeLimits": [
+    "No exhaustive CVE or transitive license audit",
+    "No full main-private file hashing",
+    "No actual physical full-disk/thermal experiments",
+    "No account creation, store upload or moderation"
+  ],
+  "reports": {
+    "audit": "docs/RELEASE_AUDIT_RU_2026-11-02.md",
+    "ruStorePlan": "docs/RUSTORE_RELEASE_RU.md"
+  }
+}
