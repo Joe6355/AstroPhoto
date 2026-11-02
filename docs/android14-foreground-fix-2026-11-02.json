@@ -134,22 +134,24 @@
   "phoneSessionFilesRehashed": false,
   "fullMainPrivateHashingAvailable": false,
   "emulatorAndOwnAdbServerStopped": true,
-  "sourceCiCheckedAtUtc": "2026-11-02T09:48:18.002545+00:00",
+  "sourceCiCheckedAtUtc": "2026-11-02T10:04:13.077832+00:00",
   "sourceCi": [
     {
       "id": 41423515728,
       "head_sha": "4d3bf2132f1d041545a7c98e4672a7c4f17598c6",
-      "status": "in_progress",
-      "conclusion": null,
+      "status": "completed",
+      "conclusion": "success",
       "html_url": "https://github.com/Joe6355/AstroPhoto/actions/runs/41423515728"
     }
   ],
   "mainUpdate": {
-    "status": "requires_original_key_on_pc",
+    "status": "waiting_for_signed_candidate_from_currently_unavailable_pc",
     "localSigningConfigured": false,
     "phoneInstallPerformed": false,
     "nextGuide": "docs/PHONE_UPDATE_RU.md",
-    "previousUnsignedUiCandidateIncludesThisFix": false
+    "previousUnsignedUiCandidateIncludesThisFix": false,
+    "ownerConfirmedPcCurrentlyAvailable": false,
+    "newSignedArchiveFoundInCheckedLaptopLocations": false
   },
   "scopeLimits": [
     "Synthetic job, not photo-processing accuracy",
@@ -159,5 +161,51 @@
   ],
   "pixelAlgorithmsChanged": false,
   "publicationWorkPerformed": false,
-  "nextStep": "One signed current-main candidate from the PC, then targeted main-app update acceptance preserving data. Other work deferred by owner."
+  "nextStep": "One signed current-main candidate from the PC, then targeted main-app update acceptance preserving data. Other work deferred by owner.",
+  "fullCiReceipt": {
+    "checkedAtUtc": "2026-11-02T10:04:13.077832+00:00",
+    "run": {
+      "id": 41423515728,
+      "head_sha": "4d3bf2132f1d041545a7c98e4672a7c4f17598c6",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/Joe6355/AstroPhoto/actions/runs/41423515728"
+    },
+    "artifacts": {
+      "android-reports": {
+        "id": 13132081400,
+        "sha256": "df520f7cc4eed5093229a1949354823892fe1ee26328fdd1f460ed759d13a881",
+        "matchesGithubDigest": true,
+        "allMembersCrcValid": true
+      },
+      "astrophoto-release": {
+        "id": 13132196158,
+        "sha256": "c84acdc21df9e18e9b1547509dd57601b5722562cd4917b4a20f25da66bf276b",
+        "matchesGithubDigest": true,
+        "allMembersCrcValid": true
+      }
+    },
+    "unitTests": {
+      "tests": 1360,
+      "failures": 0,
+      "skipped": 4,
+      "passed": 1356,
+      "duration": "11m49.90s"
+    },
+    "lint": {
+      "debug": "14 warnings",
+      "release": "14 warnings"
+    },
+    "mainUnsignedApk": {
+      "applicationId": "com.joe6355.astrophoto",
+      "versionName": "0.9.0-beta.5",
+      "versionCode": 6,
+      "bytes": 2251250,
+      "sha256": "529cbb1fd71d5624dcfc5f59e8ee833ba1b88e82ba990e344516d2341e1e908f",
+      "debuggable": false,
+      "unsignedVerified": true,
+      "installed": false,
+      "newForegroundPermissionPresent": true
+    }
+  }
 }
