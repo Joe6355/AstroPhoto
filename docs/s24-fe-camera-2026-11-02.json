@@ -1,0 +1,425 @@
+{
+  "date": "2026-11-02",
+  "baseSourceSha": "61e6e6e4454ee4eac838efe56e9cbf1cd5d26036",
+  "device": {
+    "ro.product.manufacturer": "samsung",
+    "ro.product.model": "SM-S721B",
+    "ro.build.version.release": "17",
+    "ro.build.version.sdk": "37",
+    "ro.build.version.security_patch": "2026-09-05"
+  },
+  "qa": {
+    "package": "com.joe6355.astrophoto.qa20261017",
+    "bytes": 16532748,
+    "sha256": "3b7d40702cf1d16ee4b53df440c192165c540903d1ff24983114c2ba77c89739"
+  },
+  "versionName": "0.9.0-beta.5",
+  "versionCode": 6,
+  "productionFileLfSha256": {
+    "app/src/main/java/com/joe6355/astrophoto/CameraPreviewView.kt": "3db37dab006bdddb1d76171446742d415c09f006b547bb9633e2c720efa175c7",
+    "app/src/main/java/com/joe6355/astrophoto/SeriesCaptureForegroundService.kt": "2eb7361caa87eaf7f169806edb3f9f241cdcbe7ec77fb42cdc311b197420a8bc",
+    "app/src/main/java/com/joe6355/astrophoto/VendorCameraSupport.kt": "25018dc0dc0064fa04c23272b2af378066818fc5059591de3ad49df279295057"
+  },
+  "testApks": {
+    "tag": "s24_161047",
+    "testApkSha256": "afe9abf25be4bbe1ec457de393cfefcb8a443add0f31db3ae0d9bca5f9973fec",
+    "qaProductionApkSha256": "3b7d40702cf1d16ee4b53df440c192165c540903d1ff24983114c2ba77c89739",
+    "finalTestApkSha256": "908cff7f19dad83db8f7b0e721f2319603650b7afcef68939ba85c56d1f16db0"
+  },
+  "cameraAcceptance": {
+    "scenarios": [
+      {
+        "name": "af",
+        "focus": "AF",
+        "requestedIso": 100,
+        "requestedExposureNs": 16666667,
+        "plannedCount": 1,
+        "savedCount": 1,
+        "files": [
+          {
+            "name": "AstroSeries_20261102_211052_001.jpg",
+            "contentUri": "content://media/external/images/media/51766",
+            "width": 4080,
+            "height": 3060,
+            "iso": 100,
+            "exposureSeconds": 0.016666666666666666,
+            "sha256": "85fca244457a81e035c9f7a828ee15ec2e52948f3893cfb6d674314b9fcf0ea8"
+          }
+        ]
+      },
+      {
+        "name": "manual",
+        "focus": "MF",
+        "requestedIso": 400,
+        "requestedExposureNs": 4000000,
+        "plannedCount": 1,
+        "savedCount": 1,
+        "files": [
+          {
+            "name": "AstroSeries_20261102_211055_001.jpg",
+            "contentUri": "content://media/external/images/media/51767",
+            "width": 4080,
+            "height": 3060,
+            "iso": 400,
+            "exposureSeconds": 0.004,
+            "sha256": "f6bb69df73234a46e2168a0c98300b5f116b232911fdc6f3d09e4446ccebf68d"
+          }
+        ]
+      },
+      {
+        "name": "series",
+        "focus": "INFINITY",
+        "requestedIso": 400,
+        "requestedExposureNs": 33333333,
+        "plannedCount": 3,
+        "savedCount": 3,
+        "files": [
+          {
+            "name": "AstroSeries_20261102_211058_001.jpg",
+            "contentUri": "content://media/external/images/media/51768",
+            "width": 4080,
+            "height": 3060,
+            "iso": 400,
+            "exposureSeconds": 0.03333333333333333,
+            "sha256": "af1ae7a215e1ef5f6d9c2d28ba25207e67e140665f1fd1570f1503eacdbca70d"
+          },
+          {
+            "name": "AstroSeries_20261102_211058_002.jpg",
+            "contentUri": "content://media/external/images/media/51769",
+            "width": 4080,
+            "height": 3060,
+            "iso": 400,
+            "exposureSeconds": 0.03333333333333333,
+            "sha256": "a43265c81b37a5fa138512766215baaa049dc853cba00b1a32107035bb2fc2fa"
+          },
+          {
+            "name": "AstroSeries_20261102_211058_003.jpg",
+            "contentUri": "content://media/external/images/media/51770",
+            "width": 4080,
+            "height": 3060,
+            "iso": 400,
+            "exposureSeconds": 0.03333333333333333,
+            "sha256": "cf7c2e93e7187e9a770cd623802bae5b02630b0b313431e35cefa0112466c0e6"
+          }
+        ]
+      },
+      {
+        "name": "notification_stop",
+        "focus": "INFINITY",
+        "requestedIso": 400,
+        "requestedExposureNs": 33333333,
+        "plannedCount": 5,
+        "savedCount": 1,
+        "files": [
+          {
+            "name": "AstroSeries_20261102_211102_001.jpg",
+            "contentUri": "content://media/external/images/media/51771",
+            "width": 4080,
+            "height": 3060,
+            "iso": 400,
+            "exposureSeconds": 0.03333333333333333,
+            "sha256": "30db5af8d035aa121dc28e4b1d967bb57a591d9a2c56640e0d1a91c47a91e8f6"
+          }
+        ]
+      }
+    ],
+    "originalWholeMethodJunit": {
+      "passed": false,
+      "seconds": 35.957,
+      "reason": "Test compared encoded JPEG dimensions with EXIF-oriented PNG dimensions; all four capture scenarios and Average ran before this assertion. The expectation was corrected; no new captures were made."
+    },
+    "completion": {
+      "sourceTag": "s24_161047",
+      "folder": "Session_QA_Hardware_ad37d832-4d5c-476c-8943-d03ca0ad6ec9",
+      "existingJpegCount": 6,
+      "sourceHashesUnchangedAfterAverage": true,
+      "noLateFrameAfterStop": true,
+      "exifOrientedWidth": 3060,
+      "exifOrientedHeight": 4080,
+      "averageContentUri": "content://media/external/images/media/51773",
+      "averageFullyDecoded": true,
+      "captureOrProcessingRepeated": false,
+      "completed": true
+    }
+  },
+  "diagnosticMatrix": {
+    "model": "SM-S721B",
+    "sdk": 37,
+    "diagnosticOnly": true,
+    "rows": [
+      {
+        "cameraId": "0",
+        "variant": "still",
+        "previewIso": 3200,
+        "previewExposureNs": 39981000,
+        "imageTimestamp": 135585635212186,
+        "actualExposureNs": 16666000,
+        "actualIso": 100,
+        "actualAe": 0,
+        "actualMode": 1,
+        "physicalCamera": "5",
+        "resultTimestamp": 135585635212186,
+        "exifIso": 100,
+        "exifExposure": 0.016666666666666666
+      },
+      {
+        "cameraId": "0",
+        "variant": "manual",
+        "previewIso": 3200,
+        "previewExposureNs": 39981000,
+        "imageTimestamp": 135586758674725,
+        "actualExposureNs": 39981000,
+        "actualIso": 3200,
+        "actualAe": 0,
+        "actualMode": 1,
+        "physicalCamera": "5",
+        "resultTimestamp": 135586758674725,
+        "exifIso": 3200,
+        "exifExposure": 0.04
+      },
+      {
+        "cameraId": "0",
+        "variant": "manual_off",
+        "previewIso": 3200,
+        "previewExposureNs": 39981000,
+        "imageTimestamp": 135587950296249,
+        "actualExposureNs": 16666000,
+        "actualIso": 100,
+        "actualAe": 0,
+        "actualMode": 0,
+        "physicalCamera": "5",
+        "resultTimestamp": 135587950296249,
+        "exifIso": 100,
+        "exifExposure": 0.016666666666666666
+      },
+      {
+        "cameraId": "0",
+        "variant": "still_manual_preview",
+        "previewIso": 100,
+        "previewExposureNs": 16674000,
+        "imageTimestamp": 135589108587655,
+        "actualExposureNs": 16666000,
+        "actualIso": 100,
+        "actualAe": 0,
+        "actualMode": 1,
+        "physicalCamera": "5",
+        "resultTimestamp": 135589108587655,
+        "exifIso": 100,
+        "exifExposure": 0.016666666666666666
+      },
+      {
+        "cameraId": "2",
+        "variant": "still",
+        "previewIso": 1600,
+        "previewExposureNs": 39981000,
+        "imageTimestamp": 135590200115506,
+        "actualExposureNs": 16666000,
+        "actualIso": 100,
+        "actualAe": 0,
+        "actualMode": 1,
+        "resultTimestamp": 135590200115506,
+        "exifIso": 100,
+        "exifExposure": 0.016666666666666666
+      },
+      {
+        "cameraId": "2",
+        "variant": "manual",
+        "previewIso": 1600,
+        "previewExposureNs": 39981000,
+        "imageTimestamp": 135591201908631,
+        "actualExposureNs": 16666000,
+        "actualIso": 100,
+        "actualAe": 0,
+        "actualMode": 1,
+        "resultTimestamp": 135591201908631,
+        "exifIso": 100,
+        "exifExposure": 0.016666666666666666
+      },
+      {
+        "cameraId": "2",
+        "variant": "manual_off",
+        "previewIso": 1600,
+        "previewExposureNs": 39981000,
+        "imageTimestamp": 135592178833241,
+        "actualExposureNs": 16666000,
+        "actualIso": 100,
+        "actualAe": 0,
+        "actualMode": 0,
+        "resultTimestamp": 135592178833241,
+        "exifIso": 100,
+        "exifExposure": 0.016666666666666666
+      },
+      {
+        "cameraId": "2",
+        "variant": "still_manual_preview",
+        "previewIso": 100,
+        "previewExposureNs": 16674000,
+        "imageTimestamp": 135593099996796,
+        "actualExposureNs": 16666000,
+        "actualIso": 100,
+        "actualAe": 0,
+        "actualMode": 1,
+        "resultTimestamp": 135593099996796,
+        "exifIso": 100,
+        "exifExposure": 0.016666666666666666
+      }
+    ]
+  },
+  "eta": {
+    "sessionFolder": "Session_QA_ETA_UI_2b4badbc-cbc8-42a4-a3c7-18690a171452",
+    "measuredEtaMillis": 5232,
+    "etaText": "QA ETA: анализ\nДо конца этапа ≈ 6 сек",
+    "screenAndNotificationAgree": true,
+    "progressCurrent": 2,
+    "progressTotal": 10,
+    "stageChangeClearsEta": true,
+    "stoppedThroughNotificationPendingIntent": true,
+    "notificationRemoved": true,
+    "photosReadOrWritten": false,
+    "realPipelineAccuracyTested": false
+  },
+  "resources": {
+    "memory": {
+      "mode": "memory",
+      "message": "Не хватает оперативной памяти для обработки.\nЗакройте другие приложения и повторите. При повторном отказе выберите меньше кадров.",
+      "retryPassed": false,
+      "sourcesUnchanged": true,
+      "faultInjectedFromProgressCallback": true,
+      "actualDiskFilled": false
+    },
+    "manual": {
+      "mode": "manual",
+      "message": "Недостаточно места в хранилище телефона для обработки. Освободите место и повторите обработку.",
+      "retryPassed": true,
+      "sourcesUnchanged": true,
+      "faultInjectedFromProgressCallback": true,
+      "actualDiskFilled": false
+    },
+    "profile": {
+      "mode": "profile",
+      "message": "Ошибка на этапе: Анализ JPEG-кадров. Недостаточно места в хранилище телефона для обработки. Освободите место и повторите обработку.",
+      "retryPassed": false,
+      "sourcesUnchanged": true,
+      "faultInjectedFromProgressCallback": true,
+      "actualDiskFilled": false
+    }
+  },
+  "junit": {
+    "eta": {
+      "passed": true,
+      "tests": 1,
+      "seconds": 2.808
+    },
+    "resourceFailures": {
+      "passed": true,
+      "tests": 3,
+      "seconds": 0.678
+    },
+    "readOnlyCameraCompletion": {
+      "passed": true,
+      "tests": 1,
+      "seconds": 1.252
+    },
+    "diagnosticMatrix": {
+      "passed": true,
+      "tests": 1,
+      "seconds": 9.182
+    }
+  },
+  "jvm": [
+    {
+      "class": "com.joe6355.astrophoto.CameraTapFocusTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "com.joe6355.astrophoto.CapturedJpegStorageTest",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "com.joe6355.astrophoto.LegacyCapturedJpegStorageTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "com.joe6355.astrophoto.VendorCameraSupportTest",
+      "tests": 12,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  ],
+  "lint": {
+    "errors": 0,
+    "warnings": 14
+  },
+  "build": {
+    "qaAppTestLintSuccess": true,
+    "seconds": 163,
+    "finalAndroidTestOnlyBuildSuccess": true,
+    "finalAndroidTestOnlySeconds": 35
+  },
+  "preservation": {
+    "checkedAt": "2026-11-02T16:16:27.532206+00:00",
+    "public": {
+      "/sdcard/Pictures/AstroPhoto": {
+        "existingUnchanged": 1,
+        "current": 12,
+        "addedOwn": 11
+      },
+      "/sdcard/Documents/AstroPhoto": {
+        "existingUnchanged": 0,
+        "current": 0,
+        "addedOwn": 0
+      },
+      "/sdcard/Android/data/com.example.astrophoto/files": {
+        "existingUnchanged": 0,
+        "current": 0,
+        "addedOwn": 0
+      }
+    },
+    "legacyPrivate": {
+      "unchanged": 11,
+      "added": 0,
+      "removed": 0
+    },
+    "legacyApkSha256": "39f31485c3d40775bb9a4ff60289ffdb44193cab26908edc582126124f08e36c",
+    "packages": [
+      "package:com.joe6355.astrophoto.qa20261017.test uid:10416",
+      "package:com.example.astrophoto uid:10504",
+      "package:com.joe6355.astrophoto.qa20261017 uid:10415"
+    ],
+    "qaApkSha256": "3b7d40702cf1d16ee4b53df440c192165c540903d1ff24983114c2ba77c89739",
+    "noActiveQaServices": true,
+    "stayAwakeRestored": 0,
+    "settings": {
+      "font_scale": "1.0",
+      "screen_off_timeout": "600000",
+      "user_rotation": "0",
+      "accelerometer_rotation": "0"
+    }
+  },
+  "limits": [
+    "No full rerun of the corrected original capture method; existing outputs checked by a passing read-only method.",
+    "No thirty-second Samsung exposure or native Sigma30 verification.",
+    "No night stars or measured optical focus sharpness.",
+    "No real disk/heap exhaustion; failures injected on own fixtures.",
+    "No universal ETA accuracy claim; display test uses a controlled task.",
+    "No main signed or optimized APK updated/tested in this block.",
+    "No publication work."
+  ],
+  "previousCi": {
+    "sha": "61e6e6e4454ee4eac838efe56e9cbf1cd5d26036",
+    "conclusion": "success",
+    "checkedAt": "2026-11-02T15:56:33.610836+00:00",
+    "url": "https://github.com/Joe6355/AstroPhoto/actions/runs/41470459616"
+  },
+  "currentCommitCi": "Check separately by the commit SHA; no claim from previous CI."
+}

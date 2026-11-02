@@ -178,6 +178,17 @@ internal fun shouldUseAutomaticPreviewExposure(
     return !applyLongExposureToPreview || usesExtendedValue
 }
 
+/** Keep service-owned preview manual without repeating a long still exposure. */
+internal fun boundedHeadlessPreviewExposureNs(
+    requestedExposureTimeNs: Long,
+    publicExposureRangeNs: LongRange?
+): Long? {
+    val range = publicExposureRangeNs?.takeIf(::isValidExposureRange) ?: return null
+    val maximum = minOf(range.last, 100_000_000L)
+    if (maximum < range.first) return null
+    return requestedExposureTimeNs.coerceIn(range.first, maximum)
+}
+
 internal fun readVendorExposureRange(
     characteristics: CameraCharacteristics,
     profile: CameraCompatibilityProfile

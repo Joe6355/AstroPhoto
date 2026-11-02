@@ -8,6 +8,18 @@ import org.junit.Test
 
 class VendorCameraSupportTest {
     @Test
+    fun headlessPreviewKeepsShortExposureAndBoundsLongStillExposure() {
+        val publicRange = 85_000L..33_540_000_000L
+        assertEquals(16_666_667L, boundedHeadlessPreviewExposureNs(16_666_667L, publicRange))
+        assertEquals(100_000_000L, boundedHeadlessPreviewExposureNs(33_540_000_000L, publicRange))
+        assertEquals(10_000_000L, boundedHeadlessPreviewExposureNs(30_000_000_000L, 85_000L..10_000_000L))
+        assertEquals(85_000L, boundedHeadlessPreviewExposureNs(1L, publicRange))
+        assertNull(boundedHeadlessPreviewExposureNs(1_000_000_000L, null))
+        assertNull(boundedHeadlessPreviewExposureNs(1_000_000_000L, 0L..10L))
+        assertNull(boundedHeadlessPreviewExposureNs(1_000_000_000L, 200_000_000L..1_000_000_000L))
+    }
+
+    @Test
     fun pixelUsesExplicitPublicCamera2Profile() {
         assertEquals(
             CameraCompatibilityProfile.GOOGLE_PIXEL,

@@ -91,7 +91,7 @@ class SeriesCaptureForegroundService : Service() {
                         }
                     },
                     onCameraStatus = { status ->
-                        if (status == "session configured" && !ready.isCompleted) ready.complete(Unit)
+                        if (status == FIRST_HEADLESS_PREVIEW_FRAME && !ready.isCompleted) ready.complete(Unit)
                     },
                     onCapabilitiesAvailable = { capabilities ->
                         activeCameraId = capabilities.cameraId

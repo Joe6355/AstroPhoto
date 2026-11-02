@@ -46,6 +46,8 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+internal const val FIRST_HEADLESS_PREVIEW_FRAME = "first headless preview frame"
+
 data class ManualCameraCapabilities(
     val cameraId: String,
     val exposureRangeNs: LongRange?,
@@ -200,6 +202,7 @@ class CameraPreviewView @JvmOverloads constructor(
     private var externalCaptureActive = false
     private var openingCamera = false
     private var previewStarted = false
+    private var headlessPreviewFrameReceived = false
     private var previewPausedForExtendedCapture = false
     private var captureInProgress = false
     private var activeCaptureType: CaptureType? = null
@@ -1056,7 +1059,10 @@ class CameraPreviewView @JvmOverloads constructor(
         val exposureRange = capabilities.exposureRangeNs
         val isoRange = capabilities.isoRange
         val sensorIsoRange = capabilities.sensorIsoRange
-        val automaticPreviewExposure = shouldUseAutomaticPreviewExposure(
+        val headlessPreviewExposure = if (forPreview && headlessSurfaceTexture != null) {
+            boundedHeadlessPreviewExposureNs(parameters.exposureTimeNs, capabilities.publicExposureRangeNs)
+        } else null
+        val automaticPreviewExposure = headlessPreviewExposure == null && shouldUseAutomaticPreviewExposure(
             forPreview = forPreview,
             applyLongExposureToPreview = parameters.applyLongExposureToPreview,
             requestedExposureTimeNs = parameters.exposureTimeNs,
@@ -1085,15 +1091,21 @@ class CameraPreviewView @JvmOverloads constructor(
                 sensorRange = sensorIsoRange,
                 postRawBoostRange = capabilities.postRawSensitivityBoostRange
             )
-            val requestedExposure = parameters.exposureTimeNs.coerceIn(
+            val requestedExposure = (headlessPreviewExposure ?: parameters.exposureTimeNs).coerceIn(
                 exposureRange.first,
                 exposureRange.last
             )
-            if (!forPreview) {
+            if (!forPreview || headlessPreviewExposure != null) {
                 requestBuilder.set(
                     CaptureRequest.CONTROL_CAPTURE_INTENT,
                     CaptureRequest.CONTROL_CAPTURE_INTENT_MANUAL
                 )
+                // A still template may enable ZSL and reuse an automatically exposed preview frame.
+                // Manual stills must use the sensor parameters from this request.
+                if (cameraCharacteristics?.availableCaptureRequestKeys
+                        ?.contains(CaptureRequest.CONTROL_ENABLE_ZSL) == true) {
+                    requestBuilder.set(CaptureRequest.CONTROL_ENABLE_ZSL, false)
+                }
             }
             requestBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
             requestBuilder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_OFF)
@@ -1175,9 +1187,23 @@ class CameraPreviewView @JvmOverloads constructor(
     private fun submitRepeatingRequest(requestBuilder: CaptureRequest.Builder) {
         val session = captureSession ?: return
         try {
+            val readyCallback = if (headlessSurfaceTexture != null && !headlessPreviewFrameReceived) {
+                object : CameraCaptureSession.CaptureCallback() {
+                    override fun onCaptureCompleted(
+                        session: CameraCaptureSession,
+                        request: CaptureRequest,
+                        result: TotalCaptureResult
+                    ) {
+                        if (captureSession !== session || !active || headlessPreviewFrameReceived) return
+                        headlessPreviewFrameReceived = true
+                        // Configuration alone is too early on some HALs: their first still uses AE values.
+                        reportStatus(FIRST_HEADLESS_PREVIEW_FRAME)
+                    }
+                }
+            } else null
             session.setRepeatingRequest(
                 requestBuilder.build(),
-                null,
+                readyCallback,
                 backgroundHandler
             )
             if (!previewStarted) {
@@ -1217,6 +1243,12 @@ class CameraPreviewView @JvmOverloads constructor(
             "requestedExposureNs=$requestedExposure actualExposureNs=$actualExposure " +
             "requestedSensorIso=${request.get(CaptureRequest.SENSOR_SENSITIVITY)} " +
             "actualSensorIso=${result.get(CaptureResult.SENSOR_SENSITIVITY)} " +
+            "requestedAe=${request.get(CaptureRequest.CONTROL_AE_MODE)} " +
+            "actualAe=${result.get(CaptureResult.CONTROL_AE_MODE)} " +
+            "requestedZsl=${request.get(CaptureRequest.CONTROL_ENABLE_ZSL)} " +
+            "actualZsl=${result.get(CaptureResult.CONTROL_ENABLE_ZSL)} " +
+            "requestedIntent=${request.get(CaptureRequest.CONTROL_CAPTURE_INTENT)} " +
+            "actualIntent=${result.get(CaptureResult.CONTROL_CAPTURE_INTENT)} " +
             "sensorTimestampNs=${result.get(CaptureResult.SENSOR_TIMESTAMP)}")
         val exposureLimit = if (
             requestedExposure != null &&
@@ -1574,6 +1606,7 @@ class CameraPreviewView @JvmOverloads constructor(
     private fun closeCamera() {
         openingCamera = false
         previewStarted = false
+        headlessPreviewFrameReceived = false
         previewPausedForExtendedCapture = false
         exposureAnalyzer.stop()
         backgroundHandler?.removeCallbacks(previewUpdateRunnable)
