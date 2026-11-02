@@ -1,0 +1,163 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-02",
+  "timezone": "Asia/Yekaterinburg",
+  "sourceCommit": "4d3bf2132f1d041545a7c98e4672a7c4f17598c6",
+  "changedProductionFiles": [
+    "app/src/main/AndroidManifest.xml",
+    "app/src/main/java/com/joe6355/astrophoto/ProcessingForegroundService.kt"
+  ],
+  "failureBeforeFix": "InvalidForegroundServiceTypeException: Starting FGS with type unknown",
+  "foregroundTypeByApi": {
+    "26-28": "two-argument call",
+    "29-34": "explicit DATA_SYNC",
+    "35+": "explicit MEDIA_PROCESSING"
+  },
+  "baseline": {
+    "checkedAtUtc": "2026-11-02T09:41:30.330627+00:00",
+    "api": 34,
+    "serial": "127.0.0.1:5581",
+    "image": "aosp_atd",
+    "emulator": true,
+    "test": "com.joe6355.astrophoto.ProcessingEtaDisplayDeviceTest#etaMatchesScreenAndNotificationThenClearsOnStageChangeAndStop",
+    "passed": false,
+    "elapsedSeconds": 5.093,
+    "observedForegroundService": false,
+    "serviceStopped": true,
+    "phoneTouched": false,
+    "realPhotosReadOrWritten": false,
+    "inputs": {
+      "app": {
+        "path": "artifacts/long-text-ui-2026-11-01/qa-long-text-fixed.apk",
+        "sha256": "ab021111c97d621c1e3bd028688fdc51e4ed0142ee68d105524135aedf5348ff",
+        "bytes": 16530039
+      },
+      "test": {
+        "path": "artifacts/long-text-ui-2026-11-01/qa-long-text-final-test.apk",
+        "sha256": "657ee14c0b48300a2e0d02d9d243f4a9b67b1375c944806757ee91a720836f7d",
+        "bytes": 1701461
+      }
+    }
+  },
+  "fixed": {
+    "checkedAtUtc": "2026-11-02T09:45:33.185747+00:00",
+    "phase": "fixed",
+    "api": 34,
+    "serial": "127.0.0.1:5581",
+    "image": "aosp_atd",
+    "emulator": true,
+    "test": "com.joe6355.astrophoto.ProcessingEtaDisplayDeviceTest#etaMatchesScreenAndNotificationThenClearsOnStageChangeAndStop",
+    "passed": true,
+    "elapsedSeconds": 6.135,
+    "observedForegroundService": true,
+    "serviceStopped": true,
+    "phoneTouched": false,
+    "realPhotosReadOrWritten": false,
+    "inputs": {
+      "app": {
+        "path": "artifacts/android14-foreground-2026-11-02/qa-android14-fixed.apk",
+        "sha256": "3e796540bb7cf9a3604804460292f7256610ad8f0a52aa6c75a0954df07f3acb",
+        "bytes": 16530081
+      },
+      "test": {
+        "path": "artifacts/long-text-ui-2026-11-01/qa-long-text-final-test.apk",
+        "sha256": "657ee14c0b48300a2e0d02d9d243f4a9b67b1375c944806757ee91a720836f7d",
+        "bytes": 1701461
+      },
+      "sourceCommit": "4d3bf2132f1d041545a7c98e4672a7c4f17598c6"
+    },
+    "testProof": {
+      "sessionFolder": "Session_QA_ETA_UI_6c79aea7-e291-4674-802b-6534fe3ac2e4",
+      "measuredEtaMillis": 5248,
+      "etaText": "QA ETA: анализ\nДо конца этапа ≈ 6 сек",
+      "screenAndNotificationAgree": true,
+      "progressCurrent": 2,
+      "progressTotal": 10,
+      "stageChangeClearsEta": true,
+      "stoppedThroughNotificationPendingIntent": true,
+      "notificationRemoved": true,
+      "photosReadOrWritten": false,
+      "realPipelineAccuracyTested": false
+    }
+  },
+  "junitTestSeconds": 4.816,
+  "qaBuild": {
+    "tasks": [
+      "assembleDebug",
+      "lintDebug"
+    ],
+    "success": true,
+    "durationSeconds": 173,
+    "lint": {
+      "Error": 0,
+      "Fatal": 0,
+      "Warning": 14
+    }
+  },
+  "testApkRebuilt": false,
+  "newTestsAdded": false,
+  "imageDownload": {
+    "url": "https://dl.google.com/android/repository/sys-img/aosp_atd/x86_64-34_r02.zip",
+    "bytes": 614898904,
+    "sha1": "9ce4068934b26fa99ca104ffe6d10dec22abb317",
+    "matchesOfficialSdkIndex": true,
+    "downloadSeconds": 35.3
+  },
+  "phoneReadOnlySnapshot": {
+    "checkedAtUtc": "2026-11-02T09:43:33.443773+00:00",
+    "readOnly": true,
+    "sdk": "33",
+    "packages": {
+      "com.joe6355.astrophoto": {
+        "versionCode": 6,
+        "versionName": "0.9.0-beta.5",
+        "uid": 10505,
+        "sha256": "6321f48492a74a9ed92513952ef60393eccfb9ac4d2f0e18cbaebe345202423f"
+      },
+      "com.joe6355.astrophoto.qa20261017": {
+        "versionCode": 6,
+        "versionName": "0.9.0-beta.5",
+        "uid": 10354,
+        "sha256": "ab021111c97d621c1e3bd028688fdc51e4ed0142ee68d105524135aedf5348ff"
+      },
+      "com.example.astrophoto": {
+        "versionCode": 3,
+        "versionName": "0.9.0-beta.2",
+        "uid": 10503,
+        "sha256": "08e3e74e8e60033d1e101f347a546d8b4069f0cd8a86e4163b1d608f6043a595"
+      }
+    },
+    "localReleaseSigningConfigured": false
+  },
+  "phoneApplicationsInstalledOrUpdated": false,
+  "phoneSettingsSessionsPhotosWritten": false,
+  "phoneSessionFilesRehashed": false,
+  "fullMainPrivateHashingAvailable": false,
+  "emulatorAndOwnAdbServerStopped": true,
+  "sourceCiCheckedAtUtc": "2026-11-02T09:48:18.002545+00:00",
+  "sourceCi": [
+    {
+      "id": 41423515728,
+      "head_sha": "4d3bf2132f1d041545a7c98e4672a7c4f17598c6",
+      "status": "in_progress",
+      "conclusion": null,
+      "html_url": "https://github.com/Joe6355/AstroPhoto/actions/runs/41423515728"
+    }
+  ],
+  "mainUpdate": {
+    "status": "requires_original_key_on_pc",
+    "localSigningConfigured": false,
+    "phoneInstallPerformed": false,
+    "nextGuide": "docs/PHONE_UPDATE_RU.md",
+    "previousUnsignedUiCandidateIncludesThisFix": false
+  },
+  "scopeLimits": [
+    "Synthetic job, not photo-processing accuracy",
+    "No visual acceptance of ATD screenshots or full notification shade",
+    "No API26/35+ or long system timeout test",
+    "No native optimized-release test in this block"
+  ],
+  "pixelAlgorithmsChanged": false,
+  "publicationWorkPerformed": false,
+  "nextStep": "One signed current-main candidate from the PC, then targeted main-app update acceptance preserving data. Other work deferred by owner."
+}
