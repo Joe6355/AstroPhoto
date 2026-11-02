@@ -1,0 +1,142 @@
+{
+  "date": "2026-11-02",
+  "status": "passed_limited_main_refresh",
+  "shortenedPlanComplete": true,
+  "sourceCommit": "daae29df8e3b6e952b54c32262e1820ede18150e",
+  "lastProductionCommit": "b380badf4b620414b7de120f91650d2f5ac66542",
+  "candidate": {
+    "sourceCommit": "daae29df8e3b6e952b54c32262e1820ede18150e",
+    "applicationId": "com.joe6355.astrophoto",
+    "versionName": "0.9.0-beta.5",
+    "versionCode": 6,
+    "certificateSha256": "79e37ad16c7cceaf6bae398d926e548e3f64ea0a6e248975cceb2a6e3d374f93",
+    "apkSha256": "78f96b0ad743a009f2ba37253e1fd7dd089022f846b84588065350a550230690",
+    "apkBytes": 2260102,
+    "debuggable": false,
+    "mappingFile": "mapping.txt",
+    "mappingSha256": "876c158e2e5a2c19d30e5091f72d2f2613a8264ddcc72e31b35faeb2c87c30f0"
+  },
+  "archive": {
+    "relativePath": "artifacts/pc-signed-release-20261102_164043/AstroPhoto-0.9.0-beta.5-signed-candidate.zip",
+    "sha256": "3a54f17c5de8586a3424e2cb334c036217a2b3e4abd2b9a5ccf442fb1f6dabc1",
+    "bytes": 5605141,
+    "exactlyApkCandidateAndMapping": true
+  },
+  "build": {
+    "task": ":app:assembleRelease",
+    "r8": true,
+    "durationSeconds": 151,
+    "tasksExecuted": 23,
+    "tasksUpToDate": 24,
+    "fullLocalSuiteRepeated": false
+  },
+  "sourceCi": [
+    {
+      "head_sha": "daae29df8e3b6e952b54c32262e1820ede18150e",
+      "conclusion": "success",
+      "html_url": "https://github.com/Joe6355/AstroPhoto/actions/runs/41433590433"
+    }
+  ],
+  "device": {
+    "serial": "5cc69b3d",
+    "model": "23021RAA2Y",
+    "android": "13",
+    "fontScale": "0.81",
+    "stayAwake": "0",
+    "rotation": "0",
+    "autoRotate": "0"
+  },
+  "update": {
+    "command": "adb -P 5038 -s 5cc69b3d install -r",
+    "result": "Success",
+    "oldApkSha256": "6321f48492a74a9ed92513952ef60393eccfb9ac4d2f0e18cbaebe345202423f",
+    "sameCertificate": true,
+    "sameVersionNameAndCode": true,
+    "uidAndDataDirectoryPreserved": true,
+    "existingUserPermissionsPreserved": true,
+    "otherPackagesUnchanged": true
+  },
+  "preservation": {
+    "oldSharedFilesExact": 1817,
+    "sharedFilesAfter": 1823,
+    "ownSharedFilesAdded": 6,
+    "legacyPrivateFilesExact": 222,
+    "qaPrivateFilesExact": 574,
+    "missingOldFiles": 0,
+    "changedOldFiles": 0,
+    "mainPrivateBytesHashable": false,
+    "privateBackupsVerified": {
+      "com.example.astrophoto": 222,
+      "com.joe6355.astrophoto.qa20261017": 574
+    }
+  },
+  "settings": {
+    "visibleCameraAndSession": true,
+    "visibleCameraSettings": true,
+    "visibleProcessingSettings": true,
+    "visibleInterfaceSettings": true,
+    "systemSettings": true,
+    "mainPrivateBytesHashable": false,
+    "restoredJpegQuality": 92,
+    "coldStartConfirmed": true,
+    "observedQualityBeforeRestoration": 100,
+    "qualityChangeCauseEstablished": false
+  },
+  "ui": {
+    "fontScale": "2.0",
+    "themeUnchanged": true,
+    "sessionName": "Session_20261102_164723_PC_UPDATE_LONG_NAME_WITH_DISTINGUISHABLE_CONTROL_ENDING",
+    "sessionNameBounds": "[281,1789][992,1980]",
+    "placeholderDescriptionVisible": true,
+    "headerBounds": "[77,314][1003,913]",
+    "longResultNameBounds": "[77,1678][1003,2047]",
+    "errorBounds": "[77,1190][1003,1267]",
+    "openBounds": "[143,1311][441,1414]",
+    "presetBounds": "[573,1311][870,1414]",
+    "passedBoundedUiSmoke": true,
+    "fontRestored": "0.81",
+    "sessionCardAt200FullyVisible": true,
+    "sessionCardAt200Bounds": [
+      77,
+      447,
+      1003,
+      846
+    ],
+    "resultNameAt200FullyInsideViewport": true,
+    "resultNameAt200Bounds": [
+      77,
+      819,
+      1003,
+      1283
+    ]
+  },
+  "processing": {
+    "realMainReleaseForegroundStart": true,
+    "androidApi": 33,
+    "foregroundNotificationId": 2101,
+    "runtimeForegroundTypePrintedByOs": false,
+    "sourceApi29To34Branch": "DATA_SYNC",
+    "cancelAction": "Отмена в диалоге продолжения",
+    "statusAfterCancel": "Продолжение обработки отменено",
+    "serviceStopped": true,
+    "interruption": "System Camera then Chrome were foreground; owner freed phone and same dialog was cancelled",
+    "processingLaunchCount": 1,
+    "runningStageStopButtonTested": false
+  },
+  "reviewedScreenshots": [
+    "10-font200-header.png",
+    "17-font200-error-and-actions.png",
+    "19-font200-session-card.png",
+    "22-font200-complete-result.png"
+  ],
+  "limits": [
+    "Full main private bytes unavailable on non-debuggable release",
+    "API33 dumpsys does not print foreground type; source branch is DATA_SYNC",
+    "Cancel performed at continuation dialog; running-stage stop button not retested",
+    "Other deferred app conditions and publication not resumed"
+  ],
+  "phoneFinalScreen": "Main AstroPhoto Home, camera panel collapsed",
+  "nextAction": "Shortened plan complete; await owner direction; do not redo signing/update/closed tests",
+  "publicationPerformed": false,
+  "localEvidence": "artifacts/pc-main-update-2026-11-02/"
+}
