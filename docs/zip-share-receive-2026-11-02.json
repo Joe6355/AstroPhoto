@@ -1,0 +1,188 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-02",
+  "timezone": "Asia/Yekaterinburg",
+  "completedAtUtc": "2026-11-02T10:52:56.745688+00:00",
+  "repositoryHeadAtTest": "3ecb935ff13fc8eaf2dfc1b4eeeed38b2580a902",
+  "result": "passed_local_receiver",
+  "environment": {
+    "model": "23021RAA2Y",
+    "android": "13",
+    "sdk": "33",
+    "recipientPackage": "com.mi.android.globalFileexplorer",
+    "recipientVersionCode": 20210601,
+    "recipientVersionName": "V1-210601",
+    "zipExportShareAndProviderPathsEqualToInstalledSource": true,
+    "installedSourceFromAcceptedApkHash": "e5090518bb444f095a71b6c8eb1efdc37ef460b1"
+  },
+  "testedMain": {
+    "versionCode": 6,
+    "versionName": "0.9.0-beta.5",
+    "uid": 10505,
+    "sha256": "6321f48492a74a9ed92513952ef60393eccfb9ac4d2f0e18cbaebe345202423f"
+  },
+  "ownSessionFolder": "/sdcard/Pictures/AstroPhoto/Session_20261030_213639_MAIN_BETA4_20261030_SMOKE",
+  "ownOriginalFiles": {
+    "/sdcard/Pictures/AstroPhoto/Session_20261030_213639_MAIN_BETA4_20261030_SMOKE/Lights/JPEG/AstroPhoto_20261030_213831.jpg": "356bbdb8cfb411f16214fca27659bd67c31ec73cd6bf24ff4bf02b13ba4fb382",
+    "/sdcard/Pictures/AstroPhoto/Session_20261030_213639_MAIN_BETA4_20261030_SMOKE/Lights/JPEG/AstroSeries_20261030_213939_001.jpg": "ecca8e4dbb98f1263c5869eff3db5e8ccfea0a9ab2ffc5c27a5003af8982915b",
+    "/sdcard/Pictures/AstroPhoto/Session_20261030_213639_MAIN_BETA4_20261030_SMOKE/Lights/JPEG/AstroSeries_20261030_213939_002.jpg": "50cb179b37321917870d1ce4e6bf905e3e1328053065dee789ce5860edeec5db",
+    "/sdcard/Pictures/AstroPhoto/Session_20261030_213639_MAIN_BETA4_20261030_SMOKE/Lights/JPEG/AstroSeries_20261030_213939_003.jpg": "e5f55ddaac35a7127d21e87c861320f8bd264d89d9c0745ca4f12ef16d927526",
+    "/sdcard/Pictures/AstroPhoto/Session_20261030_213639_MAIN_BETA4_20261030_SMOKE/Processed/Stacked_20261030_214146.png": "a6edcf6d3bb706e3aae0e7c3bf4887e3610ff0835799864d784b0e168b649448"
+  },
+  "export": {
+    "fileName": "AstroPhoto_MAIN_BETA4_20261030_SMOKE_20261102_153856.zip",
+    "phonePath": "/sdcard/Documents/AstroPhoto/Exports/AstroPhoto_MAIN_BETA4_20261030_SMOKE_20261102_153856.zip",
+    "bytes": 980888,
+    "sha256": "fbd05768bd4d3a22a143050d6f2c21fa7530a47bb81aa3a2d3c19c7e5d6c41ac",
+    "allCrcValid": true,
+    "entries": [
+      "MAIN_BETA4_20261030_SMOKE/README.txt",
+      "MAIN_BETA4_20261030_SMOKE/Lights/",
+      "MAIN_BETA4_20261030_SMOKE/Lights/JPEG/",
+      "MAIN_BETA4_20261030_SMOKE/Darks/",
+      "MAIN_BETA4_20261030_SMOKE/Darks/JPEG/",
+      "MAIN_BETA4_20261030_SMOKE/Tests/",
+      "MAIN_BETA4_20261030_SMOKE/Tests/JPEG/",
+      "MAIN_BETA4_20261030_SMOKE/Processed/",
+      "MAIN_BETA4_20261030_SMOKE/Lights/JPEG/AstroPhoto_20261030_213831.jpg",
+      "MAIN_BETA4_20261030_SMOKE/Lights/JPEG/AstroSeries_20261030_213939_001.jpg",
+      "MAIN_BETA4_20261030_SMOKE/Lights/JPEG/AstroSeries_20261030_213939_002.jpg",
+      "MAIN_BETA4_20261030_SMOKE/Lights/JPEG/AstroSeries_20261030_213939_003.jpg",
+      "MAIN_BETA4_20261030_SMOKE/Processed/Stacked_20261030_214146.png",
+      "MAIN_BETA4_20261030_SMOKE/frame_marks.json",
+      "MAIN_BETA4_20261030_SMOKE/session_info.txt"
+    ],
+    "sourceImagesExact": 5,
+    "onlyOwnSourceImages": true
+  },
+  "received": {
+    "checkedAtUtc": "2026-11-02T10:44:53.401007+00:00",
+    "recipientPackage": "com.mi.android.globalFileexplorer",
+    "recipientActivity": "com.android.fileexplorer.activity.CopyFileActivity",
+    "selection": "Копировать в…",
+    "destination": "/sdcard/Documents/AstroPhoto/QA_ZipReceive_20261102T104332Z/AstroPhoto_MAIN_BETA4_20261030_SMOKE_20261102_153856.zip",
+    "receivedByRealChooser": true,
+    "sha256": "fbd05768bd4d3a22a143050d6f2c21fa7530a47bb81aa3a2d3c19c7e5d6c41ac",
+    "bytes": 980888,
+    "matchesExportExactly": true
+  },
+  "extraction": {
+    "checkedAtUtc": "2026-11-02T10:50:01.229135+00:00",
+    "archiveCopiedByFileManager": true,
+    "archiveExtractedByFileManager": true,
+    "extractedRoot": "/sdcard/Documents/AstroPhoto/QA_ZipReceive_20261102T104332Z/AstroPhoto_MAIN_BETA4_20261030_SMOKE_20261102_153856",
+    "extractedFiles": {
+      "MAIN_BETA4_20261030_SMOKE/README.txt": {
+        "sha256": "bfb9f1802718809fc109f291575b29b20562245e93e1bd858eff8aaaffc3d249",
+        "bytes": 616
+      },
+      "MAIN_BETA4_20261030_SMOKE/Lights/JPEG/AstroPhoto_20261030_213831.jpg": {
+        "sha256": "356bbdb8cfb411f16214fca27659bd67c31ec73cd6bf24ff4bf02b13ba4fb382",
+        "bytes": 85594
+      },
+      "MAIN_BETA4_20261030_SMOKE/Lights/JPEG/AstroSeries_20261030_213939_001.jpg": {
+        "sha256": "ecca8e4dbb98f1263c5869eff3db5e8ccfea0a9ab2ffc5c27a5003af8982915b",
+        "bytes": 140745
+      },
+      "MAIN_BETA4_20261030_SMOKE/Lights/JPEG/AstroSeries_20261030_213939_002.jpg": {
+        "sha256": "50cb179b37321917870d1ce4e6bf905e3e1328053065dee789ce5860edeec5db",
+        "bytes": 89946
+      },
+      "MAIN_BETA4_20261030_SMOKE/Lights/JPEG/AstroSeries_20261030_213939_003.jpg": {
+        "sha256": "e5f55ddaac35a7127d21e87c861320f8bd264d89d9c0745ca4f12ef16d927526",
+        "bytes": 87738
+      },
+      "MAIN_BETA4_20261030_SMOKE/Processed/Stacked_20261030_214146.png": {
+        "sha256": "a6edcf6d3bb706e3aae0e7c3bf4887e3610ff0835799864d784b0e168b649448",
+        "bytes": 640056
+      },
+      "MAIN_BETA4_20261030_SMOKE/frame_marks.json": {
+        "sha256": "9d6438457b4608a4283a05f2d69aa9b017e7b3c50bb04f4449a3ac51db6c1425",
+        "bytes": 104
+      },
+      "MAIN_BETA4_20261030_SMOKE/session_info.txt": {
+        "sha256": "f3a8e62ade9274c4242c11119363583a75248b296db075c50a2c06921ee6b039",
+        "bytes": 1343
+      }
+    },
+    "allExtractedFilesExact": true,
+    "imageCount": 5,
+    "readmeUtf8Readable": true,
+    "frameMarksJsonReadable": true,
+    "ownOriginalFilesExact": 5,
+    "ownOriginalFilesAddedOrRemoved": false,
+    "appCodeChanged": false,
+    "appInstalledOrUpdated": false
+  },
+  "restoration": {
+    "checkedAtUtc": "2026-11-02T10:52:56.745688+00:00",
+    "mainHomeRestored": true,
+    "returnedToLauncher": true,
+    "stayAwakeAfter": "0",
+    "fontScaleAfter": "0.81",
+    "allThreeApksVersionsUidsExact": true,
+    "packages": {
+      "com.joe6355.astrophoto": {
+        "versionCode": 6,
+        "versionName": "0.9.0-beta.5",
+        "uid": 10505,
+        "sha256": "6321f48492a74a9ed92513952ef60393eccfb9ac4d2f0e18cbaebe345202423f"
+      },
+      "com.joe6355.astrophoto.qa20261017": {
+        "versionCode": 6,
+        "versionName": "0.9.0-beta.5",
+        "uid": 10354,
+        "sha256": "ab021111c97d621c1e3bd028688fdc51e4ed0142ee68d105524135aedf5348ff"
+      },
+      "com.example.astrophoto": {
+        "versionCode": 3,
+        "versionName": "0.9.0-beta.2",
+        "uid": 10503,
+        "sha256": "08e3e74e8e60033d1e101f347a546d8b4069f0cd8a86e4163b1d608f6043a595"
+      }
+    }
+  },
+  "allEightExtractedFilesExact": true,
+  "ownOriginalImageFilesExact": 5,
+  "newOwnSharedFiles": 10,
+  "existingSourceFilesAddedOrRemoved": false,
+  "applicationSourceChanged": false,
+  "applicationsBuiltInstalledOrUpdated": false,
+  "nativeInstrumentationTestsOrPhotoProcessingRepeated": false,
+  "fullMainPrivateHashingAvailable": false,
+  "globalUserFileManifestRepeated": false,
+  "externalPeopleOrNetworkRecipientsSelected": false,
+  "clipboardContentReadByDriver": false,
+  "otherRecipientsVerified": false,
+  "newPhoneRootPublicCountsAsserted": false,
+  "previousUiCiConfirmed": {
+    "checkedAt": "2026-11-02T10:54:12.537448+00:00",
+    "revisions": [
+      {
+        "sha": "b380badf4b620414b7de120f91650d2f5ac66542",
+        "runs": [
+          {
+            "id": 41428181807,
+            "head_sha": "b380badf4b620414b7de120f91650d2f5ac66542",
+            "status": "completed",
+            "conclusion": "success",
+            "html_url": "https://github.com/Joe6355/AstroPhoto/actions/runs/41428181807"
+          }
+        ]
+      },
+      {
+        "sha": "3ecb935ff13fc8eaf2dfc1b4eeeed38b2580a902",
+        "runs": [
+          {
+            "id": 41428845516,
+            "head_sha": "3ecb935ff13fc8eaf2dfc1b4eeeed38b2580a902",
+            "status": "completed",
+            "conclusion": "success",
+            "html_url": "https://github.com/Joe6355/AstroPhoto/actions/runs/41428845516"
+          }
+        ]
+      }
+    ]
+  },
+  "nextStep": "Current main signed on PC when available, then targeted main-app update; no automatic return to deferred work."
+}

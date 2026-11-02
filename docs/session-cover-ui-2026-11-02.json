@@ -65,13 +65,13 @@
     }
   },
   "ci": {
-    "checkedAtUtc": "2026-11-02T10:24:28.357908+00:00",
+    "checkedAtUtc": "2026-11-02T10:54:12.537448+00:00",
     "runs": [
       {
         "id": 41428181807,
         "head_sha": "b380badf4b620414b7de120f91650d2f5ac66542",
-        "status": "in_progress",
-        "conclusion": null,
+        "status": "completed",
+        "conclusion": "success",
         "html_url": "https://github.com/Joe6355/AstroPhoto/actions/runs/41428181807"
       }
     ]
@@ -92,5 +92,17 @@
     "One 320dp/200-percent/red-theme card, not all screens or colors",
     "No new TalkBack audio, normal-font, photo thumbnail, R8 runtime or phone acceptance"
   ],
-  "nextStep": "Only next signed current-main phone update, including this UI fix and Android14 fix; other deferred work remains deferred."
+  "nextStep": "Only next signed current-main phone update, including this UI fix and Android14 fix; other deferred work remains deferred.",
+  "ciInitialCheck": {
+    "checkedAtUtc": "2026-11-02T10:24:28.357908+00:00",
+    "runs": [
+      {
+        "id": 41428181807,
+        "head_sha": "b380badf4b620414b7de120f91650d2f5ac66542",
+        "status": "in_progress",
+        "conclusion": null,
+        "html_url": "https://github.com/Joe6355/AstroPhoto/actions/runs/41428181807"
+      }
+    ]
+  }
 }

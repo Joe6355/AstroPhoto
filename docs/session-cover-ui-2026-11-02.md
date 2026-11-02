@@ -35,4 +35,6 @@ QA debug beta.5/code6 из чистого b380bad: **16530328байт**, SHA-256
 
 [CI данной UI-ревизии](https://github.com/Joe6355/AstroPhoto/actions/runs/41428181807), SHA b380bad, на02.11,10:24UTC /15:24Екатеринбург — **in_progress**. Успешный старый CI4d3bf21 не выдаётся за её полный gate. Фактический статус на момент сохранения — в [переносимых метаданных](session-cover-ui-2026-11-02.json).
 
+**Позднейшая сверка02.11,10:54UTC /15:54Екатеринбург:** этот CI b380bad завершился **success**; [CI отчёта3ecb935](https://github.com/Joe6355/AstroPhoto/actions/runs/41428845516) также **success**. Снимок/нативный тест/сборка из-за чтения результата повторно не выполнялись.
+
 Полные логи, QA APK, снимок и proof локальны: `artifacts/session-cover-ui-2026-11-02/`. Снимок до правки остался в `artifacts/long-text-ui-2026-11-01/fixed-session-card.png`. В Git добавлены код и метаданные, без APK/картинок/ключей.
