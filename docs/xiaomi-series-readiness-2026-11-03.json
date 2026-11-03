@@ -1,0 +1,160 @@
+{
+  "verifiedDate": "2026-11-03",
+  "passed": true,
+  "device": {
+    "model": "23021RAA2Y",
+    "android": "13",
+    "api": 33
+  },
+  "candidate": {
+    "sourceCommit": "a7e754efe3644e4fe4973ceaae1a1eef1198ea6b",
+    "applicationId": "com.joe6355.astrophoto",
+    "versionName": "0.9.0-beta.5",
+    "versionCode": 6,
+    "certificateSha256": "79e37ad16c7cceaf6bae398d926e548e3f64ea0a6e248975cceb2a6e3d374f93",
+    "apkSha256": "d8d875b50c60f4ef52a8ad537fbc514cd3a3f348db88abf86c5c7074c8412531",
+    "apkBytes": 2260102,
+    "debuggable": false,
+    "mappingFile": "mapping.txt",
+    "mappingSha256": "ce2720de62aa3f22846a4dd554b148ca8b09cc4d9f825861f555056069fa4e0b"
+  },
+  "archive": {
+    "pathRelativeToRepo": "artifacts/pc-signed-release-20261103_153243/AstroPhoto-0.9.0-beta.5-signed-candidate.zip",
+    "sha256": "7edb002961a8e0ed6d7e689d947fdbef6b6b80591ba74e792481f2383bc86939",
+    "bytes": 5610883,
+    "contentsVerified": true
+  },
+  "installation": {
+    "method": "adb install -r",
+    "sameCertificate": true,
+    "reconnectedApkHashVerified": true,
+    "uidAndDataDirUnchanged": true,
+    "otherInstalledApksUnchanged": true
+  },
+  "series": {
+    "requestedFrames": 3,
+    "savedFrames": 3,
+    "fullyDecoded": true,
+    "pixels": [
+      1440,
+      1920
+    ],
+    "exifIso": 400,
+    "exifExposureSeconds": 0.03333333333333333,
+    "camera2RequestedEqualsActual": true,
+    "ae": 0,
+    "zsl": false,
+    "testSession": "Session_20261103_150014"
+  },
+  "preservation": {
+    "oldSharedFilesUnchanged": 1823,
+    "sharedFilesAfter": 1826,
+    "ownJpegAdded": 3,
+    "legacyPrivateFilesUnchanged": 222,
+    "qaPrivateFilesUnchanged": 574,
+    "mainPrivateFullyHashable": false
+  },
+  "restoration": {
+    "session": "нап",
+    "exposureSeconds": 33.54,
+    "iso": 12800,
+    "focus": "AF",
+    "frames": 40,
+    "pauseSeconds": 5,
+    "timerSeconds": 0,
+    "jpegQuality": 92,
+    "theme": "Тёмная",
+    "fontScale": 0.81,
+    "stayAwake": 0,
+    "visibleSettingsMatchedAfterColdStart": true,
+    "phoneLeftOnMainHome": true
+  },
+  "homeLargeFont": {
+    "fontScale": 2.0,
+    "passed": true,
+    "visuallyReviewed": true,
+    "sourceChecked": "a8dc3f388a85dd9076f79d6cef240a123dbef1af",
+    "homeCodeUnchangedInFixedSource": true
+  },
+  "checks": {
+    "unitTests": [
+      {
+        "suite": "com.joe6355.astrophoto.CameraFormatDefaultTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "com.joe6355.astrophoto.SeriesCaptureRecoveryTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "com.joe6355.astrophoto.SeriesReliabilityTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "com.joe6355.astrophoto.VendorCameraSupportTest",
+        "tests": 14,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    ],
+    "lint": {
+      "debug": {
+        "Error": 0,
+        "Fatal": 0,
+        "Warning": 14
+      },
+      "release": {
+        "Error": 0,
+        "Fatal": 0,
+        "Warning": 14
+      }
+    },
+    "releaseBuild": "BUILD SUCCESSFUL in 1m 9s",
+    "sourceCi": {
+      "headSha": "a7e754efe3644e4fe4973ceaae1a1eef1198ea6b",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/Joe6355/AstroPhoto/actions/runs/41619601414"
+    }
+  },
+  "installedApplications": {
+    "com.joe6355.astrophoto": {
+      "versionName": "0.9.0-beta.5",
+      "versionCode": 6,
+      "apkHashes": [
+        "d8d875b50c60f4ef52a8ad537fbc514cd3a3f348db88abf86c5c7074c8412531"
+      ]
+    },
+    "com.example.astrophoto": {
+      "versionName": "0.9.0-beta.2",
+      "versionCode": 3,
+      "apkHashes": [
+        "08e3e74e8e60033d1e101f347a546d8b4069f0cd8a86e4163b1d608f6043a595"
+      ]
+    },
+    "com.joe6355.astrophoto.qa20261017": {
+      "versionName": "0.9.0-beta.5",
+      "versionCode": 6,
+      "apkHashes": [
+        "ab021111c97d621c1e3bd028688fdc51e4ed0142ee68d105524135aedf5348ff"
+      ]
+    }
+  },
+  "localEvidence": "artifacts/pc-main-update-2026-11-03/",
+  "limitations": [
+    "Main release private bytes unavailable for full hash comparison",
+    "Samsung not physically rerun after readiness profile restriction",
+    "No new night, long exposure, broad OS or current-R8 ETA/resource matrix",
+    "No publication or deletion of other app installations"
+  ]
+}
