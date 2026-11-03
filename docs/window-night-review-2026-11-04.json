@@ -1,0 +1,643 @@
+{
+  "reviewDateLocal": "2026-11-04",
+  "timezone": "Asia/Yekaterinburg",
+  "gitBase": "13fc3e7b1881b2fddbb8a488fa7d6a48e1ea2a93",
+  "installedMain": {
+    "package": "com.joe6355.astrophoto",
+    "metadata": [
+      "versionCode=6 minSdk=26 targetSdk=36",
+      "versionName=0.9.0-beta.5",
+      "dataDir=/data/user/0/com.joe6355.astrophoto",
+      "pkgFlags=[ HAS_CODE ALLOW_CLEAR_USER_DATA ALLOW_BACKUP ]"
+    ],
+    "bytes": 2260102,
+    "sha256": "d8d875b50c60f4ef52a8ad537fbc514cd3a3f348db88abf86c5c7074c8412531"
+  },
+  "installedSourceSha": "a7e754efe3644e4fe4973ceaae1a1eef1198ea6b",
+  "device": {
+    "model": "23021RAA2Y",
+    "manufacturer": "Xiaomi",
+    "android": "13",
+    "sdk": 33
+  },
+  "captureThroughClosedWindowGlass": "confirmed by owner",
+  "mediaStoreOwner": "com.joe6355.astrophoto",
+  "sessions": [
+    {
+      "folder": "Session_20261104_000226_новая_серия_1_окно",
+      "fileCount": 32,
+      "bytes": 37086158,
+      "fileSha256": {
+        "Processed/Edited_20261104_004859.png": "e837dcc922a94135ef1b7e36e89ed02527ee104779efeef889efad8b8eb984f2",
+        "Processed/RecoveredStars_20261104_004552.png": "b51d41ecbce15469fb7e1ccccc732f667db4383a92e32ba85b0a518654c76ff0",
+        "Lights/JPEG/AstroSeries_20261104_000353_001.jpg": "f463073594655eed390eeac752d2cd2b8250e58e1a533edba29f91d105c16bb8",
+        "Lights/JPEG/AstroSeries_20261104_000353_002.jpg": "9fdaaa7489c826c56931fb18ef62de7c48c3cfcdb258041c4290a34aca75226e",
+        "Lights/JPEG/AstroSeries_20261104_000353_003.jpg": "7b872b8fd2245bd5b258fdab20478161d6f11517355542036257541612e82acd",
+        "Lights/JPEG/AstroSeries_20261104_000353_004.jpg": "89ac7691db7ead4926dc021e0d018fc341aec7ca2b56307cbdd0cce3ca5b1cdb",
+        "Lights/JPEG/AstroSeries_20261104_000353_005.jpg": "188d69fe0fc5e2c6945b11a331a72bc96ab10a2e5a1b5747db4f2386016628dd",
+        "Lights/JPEG/AstroSeries_20261104_000353_006.jpg": "ca6ce434bb01fe79232116cf77cb8890ac2ca40f1ef4aec884f2ac8025a8237d",
+        "Lights/JPEG/AstroSeries_20261104_000353_007.jpg": "77b23e26e163b0aef1b41969128e6f739758a9c3fb25184a8e7d6035725a18e4",
+        "Lights/JPEG/AstroSeries_20261104_000353_008.jpg": "96441b2c82a0957df34e5bef7ae29b7bde959ffc4e31ce6b0e56e1717f9a93ae",
+        "Lights/JPEG/AstroSeries_20261104_000353_009.jpg": "1768f0c4542ee80589ea117959702cbb72f893aca726a6154a81520bc763f50a",
+        "Lights/JPEG/AstroSeries_20261104_000353_010.jpg": "38bb7f739b318e2ff8da94d7d3025a756c19336498177df231a8a1665af47c8a",
+        "Lights/JPEG/AstroSeries_20261104_000353_011.jpg": "907f8b2146c192759ac300c67bcb18850119350132136f2260006ec33a9ca682",
+        "Lights/JPEG/AstroSeries_20261104_000353_012.jpg": "b4f724b3f8d6ca649b0992199631e3a117dded1c5cb0b7742240a36401ec6116",
+        "Lights/JPEG/AstroSeries_20261104_000353_013.jpg": "eb16c8df1bf73294a6ac42c3d6dd9615001d7768b7b30e4848f8e5177166bc4e",
+        "Lights/JPEG/AstroSeries_20261104_000353_014.jpg": "7d7ec16a324112f25059c1dca97799278ada737b03db0bcecb7f06ed1ae35b24",
+        "Lights/JPEG/AstroSeries_20261104_000353_015.jpg": "14f7811eea72b6bde3768def9bc2743559364711ff0fc7a04929c1e898e378af",
+        "Lights/JPEG/AstroSeries_20261104_000353_016.jpg": "26168432abc1a38b6d1f7aa497dcf5591bf58c54a5c29c7321c00d371191cec8",
+        "Lights/JPEG/AstroSeries_20261104_000353_017.jpg": "6941724849e6a3009f014952b16ab4453917317bd88bb7dbb0d32ec167b0dc87",
+        "Lights/JPEG/AstroSeries_20261104_000353_018.jpg": "20cc43f15b5066a98012fe379bdda4395ed4fe044c1212d38c4bf1f4efc7c9fb",
+        "Lights/JPEG/AstroSeries_20261104_000353_019.jpg": "4f3d5d19d3a15168f00c20e03ffd8eb7a1a0ca21abc466238fb3d92804b24c8b",
+        "Lights/JPEG/AstroSeries_20261104_000353_020.jpg": "09b1a4035f3077dc744cf1695e5230c71d8b3c253b706d27d35794966fa3b200",
+        "Lights/JPEG/AstroSeries_20261104_000353_021.jpg": "4cf2b6e38a769cba8a138aa82de4541656544ac2e7f42bc081d79b22271a9dbc",
+        "Lights/JPEG/AstroSeries_20261104_000353_022.jpg": "a49aeff6fd4a493f824b4048f48dc6ee8a3b60e0347de19b435c3fa33c2067d4",
+        "Lights/JPEG/AstroSeries_20261104_000353_023.jpg": "97147628ea73826bc9be776dfbd7766254c29695965822946be15e72e41452e2",
+        "Lights/JPEG/AstroSeries_20261104_000353_024.jpg": "77b8105d781ac0331d1f162b04092681cb5d518f25bacfcc923362ea6c197dcb",
+        "Lights/JPEG/AstroSeries_20261104_000353_025.jpg": "af989da8928c9c690b31ce69ba550ce16cfdc7310adce9305b0aedd7b71f1645",
+        "Lights/JPEG/AstroSeries_20261104_000353_026.jpg": "ecc8188e3a8435aa3fdc94218985b4d34d6f7358051ca9029e0894770c3d0316",
+        "Lights/JPEG/AstroSeries_20261104_000353_027.jpg": "3654265d7ca752784a69fba3b90fedae1f9f2e7fc70d1ed99d1dd04e6dc396e2",
+        "Lights/JPEG/AstroSeries_20261104_000353_028.jpg": "2f4f96ca05d1da549c85f10e98f38cc4385eebb9e27b0d0a87cd15b6c7cb1c5c",
+        "Lights/JPEG/AstroSeries_20261104_000353_029.jpg": "8e7c03881273fceafe43a3f0c46a01384e30274c2f0233bae45aea2dd4eceabc",
+        "Lights/JPEG/AstroSeries_20261104_000353_030.jpg": "e8e33a048c06b0e0dd81ede25725d8e457f7d635ae08f78f84c999ad84754989"
+      },
+      "capture": {
+        "iso": 200,
+        "requestedExposureNs": 33536611620,
+        "focus": "AF",
+        "jpegFrames": 30,
+        "darks": 0,
+        "encodedSize": [
+          1440,
+          1920
+        ],
+        "exifExposureSeconds": [
+          34.0
+        ],
+        "exifIso": [
+          200.0
+        ],
+        "exifFirstLocal": "2026:11:04 00:04:38",
+        "exifLastLocal": "2026:11:04 00:21:17",
+        "exactCamera2NightResultRead": false
+      },
+      "nativeProcessing": {
+        "profile": "Улучшение фото",
+        "method": "Full-resolution JPEG v2 Stage 7 file-backed pipeline",
+        "framesUsed": "17",
+        "framesRejected": "13",
+        "alignmentMode": "STAR_SIMILARITY",
+        "alignmentAppliedFrames": "16",
+        "alignmentRejectedFrames": "13",
+        "roiMode": "Full frame",
+        "starsBefore": "46",
+        "starsAfter": "1",
+        "sanity": "fallback",
+        "fallback": "RecoveredStars",
+        "fallbackReason": "user_approved_rejected_frames",
+        "processedFile": "Processed/RecoveredStars_20261104_004552.png"
+      },
+      "nativeWarnings": [
+        "Опорный кадр заменён после неудачного выравнивания: AstroSeries_20261104_000353_023.jpg",
+        "Кадр AstroSeries_20261104_000353_002.jpg отклонён: sequence_motion_not_observable",
+        "Кадр AstroSeries_20261104_000353_001.jpg отклонён: sequence_motion_not_observable",
+        "Кадр AstroSeries_20261104_000353_003.jpg отклонён: sequence_motion_not_observable",
+        "Кадр AstroSeries_20261104_000353_004.jpg отклонён: sequence_motion_not_observable",
+        "Кадр AstroSeries_20261104_000353_006.jpg отклонён: sequence_motion_not_observable",
+        "Кадр AstroSeries_20261104_000353_008.jpg отклонён: sequence_motion_not_observable",
+        "Кадр AstroSeries_20261104_000353_022.jpg отклонён: sequence_motion_not_observable",
+        "Кадр AstroSeries_20261104_000353_024.jpg отклонён: sequence_motion_not_observable",
+        "Кадр AstroSeries_20261104_000353_027.jpg отклонён: sequence_motion_not_observable",
+        "Кадр AstroSeries_20261104_000353_005.jpg отклонён full-resolution проверкой: identity_centroid_residual_high",
+        "Кадр AstroSeries_20261104_000353_007.jpg отклонён full-resolution проверкой: identity_centroid_residual_high",
+        "Кадр AstroSeries_20261104_000353_009.jpg отклонён full-resolution проверкой: identity_centroid_residual_high",
+        "Кадр AstroSeries_20261104_000353_010.jpg отклонён full-resolution проверкой: identity_centroid_residual_high",
+        "Preset-обработка отклонена: результат не прошёл финальную проверку качества. Сохранён чистый стек.",
+        "Кадров отклонено из-за ненадёжной регистрации: 13",
+        "Enhanced rejected: confirmed_star_weakened",
+        "Отчёт обработки сохранён во внутреннее хранилище"
+      ],
+      "acceptedFrameNamesInferredFromCompleteWarnings": [
+        "AstroSeries_20261104_000353_011.jpg",
+        "AstroSeries_20261104_000353_012.jpg",
+        "AstroSeries_20261104_000353_013.jpg",
+        "AstroSeries_20261104_000353_014.jpg",
+        "AstroSeries_20261104_000353_015.jpg",
+        "AstroSeries_20261104_000353_016.jpg",
+        "AstroSeries_20261104_000353_017.jpg",
+        "AstroSeries_20261104_000353_018.jpg",
+        "AstroSeries_20261104_000353_019.jpg",
+        "AstroSeries_20261104_000353_020.jpg",
+        "AstroSeries_20261104_000353_021.jpg",
+        "AstroSeries_20261104_000353_023.jpg",
+        "AstroSeries_20261104_000353_025.jpg",
+        "AstroSeries_20261104_000353_026.jpg",
+        "AstroSeries_20261104_000353_028.jpg",
+        "AstroSeries_20261104_000353_029.jpg",
+        "AstroSeries_20261104_000353_030.jpg"
+      ],
+      "acceptedRawPointMedian90PercentSpanPx": 3.274330145529227,
+      "edited": {
+        "editedSourceFile": "Processed/RecoveredStars_20261104_004552.png",
+        "editedFile": "Processed/Edited_20261104_004859.png",
+        "editSettings": "brightness=0, contrast=35, gamma=1.25, black=0, white=245, saturation=110, sharpness=40",
+        "editedMetrics": "averageBrightness=48.36, shadowPercent=19.66, highlightPercent=0.30, clippedBlackPercent=12.09, clippedWhitePercent=0.29",
+        "editedAt": "2026-11-04 00:48:59"
+      },
+      "independentMovingSky": {
+        "skyRect": [
+          300,
+          420,
+          1380,
+          1150
+        ],
+        "model": {
+          "matrix": [
+            [
+              0.9922591232988681,
+              0.03745951013199092,
+              -90.09540013152093
+            ],
+            [
+              -0.03745951013199092,
+              0.9922591232988681,
+              108.83732774067335
+            ]
+          ],
+          "matches": 12,
+          "medianErrorPx": 0.7814247039693263,
+          "pairs": [
+            {
+              "first": [
+                1301.0,
+                977.0
+              ],
+              "last": [
+                1238.0,
+                1030.0
+              ],
+              "errorPx": 0.7313785977066689
+            },
+            {
+              "first": [
+                1256.0,
+                878.0
+              ],
+              "last": [
+                1189.0,
+                933.0
+              ],
+              "errorPx": 0.07198948245237069
+            },
+            {
+              "first": [
+                1171.0,
+                841.0
+              ],
+              "last": [
+                1104.0,
+                899.0
+              ],
+              "errorPx": 0.802877616849182
+            },
+            {
+              "first": [
+                992.0,
+                725.0
+              ],
+              "last": [
+                921.0,
+                791.0
+              ],
+              "errorPx": 0.38932030680096286
+            },
+            {
+              "first": [
+                1174.0,
+                754.0
+              ],
+              "last": [
+                1102.0,
+                813.0
+              ],
+              "errorPx": 1.061535725518203
+            },
+            {
+              "first": [
+                1043.0,
+                774.0
+              ],
+              "last": [
+                974.0,
+                838.0
+              ],
+              "errorPx": 0.284846190229222
+            },
+            {
+              "first": [
+                1333.0,
+                960.0
+              ],
+              "last": [
+                1268.0,
+                1012.0
+              ],
+              "errorPx": 0.7599717910894705
+            },
+            {
+              "first": [
+                930.0,
+                659.0
+              ],
+              "last": [
+                857.0,
+                728.0
+              ],
+              "errorPx": 0.40428673051904507
+            },
+            {
+              "first": [
+                850.0,
+                720.0
+              ],
+              "last": [
+                780.0,
+                790.0
+              ],
+              "errorPx": 1.4537053605719386
+            },
+            {
+              "first": [
+                1229.0,
+                978.0
+              ],
+              "last": [
+                1168.0,
+                1033.0
+              ],
+              "errorPx": 1.9867797379588716
+            },
+            {
+              "first": [
+                960.0,
+                800.0
+              ],
+              "last": [
+                894.0,
+                866.0
+              ],
+              "errorPx": 1.7022789503135862
+            },
+            {
+              "first": [
+                1199.0,
+                709.0
+              ],
+              "last": [
+                1124.0,
+                769.0
+              ],
+              "errorPx": 2.685220940552961
+            }
+          ]
+        },
+        "groundPhaseShiftPx": [
+          -5.203056116518212,
+          2.0380427315376437
+        ],
+        "groundPhaseResponse": 0.6252017537752788,
+        "catalogIdentified": false
+      },
+      "pointDiagnostic": {
+        "trackedStart": [
+          1182.0,
+          983.0
+        ],
+        "trackedEndFromCoherentFit": [
+          1119.577582067488,
+          1039.9509049674475
+        ],
+        "skyTrackLengthPx": 84.49830671174676,
+        "rawPointMedian90PercentSpanPx": 3.274330145529227,
+        "methodNote": "Code-value/high-pass diagnostic, not calibrated photon SNR or Gaussian FWHM. Positions predicted from independent first/last sky fit and refined locally; output measured along the observed sky path.",
+        "backgroundRect": [
+          350,
+          500,
+          600,
+          700
+        ],
+        "foregroundRect": [
+          30,
+          700,
+          190,
+          1250
+        ],
+        "processed": [
+          {
+            "file": "Edited_20261104_004859.png",
+            "sky": {
+              "medianCodeValue": 93.37020111083984,
+              "fineScaleMadCodeValue": 1.5355879068374634,
+              "relativeFineScaleMad": 0.01644623111622696
+            },
+            "foreground": {
+              "medianCodeValue": 50.318599700927734,
+              "fineScaleMadCodeValue": 6.182927131652832,
+              "relativeFineScaleMad": 0.12287558017117944
+            },
+            "pointAlongObservedTrack": {
+              "signal90PercentSpanPx": 51.63172808980981,
+              "peakHighPassCodeValue": 228.43145751953125,
+              "threshold": 7.995101013183595,
+              "positivePixels": 73,
+              "weightedPeakSnr": 148.75830716196825
+            }
+          },
+          {
+            "file": "RecoveredStars_20261104_004552.png",
+            "sky": {
+              "medianCodeValue": 78.6510009765625,
+              "fineScaleMadCodeValue": 0.8642655611038208,
+              "relativeFineScaleMad": 0.010988614898383384
+            },
+            "foreground": {
+              "medianCodeValue": 49.91060256958008,
+              "fineScaleMadCodeValue": 2.7579195499420166,
+              "relativeFineScaleMad": 0.055257188011249056
+            },
+            "pointAlongObservedTrack": {
+              "signal90PercentSpanPx": 50.193182688841986,
+              "peakHighPassCodeValue": 172.71290588378906,
+              "threshold": 6.044951705932617,
+              "positivePixels": 76,
+              "weightedPeakSnr": 199.8377740091876
+            }
+          }
+        ]
+      },
+      "background": {
+        "medianRawFineScaleMadCodeValue": 2.265565276145935,
+        "calibratedPhotonSnr": false
+      },
+      "allFullyDecoded": true
+    },
+    {
+      "folder": "Session_20261104_002805_новая_серия_2_окно",
+      "fileCount": 11,
+      "bytes": 13219716,
+      "fileSha256": {
+        "Processed/DeepSky_20261104_003957.png": "1ac90c0d5a7214403ccef08acfe4f44b598d9e58439022df88f40e535a97ad08",
+        "Lights/JPEG/AstroSeries_20261104_002912_001.jpg": "e8f844f2c01b3e0a144d436cea59e44f67dd37f4848866dcfcbb6aa82300889f",
+        "Lights/JPEG/AstroSeries_20261104_002912_002.jpg": "3a4401b25df39257711009c0ea9eba325ca84d781c2619579fe2430946ae8f4f",
+        "Lights/JPEG/AstroSeries_20261104_002912_003.jpg": "7d83a83e6208283fadeac65ecae3bb47575f82b180b3bbe5a54b4d26936759bf",
+        "Lights/JPEG/AstroSeries_20261104_002912_004.jpg": "a844cde38b3350b62ce4bf26bbf19c930391e2fd61047ca142c46ce79f41d550",
+        "Lights/JPEG/AstroSeries_20261104_002912_005.jpg": "0fb26284d13e48f4f4aec08044c369297baf18a959611e0d3faac08743714ade",
+        "Lights/JPEG/AstroSeries_20261104_002912_006.jpg": "dd6a8e90787f6db4d885340790b0cee230080577177e94aaf7ecfcf2ec89a482",
+        "Lights/JPEG/AstroSeries_20261104_002912_007.jpg": "cf2c08bab2a67a861cdda655d682a01ed53b821ff5fb2902545527ad79cc4156",
+        "Lights/JPEG/AstroSeries_20261104_002912_008.jpg": "937e741dafe5639950ea30afd01b69e40b703232c08881b3e40bb98898a2ecec",
+        "Lights/JPEG/AstroSeries_20261104_002912_009.jpg": "ef7c8ca89cbcf715cba4589f3592884d988c657a3f95ebcfa89e4dccda73c3fb",
+        "Lights/JPEG/AstroSeries_20261104_002912_010.jpg": "1dc2910f2b15eca0d5149a126236e3607ee6d0b4478d80de89cbb909fea33328"
+      },
+      "capture": {
+        "iso": 50,
+        "requestedExposureNs": 33000000000,
+        "focus": "AF",
+        "jpegFrames": 10,
+        "darks": 0,
+        "encodedSize": [
+          1440,
+          1920
+        ],
+        "exifExposureSeconds": [
+          33.0
+        ],
+        "exifIso": [
+          50.0
+        ],
+        "exifFirstLocal": "2026:11:04 00:29:46",
+        "exifLastLocal": "2026:11:04 00:34:51",
+        "exactCamera2NightResultRead": false
+      },
+      "nativeProcessing": {
+        "profile": "Улучшение фото",
+        "method": "Full-resolution JPEG v2 Stage 7 file-backed pipeline",
+        "framesUsed": "4",
+        "framesRejected": "6",
+        "alignmentMode": "STAR_SIMILARITY",
+        "alignmentAppliedFrames": "3",
+        "alignmentRejectedFrames": "6",
+        "roiMode": "Full frame",
+        "starsBefore": "198",
+        "starsAfter": "0",
+        "sanity": "passed",
+        "fallback": "none",
+        "fallbackReason": "",
+        "processedFile": "Processed/DeepSky_20261104_003957.png"
+      },
+      "nativeWarnings": [
+        "Опорный кадр заменён после полноразмерной проверки: AstroSeries_20261104_002912_005.jpg",
+        "Кадр AstroSeries_20261104_002912_001.jpg отклонён: sequence_motion_not_observable",
+        "Кадр AstroSeries_20261104_002912_002.jpg отклонён: sequence_motion_not_observable",
+        "Кадр AstroSeries_20261104_002912_007.jpg отклонён full-resolution проверкой: centroid_identity_transform_competes",
+        "Кадр AstroSeries_20261104_002912_003.jpg отклонён full-resolution проверкой: identity_centroid_residual_high",
+        "Кадр AstroSeries_20261104_002912_004.jpg отклонён full-resolution проверкой: centroid_double_transform_competes",
+        "Кадр AstroSeries_20261104_002912_006.jpg отклонён full-resolution проверкой: centroid_identity_transform_competes",
+        "Кадров отклонено из-за ненадёжной регистрации: 6",
+        "Enhanced rejected: confirmed_star_weakened",
+        "Отчёт обработки сохранён во внутреннее хранилище"
+      ],
+      "acceptedFrameNamesInferredFromCompleteWarnings": [
+        "AstroSeries_20261104_002912_005.jpg",
+        "AstroSeries_20261104_002912_008.jpg",
+        "AstroSeries_20261104_002912_009.jpg",
+        "AstroSeries_20261104_002912_010.jpg"
+      ],
+      "acceptedRawPointMedian90PercentSpanPx": 2.87849467070609,
+      "edited": {},
+      "independentMovingSky": {
+        "skyRect": [
+          60,
+          75,
+          780,
+          900
+        ],
+        "model": {
+          "matrix": [
+            [
+              0.9947337401237447,
+              0.017045351653759186,
+              19.69834364358092
+            ],
+            [
+              -0.017045351653759186,
+              0.9947337401237447,
+              28.910019128580416
+            ]
+          ],
+          "matches": 4,
+          "medianErrorPx": 0.7977410856167526,
+          "pairs": [
+            {
+              "first": [
+                748.0,
+                142.0
+              ],
+              "last": [
+                767.0,
+                157.0
+              ],
+              "errorPx": 0.9181514671476312
+            },
+            {
+              "first": [
+                573.0,
+                253.0
+              ],
+              "last": [
+                593.0,
+                271.0
+              ],
+              "errorPx": 1.011134625518485
+            },
+            {
+              "first": [
+                332.0,
+                267.0
+              ],
+              "last": [
+                354.0,
+                289.0
+              ],
+              "errorPx": 0.5245191861310814
+            },
+            {
+              "first": [
+                116.0,
+                190.0
+              ],
+              "last": [
+                139.0,
+                216.0
+              ],
+              "errorPx": 0.6773307040858739
+            }
+          ]
+        },
+        "groundPhaseShiftPx": [
+          1.2596440871687804,
+          -1.4344074964517972
+        ],
+        "groundPhaseResponse": 0.9028525986056858,
+        "catalogIdentified": false
+      },
+      "pointDiagnostic": {
+        "trackedStart": [
+          573.0,
+          253.0
+        ],
+        "trackedEndFromCoherentFit": [
+          593.9932507028876,
+          270.81066888228384
+        ],
+        "skyTrackLengthPx": 27.53064657992335,
+        "rawPointMedian90PercentSpanPx": 2.9403825677185793,
+        "methodNote": "Code-value/high-pass diagnostic, not calibrated photon SNR or Gaussian FWHM. Positions predicted from independent first/last sky fit and refined locally; output measured along the observed sky path.",
+        "backgroundRect": [
+          250,
+          400,
+          500,
+          600
+        ],
+        "foregroundRect": [
+          970,
+          770,
+          1150,
+          1390
+        ],
+        "processed": [
+          {
+            "file": "DeepSky_20261104_003957.png",
+            "sky": {
+              "medianCodeValue": 17.361000061035156,
+              "fineScaleMadCodeValue": 0.42446863651275635,
+              "relativeFineScaleMad": 0.024449549854298383
+            },
+            "foreground": {
+              "medianCodeValue": 24.774200439453125,
+              "fineScaleMadCodeValue": 1.5502290725708008,
+              "relativeFineScaleMad": 0.06257433318017593
+            },
+            "pointAlongObservedTrack": {
+              "signal90PercentSpanPx": 18.30341228171738,
+              "peakHighPassCodeValue": 32.01693344116211,
+              "threshold": 1.273405909538269,
+              "positivePixels": 41,
+              "weightedPeakSnr": 75.42826651268949
+            }
+          }
+        ]
+      },
+      "background": {
+        "medianRawFineScaleMadCodeValue": 0.7250802516937256,
+        "calibratedPhotonSnr": false
+      },
+      "allFullyDecoded": true
+    }
+  ],
+  "sourcePreservation": {
+    "checkedAt": "2026-11-03T20:18:24.100150+00:00",
+    "phoneActions": "Read session details; returned to Main and HOME. Owner approved leaving the saved editor.",
+    "noAppInstallCaptureOrProcessing": true,
+    "sharedSessions": {
+      "Session_20261104_000226_новая_серия_1_окно": {
+        "allSourceFilesUnchanged": true,
+        "files": 32
+      },
+      "Session_20261104_002805_новая_серия_2_окно": {
+        "allSourceFilesUnchanged": true,
+        "files": 11
+      }
+    },
+    "noAstroPhotoServices": true
+  },
+  "outcome": {
+    "newNightInputReceived": true,
+    "captureFilesReadable": true,
+    "existingPngAcceptedForStarStackQuality": false,
+    "residualTracksObserved": true,
+    "exactPipelineRootCauseEstablished": false,
+    "productionCodeChanged": false,
+    "newCaptureOrProcessingRun": false,
+    "newAppInstalled": false,
+    "newJvmOrCaptureTestsRun": false
+  },
+  "limitations": [
+    "Closed window glass and urban light pollution; optical focus without glass and faint objects not validated.",
+    "Full private processing JSON was not extracted; session metadata and status were read from app UI.",
+    "Point extent is a thresholded 5–95 percent high-pass signal interval, not Gaussian FWHM.",
+    "Independent sky fit is a small first/last-frame correspondence diagnostic, not a star catalogue or universal registration proof.",
+    "No production algorithm fix was made; current request was review."
+  ],
+  "tools": {
+    "Pillow": "13.0.0",
+    "NumPy": "2.5.4",
+    "OpenCV": "5.0.0",
+    "installedOnlyUnderIgnoredArtifacts": true
+  },
+  "sourceCi": {
+    "checkedAtUtc": "2026-11-03T20:18:23.684184+00:00",
+    "runs": [
+      {
+        "sha": "a7e754efe3644e4fe4973ceaae1a1eef1198ea6b",
+        "conclusion": "success",
+        "url": "https://github.com/Joe6355/AstroPhoto/actions/runs/41619601414"
+      },
+      {
+        "sha": "13fc3e7b1881b2fddbb8a488fa7d6a48e1ea2a93",
+        "conclusion": "success",
+        "url": "https://github.com/Joe6355/AstroPhoto/actions/runs/41671506295"
+      }
+    ],
+    "futureDocsCommitNotClaimed": true
+  }
+}
