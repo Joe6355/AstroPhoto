@@ -24,7 +24,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
 
 class SeriesCaptureForegroundService : Service() {
@@ -83,6 +83,9 @@ class SeriesCaptureForegroundService : Service() {
                 if (stopRequested) return@launch
 
                 val ready = CompletableDeferred<Unit>()
+                val readyStatus = headlessCameraReadyStatus(
+                    cameraCompatibilityProfile(Build.MANUFACTURER, Build.MODEL)
+                )
                 val controller = CameraPreviewView(
                     context = applicationContext,
                     onCameraError = { message ->
@@ -91,7 +94,7 @@ class SeriesCaptureForegroundService : Service() {
                         }
                     },
                     onCameraStatus = { status ->
-                        if (status == FIRST_HEADLESS_PREVIEW_FRAME && !ready.isCompleted) ready.complete(Unit)
+                        if (status == readyStatus && !ready.isCompleted) ready.complete(Unit)
                     },
                     onCapabilitiesAvailable = { capabilities ->
                         activeCameraId = capabilities.cameraId
@@ -108,7 +111,9 @@ class SeriesCaptureForegroundService : Service() {
                 )
                 publishState(0, request.frameCount, "Подготовка камеры...", initialDuration)
                 controller.startHeadlessCapture()
-                withTimeout(CAMERA_READY_TIMEOUT_MILLIS) { ready.await() }
+                checkNotNull(withTimeoutOrNull(CAMERA_READY_TIMEOUT_MILLIS) { ready.await() }) {
+                    "Камера не подготовилась за 20 сек. Повторите запуск серии."
+                }
 
                 val format = UiCaptureType.JPEG
                 val extension = "jpg"

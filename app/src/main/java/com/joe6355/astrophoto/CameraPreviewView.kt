@@ -46,6 +46,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+internal const val CAMERA_SESSION_CONFIGURED = "session configured"
 internal const val FIRST_HEADLESS_PREVIEW_FRAME = "first headless preview frame"
 
 data class ManualCameraCapabilities(
@@ -1033,7 +1034,7 @@ class CameraPreviewView @JvmOverloads constructor(
                             return
                         }
                         captureSession = session
-                        reportStatus("session configured")
+                        reportStatus(CAMERA_SESSION_CONFIGURED)
                         submitRepeatingRequest(requestBuilder)
                     }
 

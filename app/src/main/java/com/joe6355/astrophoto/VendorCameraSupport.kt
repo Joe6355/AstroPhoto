@@ -45,6 +45,10 @@ internal fun cameraCompatibilityProfile(
     else -> CameraCompatibilityProfile.STANDARD
 }
 
+internal fun headlessCameraReadyStatus(profile: CameraCompatibilityProfile): String =
+    if (profile == CameraCompatibilityProfile.SAMSUNG) FIRST_HEADLESS_PREVIEW_FRAME
+    else CAMERA_SESSION_CONFIGURED
+
 internal data class VendorExposureRange(
     val rangeNs: LongRange,
     val source: ExposureRangeSource,

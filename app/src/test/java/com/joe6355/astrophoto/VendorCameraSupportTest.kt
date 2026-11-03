@@ -8,6 +8,25 @@ import org.junit.Test
 
 class VendorCameraSupportTest {
     @Test
+    fun xiaomiAndOtherProfilesDoNotWaitForAnUnconsumedHeadlessPreview() {
+        for ((manufacturer, model) in listOf(
+            "Xiaomi" to "23021RAA2Y", "Google" to "Pixel 9 Pro", "Sony" to "XQ-EC54"
+        )) {
+            val readyStatus = headlessCameraReadyStatus(cameraCompatibilityProfile(manufacturer, model))
+            val observedEvents = listOf("camera opened", CAMERA_SESSION_CONFIGURED, "preview started")
+            assertTrue("$manufacturer must start before a preview frame is delivered", readyStatus in observedEvents)
+            assertEquals(CAMERA_SESSION_CONFIGURED, readyStatus)
+        }
+    }
+
+    @Test
+    fun samsungStillWaitsForFirstFrameBeforeItsManualStill() {
+        val readyStatus = headlessCameraReadyStatus(cameraCompatibilityProfile("samsung", "SM-S721B"))
+        assertFalse(readyStatus in listOf("camera opened", CAMERA_SESSION_CONFIGURED, "preview started"))
+        assertEquals(FIRST_HEADLESS_PREVIEW_FRAME, readyStatus)
+    }
+
+    @Test
     fun headlessPreviewKeepsShortExposureAndBoundsLongStillExposure() {
         val publicRange = 85_000L..33_540_000_000L
         assertEquals(16_666_667L, boundedHeadlessPreviewExposureNs(16_666_667L, publicRange))
