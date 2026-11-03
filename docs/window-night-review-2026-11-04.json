@@ -639,5 +639,70 @@
       }
     ],
     "futureDocsCommitNotClaimed": true
+  },
+  "backgroundSmearFollowup": {
+    "ownerIdentifiedResult": "Session_20261104_002805_новая_серия_2_окно/Processed/DeepSky_20261104_003957.png",
+    "appearanceObservedInSavedPngOutsideGallery": true,
+    "usedFrameNumbers": [
+      5,
+      8,
+      9,
+      10
+    ],
+    "controls": {
+      "note": "Low-frequency diagnostic in sky ROI; mean/median controls are offline and unregistered, not app outputs or a reproduction of all processing stages.",
+      "box": [
+        80,
+        110,
+        760,
+        880
+      ],
+      "rows": [
+        {
+          "source": "AstroSeries_20261104_002912_005.jpg",
+          "residualCorrelationWithDeepSky": 0.2097122256451294,
+          "residualStdCodeValues": 0.5667538393596262,
+          "outputResidualStdCodeValues": 0.9718636631643888
+        },
+        {
+          "source": "AstroSeries_20261104_002912_008.jpg",
+          "residualCorrelationWithDeepSky": 0.21705376583118546,
+          "residualStdCodeValues": 0.5668845036059311,
+          "outputResidualStdCodeValues": 0.9718636631643888
+        },
+        {
+          "source": "AstroSeries_20261104_002912_009.jpg",
+          "residualCorrelationWithDeepSky": 0.2239775224141346,
+          "residualStdCodeValues": 0.5713745657646793,
+          "outputResidualStdCodeValues": 0.9718636631643888
+        },
+        {
+          "source": "AstroSeries_20261104_002912_010.jpg",
+          "residualCorrelationWithDeepSky": 0.23161725172025577,
+          "residualStdCodeValues": 0.5597548962439878,
+          "outputResidualStdCodeValues": 0.9718636631643888
+        },
+        {
+          "source": "unregistered_mean_of_four",
+          "residualCorrelationWithDeepSky": 0.22129760245743788,
+          "residualStdCodeValues": 0.564312274316287,
+          "outputResidualStdCodeValues": 0.9718636631643888
+        },
+        {
+          "source": "unregistered_median_of_four",
+          "residualCorrelationWithDeepSky": 0.22255926887150956,
+          "residualStdCodeValues": 0.565672463522264,
+          "outputResidualStdCodeValues": 0.9718636631643888
+        }
+      ]
+    },
+    "methodDetail": "Grayscale code values: Gaussian sigma 8 px, sample every 8 px, independently subtract least-squares quadratic surface in x/y before residual correlation/std comparison.",
+    "workingHypotheses": [
+      "sky mask / sky-ground composition",
+      "background gradient correction / subsequent tone mapping"
+    ],
+    "exactResponsibleStageProven": false,
+    "nativeProcessingRepeated": false,
+    "productionCodeChanged": false
   }
 }
