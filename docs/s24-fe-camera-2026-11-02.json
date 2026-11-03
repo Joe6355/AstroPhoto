@@ -421,5 +421,17 @@
     "checkedAt": "2026-11-02T15:56:33.610836+00:00",
     "url": "https://github.com/Joe6355/AstroPhoto/actions/runs/41470459616"
   },
-  "currentCommitCi": "Check separately by the commit SHA; no claim from previous CI."
+  "currentCommitCi": {
+    "sha": "172aaf0add52d9475558b94ccfc34b62cf07b17a",
+    "conclusion": "success",
+    "checkedAt": "2026-11-03T09:25:31.350627+00:00",
+    "url": "https://github.com/Joe6355/AstroPhoto/actions/runs/41480815341"
+  },
+  "closure": {
+    "date": "2026-11-03",
+    "scope": "Bounded second-phone acceptance; listed untested conditions remain open.",
+    "codeChanged": false,
+    "phoneActionsRepeated": false,
+    "futureCommitCiClaimed": false
+  }
 }
