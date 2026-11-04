@@ -600,7 +600,8 @@ internal class SkyMaskReplayDiagnosticRunner {
         onTileSizes: (Map<String, String>) -> Unit = {},
         pixelFormat: FileBackedPixelFormat = FileBackedPixelFormat.LINEAR_RGB_16,
         memoryBudget: JpegMemoryBudget = JpegMemoryBudget(
-            RuntimeHeapSnapshot(512L * MIB, 128L * MIB, 96L * MIB), reserveBytes = 64L * MIB)
+            RuntimeHeapSnapshot(512L * MIB, 128L * MIB, 96L * MIB), reserveBytes = 64L * MIB),
+        preservationBaseline: ArgbPixelImage? = null
     ): ArgbPixelImage {
         val cacheRoot = Files.createTempDirectory("sky-mask-file-backed").toFile()
         val files = TemporaryPipelineFiles.create(cacheRoot)
@@ -608,13 +609,16 @@ internal class SkyMaskReplayDiagnosticRunner {
             val store = ResultCandidateStore(files, pixelFormat)
             val stackedHandle = writeTemporary(store, "replay-sky", stackedSky)
             val referenceHandle = writeCandidate(store, ResultCandidateType.REFERENCE, reference)
+            val preservationHandle = preservationBaseline?.let { writeTemporary(store, "preservation-baseline", it) }
             val alphaHandle = writePlane(store, "replay-alpha", alpha)
             val defectHandle = sensorDefectAffectedOutput?.let {
                 writePlane(store, "replay-sensor-defect-affected", it)
             }
             val memoryTracker = PipelineMemoryTracker()
             val result = FileBackedAdaptivePresetProcessor(
-                experimentalStrengthVariant = experimentalStrengthVariant
+                experimentalStrengthVariant = experimentalStrengthVariant,
+                preservationBaseline = preservationHandle,
+                preservationStars = if (preservationHandle != null) stars else emptyList()
             ).process(
                 stackedSky = stackedHandle,
                 referenceForeground = referenceHandle,
@@ -704,7 +708,8 @@ internal fun selectReplayCandidate(
     stars: List<DetectedStar>,
     modelScore: Float,
     acceptedFrames: Int,
-    profile: AstroProcessingProfile
+    profile: AstroProcessingProfile,
+    useMatchedStarValidation: Boolean = false
 ): ReplayCandidateSelection {
     val analyzer = ResultQualityAnalyzer()
     fun candidate(type: ResultCandidateType, image: ArgbPixelImage) =
@@ -725,7 +730,9 @@ internal fun selectReplayCandidate(
         referenceCandidate, cleanCandidate, profile, cleanEvidence
     )
     val processedDecision = gate.evaluateProcessed(
-        referenceCandidate, cleanCandidate, processedCandidate, profile, acceptedFrames
+        referenceCandidate, cleanCandidate, processedCandidate, profile, acceptedFrames,
+        starRetention = if (useMatchedStarValidation)
+            ReferenceStarRetentionValidator().validate(clean, processed, stars) else null
     )
     val selected = ResultSelectionPolicy().select(
         referenceCandidate,

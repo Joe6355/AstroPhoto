@@ -34,6 +34,8 @@ import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 data class FileBackedAdaptiveProcessingResult(
     val image: FileBackedImage,
@@ -337,7 +339,14 @@ class FileBackedAdaptivePresetProcessor internal constructor(
 
         stageStarted = System.nanoTime()
         val backgroundMatch = SkyBackgroundToneMatcher.calculate(before, after)
-        if (backgroundMatch.linearOffset > 0f) {
+        if (!legacyArgb && profile == AstroProcessingProfile.DEEP_SKY) {
+            val matchingContext = currentCoroutineContext()
+            replaceWorking(SkyBackgroundToneMatcher.matchLocal(
+                stackedSky, workingImage, effectiveSkyAlpha, store, memoryBudget, memoryTracker,
+                cancellationCheck = { matchingContext.ensureActive() }
+            ))
+            after = fileStatistics(workingImage)
+        } else if (backgroundMatch.linearOffset > 0f) {
             val matched = transform(
                 "background-match",
                 workingImage,

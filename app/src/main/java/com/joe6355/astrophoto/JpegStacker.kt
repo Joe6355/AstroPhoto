@@ -1237,6 +1237,10 @@ class JpegStacker internal constructor(
                         adaptiveResult.image,
                         fullResolutionStars
                     )
+                    val boundaryBackground = com.joe6355.astrophoto.processing.jpeg.v2.quality
+                        .BackgroundQualityComparator().compareBoundaryBackground(
+                            cleanStackHandle, adaptiveResult.image, effectiveSkyAlpha
+                        )
                     processedDecision = LineArtifactDetector().compareStarNeighborhoods(
                         maskStage.referenceCandidate, adaptiveResult.image, fullResolutionStars,
                         cancellationCheck = { artifactCheckContext.ensureActive() }
@@ -1247,7 +1251,13 @@ class JpegStacker internal constructor(
                         profile,
                         acceptedFrames,
                         starRetention = processedStarRetention
-                    ))
+                    )).let { decision ->
+                        decision.copy(
+                            accepted = decision.accepted && boundaryBackground.hardFailureReasons.isEmpty(),
+                            hardFailureReasons = (decision.hardFailureReasons + boundaryBackground.hardFailureReasons).distinct(),
+                            warningReasons = (decision.warningReasons + boundaryBackground.warningReasons).distinct()
+                        )
+                    }
                     Log.i(
                         ADAPTIVE_PROCESSING_TAG,
                         "preset=${profile.name} fileBacked=true " +
