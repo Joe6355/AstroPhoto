@@ -11,12 +11,12 @@ class StellarArtifactGateTest {
         DetectedStar(48f + (it % 3) * 80, 48f + (it / 3) * 90,
             100f, 10f, 100f, 1.5f, 0f, 1f)
     }
-    private fun image(trails: Boolean = false, duplicates: Boolean = false, gain: Int = 1): IntArrayPixelSource {
+    private fun image(trails: Boolean = false, duplicates: Boolean = false, gain: Int = 1, trailEnd: Int = 21): IntArrayPixelSource {
         val pixels = IntArray(280 * 190) { gray(10 * gain) }
         for (star in stars) {
             val x = star.x.toInt(); val y = star.y.toInt()
             for (dy in -1..1) for (dx in -1..1) pixels[(y + dy) * 280 + x + dx] = gray(100 * gain)
-            if (trails) for (dx in 7..21) pixels[y * 280 + x + dx] = gray(30 * gain)
+            if (trails) for (dx in 7..trailEnd) pixels[y * 280 + x + dx] = gray(30 * gain)
             if (duplicates) for (dy in -1..1) for (dx in -1..1) {
                 pixels[(y + dy + 12) * 280 + x + dx + 15] = gray(30 * gain)
             }
@@ -47,10 +47,27 @@ class StellarArtifactGateTest {
         assertTrue(result.accepted)
         assertEquals(listOf("insufficient_stars_for_independent_artifact_check"), result.warningReasons)
     }
-    @Test fun isolatedStructureIsWarningNotProofOfBadRegistration() {
-        val result = LineArtifactDetector().compareStarNeighborhoods(image(), image(trails = true), stars.take(1))
+    @Test fun isolatedShortStructureIsWarningNotProofOfBadRegistration() {
+        val result = LineArtifactDetector().compareStarNeighborhoods(image(), image(trails = true, trailEnd = 12), stars.take(1))
         assertTrue(result.accepted)
         assertTrue(result.warningReasons.contains("isolated_new_stellar_structure"))
+    }
+    @Test fun aSingleLongNewStellarTrailCannotPassInASparseField() {
+        val result = LineArtifactDetector().compareStarNeighborhoods(image(), image(trails = true), stars.take(1))
+        assertFalse(result.accepted)
+        assertTrue(result.hardFailureReasons.contains("new_long_stellar_streak_in_full_resolution"))
+    }
+    @Test fun aDiagonalTrailUsesItsLengthInsteadOfOnlyItsHorizontalSpan() {
+        val before = image()
+        val pixels = IntArray(280 * 190) { i -> before.argbAt(i % 280, i / 280) }
+        for (offset in 7..14) {
+            pixels[(48 + offset) * 280 + 48 + offset] = gray(30)
+            pixels[(48 + offset) * 280 + 49 + offset] = gray(30)
+        }
+        val result = LineArtifactDetector().compareStarNeighborhoods(before,
+            IntArrayPixelSource(280, 190, pixels), stars.take(1))
+        assertFalse(result.accepted)
+        assertTrue(result.hardFailureReasons.contains("new_long_stellar_streak_in_full_resolution"))
     }
     @Test fun dimensionMismatchRejects() {
         assertFalse(LineArtifactDetector().compareStarNeighborhoods(image(),

@@ -57,6 +57,10 @@ class JpegStarDetector {
         val localBackgrounds = if (useLocalBackground) {
             backgroundCells(image, mask, background, noise)
         } else null
+        // At analysis resolution a real faint PSF can span only a few code values.
+        // Keep the local noise and shape requirements; a global six-value floor
+        // otherwise removes the moving sky while leaving bright foreground points.
+        val minimumContrast = if (useLocalBackground) 3f else 6f
         val candidates = mutableListOf<DetectedStar>()
 
         for (centerY in ANALYSIS_RADIUS until image.height - ANALYSIS_RADIUS) {
@@ -68,7 +72,7 @@ class JpegStarDetector {
                 )
                 val candidateNoise = local?.noise ?: noise
                 val candidateThreshold = local?.let {
-                    it.background + maxOf(6f, it.noise * 2.6f)
+                    it.background + maxOf(minimumContrast, it.noise * 2.6f)
                 } ?: threshold
                 val peak = pixelLuminance(image.pixelAt(centerX, centerY))
                 if (peak < candidateThreshold || !isDeterministicLocalMaximum(image, mask, centerX, centerY, peak)) {
@@ -81,7 +85,8 @@ class JpegStarDetector {
                     centerY,
                     background,
                     candidateNoise,
-                    allowBroadStars
+                    allowBroadStars,
+                    minimumContrast
                 )?.let(candidates::add)
             }
         }
@@ -151,7 +156,8 @@ class JpegStarDetector {
         centerY: Int,
         globalBackground: Float,
         noise: Float,
-        allowBroadStars: Boolean
+        allowBroadStars: Boolean,
+        minimumContrast: Float
     ): DetectedStar? {
         val annulus = mutableListOf<Int>()
         for (dy in -ANALYSIS_RADIUS..ANALYSIS_RADIUS) for (dx in -ANALYSIS_RADIUS..ANALYSIS_RADIUS) {
@@ -168,7 +174,7 @@ class JpegStarDetector {
         val peakColor = image.pixelAt(centerX, centerY)
         val peak = pixelLuminance(peakColor).toFloat()
         val contrast = peak - localBackground
-        if (contrast < maxOf(6f, noise * 2.2f)) return null
+        if (contrast < maxOf(minimumContrast, noise * 2.2f)) return null
         if (isSingleChannelSpike(peakColor, localBackground, contrast)) return null
 
         var flux = 0f

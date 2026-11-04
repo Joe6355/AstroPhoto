@@ -56,6 +56,62 @@ internal data class ProjectiveModelComparison(
 
 /** Bounded spatial motion that a single image-plane rotation cannot represent. */
 internal class ProjectiveStarRegistrar(private val perspectiveGeometry: PerspectiveRotationGeometry? = null) {
+    /** A fixed-lens rotation can use a sparse, independently tracked sky; never a free homography. */
+    fun registerTrackedRotation(
+        matches: List<StellarCentroidMatch>,
+        initial: ReferenceToSourceTransform,
+        width: Int,
+        height: Int,
+        searchRadius: Float,
+        cancellationCheck: () -> Unit = {}
+    ): ProjectiveStarRegistration? {
+        val geometry = perspectiveGeometry ?: return null
+        if (geometry.width != width || geometry.height != height) return null
+        val unique = matches.filter { it.accepted &&
+            it.patch.motionCluster != TemporalMotionCluster.STATIONARY_CAMERA_SPACE }
+            .distinctBy { (it.reference.x to it.reference.y) to (it.candidate.x to it.candidate.y) }
+        val references = unique.groupingBy { it.reference.x to it.reference.y }.eachCount()
+        val candidates = unique.groupingBy { it.candidate.x to it.candidate.y }.eachCount()
+        val usable = unique.filter { references[it.reference.x to it.reference.y] == 1 &&
+            candidates[it.candidate.x to it.candidate.y] == 1 }.take(48)
+        if (usable.size !in 4 until MIN_MATCHES) return null
+        val tracked = usable.filter { it.patch.motionCluster == TemporalMotionCluster.COHERENT_MOVING_SKY }
+        if (tracked.size < 3) return null
+        val seed = geometry.fit(tracked, cancellationCheck) ?: return null
+        val seedErrors = errors(seed, usable)
+        val inliers = usable.filterIndexed { index, _ ->
+            seedErrors[index] <= StellarCentroidRefinementPolicy.TARGET_P90_RESIDUAL
+        }
+        if (inliers.size < 4 || inliers.count {
+                it.patch.motionCluster == TemporalMotionCluster.COHERENT_MOVING_SKY
+            } < 3 || inliers.map { it.patch.sector }.distinct().size < 2) return null
+        val span = inliers.maxOf { a -> inliers.maxOf { b ->
+            hypot(a.reference.x - b.reference.x, a.reference.y - b.reference.y)
+        } }
+        if (span < minOf(width, height) * 0.25f) return null
+        val model = geometry.fit(inliers, cancellationCheck) ?: return null
+        if (!physicallyBounded(model, initial, width, height, searchRadius, inliers)) return null
+        // Three tracked points establish the model; a fourth and every leave-one-out
+        // prediction must agree. No untracked facade can establish a sparse sky model.
+        val validationSamples = inliers.mapIndexed { index, heldOut ->
+            cancellationCheck()
+            val training = inliers.filterIndexed { trainingIndex, _ -> trainingIndex != index }
+            val fit = geometry.fit(training, cancellationCheck) ?: return null
+            if (!physicallyBounded(fit, initial, width, height, searchRadius, inliers)) return null
+            heldOut to errors(fit, listOf(heldOut)).single()
+        }
+        val residuals = validationSamples.map { it.second }
+        val median = percentile(residuals, 0.5f)
+        val p90 = percentile(residuals, 0.9f)
+        if (median > StellarCentroidRefinementPolicy.TARGET_MEDIAN_RESIDUAL ||
+            p90 > StellarCentroidRefinementPolicy.TARGET_P90_RESIDUAL) return null
+        val jacobian = model.jacobian(width * 0.5, height * 0.5)
+        val angle = atan2(jacobian[2] - jacobian[1], jacobian[0] + jacobian[3]).toFloat()
+        return ProjectiveStarRegistration(ReferenceToSourceTransform(
+            model.tx.toFloat(), model.ty.toFloat(), angle, projective = model
+        ), inliers, median, p90, validationSamples)
+    }
+
     fun register(
         matches: List<StellarCentroidMatch>,
         initial: ReferenceToSourceTransform,

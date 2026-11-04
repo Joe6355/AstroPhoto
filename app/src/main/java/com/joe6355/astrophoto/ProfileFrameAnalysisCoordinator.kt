@@ -10,6 +10,7 @@ import com.joe6355.astrophoto.processing.jpeg.v2.artifacts.PersistentSensorFrame
 import com.joe6355.astrophoto.processing.jpeg.v2.diagnostics.PipelineTimingCollector
 import com.joe6355.astrophoto.processing.jpeg.v2.diagnostics.ProcessingRunJournal
 import com.joe6355.astrophoto.processing.jpeg.v2.masking.SkyMaskEstimator
+import com.joe6355.astrophoto.processing.jpeg.v2.masking.SkyMaskRefiner
 import com.joe6355.astrophoto.processing.jpeg.v2.model.FrameAnalysis
 import com.joe6355.astrophoto.processing.jpeg.v2.model.SkyMask
 import com.joe6355.astrophoto.processing.jpeg.v2.model.SkyMaskResult
@@ -194,16 +195,27 @@ internal class ProfileFrameAnalysisCoordinator(
             ?: error("Unable to decode JPEG for analysis")
         try {
             val image = sample.toArgbImage()
-            val skyMask = skyMaskEstimator.estimate(image)
+            val initialMask = skyMaskEstimator.estimate(image)
+            val initialAnalysis = frameAnalyzer.analyze(
+                frame.key, frame.fileName, image, initialMask, useLocalBackground = true
+            )
+            // The coarse texture mask can include a smooth facade. Exclude it before
+            // spending the bounded feature catalog and temporal tracks on its windows.
+            val refined = SkyMaskRefiner(preserveSmoothSkyGradients = true).refine(
+                initialMask.mask, image, initialAnalysis.stars,
+                initialMask.confidence, initialMask.usedFallback
+            )
+            val skyMask = SkyMaskResult(refined.binaryMask, refined.confidence, refined.usedFallback)
             ProfileAnalyzedFrame(
                 frame = frame,
                 analysis = frameAnalyzer.analyze(frame.key, frame.fileName, image, skyMask, useLocalBackground = true),
-                skyMask = skyMask,
+                // Feature filtering must not shrink the pixel integration/composition mask twice.
+                skyMask = initialMask,
                 persistentSensorObservation = persistentSensorDetector.observe(
                     frameId = frame.key,
                     originalCaptureIndex = captureIndex,
                     image = image,
-                    skyMask = skyMask.mask
+                    skyMask = initialMask.mask
                 )
             )
         } finally {

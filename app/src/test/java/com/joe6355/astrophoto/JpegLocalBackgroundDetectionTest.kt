@@ -62,6 +62,14 @@ class JpegLocalBackgroundDetectionTest {
         assertEquals(2, detector.detect(render(true, 24.0), mask, maxStars = 2, useLocalBackground = true).stars.size)
     }
 
+    @Test fun faintSampledPsfAboveLocalNoiseSurvivesBesideABrightForeground() {
+        val image = render(cloud = true, amplitude = 5.0)
+        assertTrue(detector.detect(image, mask).stars.isEmpty())
+        val found = detector.detect(image, mask, useLocalBackground = true).stars
+        assertEquals(4, found.size)
+        points.forEach { (x, y) -> assertTrue(found.any { hypot(it.x - x, it.y - y) < 0.2f }) }
+    }
+
     private fun render(cloud: Boolean, amplitude: Double): ArgbPixelImage =
         ArgbPixelImage(256, 128, IntArray(256 * 128) { index ->
             val x = index % 256

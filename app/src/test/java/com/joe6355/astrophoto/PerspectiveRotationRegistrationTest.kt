@@ -106,6 +106,23 @@ class PerspectiveRotationRegistrationTest {
         assertFalse(after.perspectiveRotationUsed)
     }
 
+    @Test fun sparseTrackedSkyUsesAFixedLensAndPredictsEachIndependentStar() {
+        val sparse = matches(listOf(120f to 180f, 340f to 260f, 600f to 250f, 780f to 150f))
+        val result = checkNotNull(ProjectiveStarRegistrar(geometry).registerTrackedRotation(
+            sparse, prior, WIDTH, HEIGHT, 5f))
+        assertEquals(4, result.inliers.size)
+        assertTrue(result.validationP90 < 0.05f)
+        assertNull(ProjectiveStarRegistrar().registerTrackedRotation(sparse, prior, WIDTH, HEIGHT, 5f))
+        assertNull(ProjectiveStarRegistrar(geometry).registerTrackedRotation(sparse.take(3), prior, WIDTH, HEIGHT, 5f))
+        assertNull(ProjectiveStarRegistrar(geometry).registerTrackedRotation(sparse.map {
+            it.copy(patch = it.patch.copy(motionCluster = TemporalMotionCluster.UNSTABLE_OR_UNKNOWN))
+        }, prior, WIDTH, HEIGHT, 5f))
+        val bad = sparse.mapIndexed { i, match -> if (i == 3)
+            match.copy(candidate = match.candidate.copy(x = match.candidate.x + 2f)) else match }
+        assertNull(ProjectiveStarRegistrar(geometry).registerTrackedRotation(bad, prior, WIDTH, HEIGHT, 5f))
+        assertNull(ProjectiveStarRegistrar(geometry).registerTrackedRotation(List(4) { sparse.first() }, prior, WIDTH, HEIGHT, 5f))
+    }
+
     private fun register(pairs: List<StellarCentroidMatch>, initial: ReferenceToSourceTransform = prior, radius: Float = 5f) =
         ProjectiveStarRegistrar(geometry).register(pairs, initial, WIDTH, HEIGHT, radius)
 

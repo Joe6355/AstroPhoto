@@ -77,6 +77,7 @@ class LineArtifactDetector(private val diagnostic: (String) -> Unit = {}) {
         var evaluated = 0
         var affected = 0
         var lineCount = 0
+        var longStreakCount = 0
         var linePixels = 0
         val ghostDirections = IntArray(DIRECTION_BINS)
         val observed = mutableListOf<Pair<Float, Float>>()
@@ -135,6 +136,8 @@ class LineArtifactDetector(private val diagnostic: (String) -> Unit = {}) {
                 val isLine = component.size >= 4 && maxOf(component.width, component.height) >= 4 &&
                     component.elongation >= 2f
                 if (isLine) { lineCount++; linePixels += component.size; starAffected = true }
+                if (isLine && component.size >= 8 && hypot(component.width.toFloat(), component.height.toFloat()) >= 9f &&
+                    component.elongation >= 3f) longStreakCount++
                 // Require the direction to repeat at distinct stars, not many components at one star.
                 val direction = ((atan2((y - star.y).toDouble(), (x - star.x).toDouble()) + PI) /
                     (2 * PI) * DIRECTION_BINS).toInt().coerceIn(0, DIRECTION_BINS - 1)
@@ -146,6 +149,7 @@ class LineArtifactDetector(private val diagnostic: (String) -> Unit = {}) {
         val repeated = ghostDirections.maxOrNull() ?: 0
         val fraction = affected.toFloat() / evaluated.coerceAtLeast(1)
         val hard = buildList {
+            if (longStreakCount > 0) add("new_long_stellar_streak_in_full_resolution")
             if (affected >= 3 && fraction >= 0.05f) add("new_stellar_streaks_in_full_resolution")
             if (repeated >= 4 && repeated.toFloat() / evaluated.coerceAtLeast(1) >= 0.10f) {
                 add("repeated_new_stellar_companions_in_full_resolution")

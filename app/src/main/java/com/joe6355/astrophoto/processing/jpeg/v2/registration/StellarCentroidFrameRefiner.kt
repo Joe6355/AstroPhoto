@@ -273,23 +273,34 @@ class StellarCentroidFrameRefiner(
             matches = aggregation.inliers,
             diagnostics = diagnostics.sortedWith(compareBy({ it.y }, { it.x }, { it.rejectionReason.orEmpty() }))
         )
+        val trackedGeometry = if (!primary.accepted && primary.rejectionReason in setOf(
+                "centroid_median_residual_high", "centroid_p90_residual_high",
+                "insufficient_stellar_centroid_matches"
+            )) PerspectiveRotationGeometry.fromFocalPixels(reference.width, reference.height, focalLengthPixels)
+        else null
+        val trackedRotation = trackedGeometry?.let { geometry ->
+            ProjectiveStarRegistrar(geometry).registerTrackedRotation(evidenceMatches, initialTransform,
+                reference.width, reference.height, searchRadius, cancellationCheck)
+        }
+        rotationDiagnostic("frame=$frameId fullResolutionTrackedRotation supported=${trackedRotation != null} " +
+            "stars=${trackedRotation?.inliers?.size ?: 0} validationP90=${trackedRotation?.validationP90}")
         // A small inlier subset can pass rigid validation while the rest of the field remains
         // misaligned. Compare a dense model on held-out stars before replacing an accepted fit.
         // Photometric, blur and motion failures still cannot request a more flexible model.
         if (!primary.accepted && primary.rejectionReason !in setOf(
                 "centroid_median_residual_high", "centroid_p90_residual_high"
-            )) return primary
+            ) && trackedRotation == null) return primary
         if (primary.accepted && (evidenceMatches.size < 24 ||
                 median(residuals(evidenceMatches, refined)) <= 0.20f &&
                 percentile(residuals(evidenceMatches, refined), 0.9f) <= 0.45f)) return primary
         cancellationCheck()
-        val planar = ProjectiveStarRegistrar().register(evidenceMatches, initialTransform,
-            reference.width, reference.height, searchRadius, cancellationCheck)
+        val planar = if (trackedRotation == null) ProjectiveStarRegistrar().register(evidenceMatches, initialTransform,
+            reference.width, reference.height, searchRadius, cancellationCheck) else null
         // Preserve all accepted fits. A lens-constrained rotation can rescue a geometric
         // refusal, but cannot bypass the photometric decision of an existing dense fit.
         val geometry = if (planar == null && !primary.accepted)
             PerspectiveRotationGeometry.fromFocalPixels(reference.width, reference.height, focalLengthPixels) else null
-        val perspective = geometry?.let { ProjectiveStarRegistrar(it).register(evidenceMatches, initialTransform,
+        val perspective = trackedRotation ?: geometry?.let { ProjectiveStarRegistrar(it).register(evidenceMatches, initialTransform,
             reference.width, reference.height, searchRadius, cancellationCheck) }
         val projective = planar ?: perspective
         if (projective == null) {

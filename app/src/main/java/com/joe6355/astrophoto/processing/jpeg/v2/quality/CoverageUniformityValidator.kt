@@ -90,12 +90,6 @@ class CoverageUniformityValidator {
         var lowCells = 0
         var abruptEdges = 0
         var comparedEdges = 0
-        var horizontalFirst = 0f
-        var horizontalLast = 0f
-        var horizontalCount = 0
-        var verticalFirst = 0f
-        var verticalLast = 0f
-        var verticalCount = 0
         for (row in edgeMargin until rows - edgeMargin) {
             for (column in edgeMargin until columns - edgeMargin) {
                 val index = row * columns + column
@@ -118,18 +112,32 @@ class CoverageUniformityValidator {
                         if (it) abruptEdges++
                     }
                 }
-                if (column == edgeMargin) horizontalFirst += value
-                if (column == columns - edgeMargin - 1) horizontalLast += value
-                if (column == edgeMargin) horizontalCount++
-                if (row == edgeMargin) verticalFirst += value
-                if (row == rows - edgeMargin - 1) verticalLast += value
-                if (row == edgeMargin) verticalCount++
             }
         }
-        val horizontalGradient = abs(horizontalLast - horizontalFirst) /
-            horizontalCount.coerceAtLeast(1) / median.coerceAtLeast(0.01f)
-        val verticalGradient = abs(verticalLast - verticalFirst) /
-            verticalCount.coerceAtLeast(1) / median.coerceAtLeast(0.01f)
+        // Compare occupied cells on the same sky row/column. An absent edge is not
+        // zero coverage: asymmetric foreground masks otherwise invent a huge gradient.
+        fun pairedGradient(horizontal: Boolean): Float {
+            var sum = 0f
+            var count = 0
+            val lines = if (horizontal) rows else columns
+            val positions = if (horizontal) columns else rows
+            for (line in edgeMargin until lines - edgeMargin) {
+                var first = Float.NaN
+                var last = Float.NaN
+                var samples = 0
+                for (position in edgeMargin until positions - edgeMargin) {
+                    val index = if (horizontal) line * columns + position else position * columns + line
+                    val value = values[index]
+                    if (!value.isFinite()) continue
+                    if (samples++ == 0) first = value
+                    last = value
+                }
+                if (samples > 1) { sum += last - first; count++ }
+            }
+            return abs(sum) / count.coerceAtLeast(1) / median.coerceAtLeast(0.01f)
+        }
+        val horizontalGradient = pairedGradient(true)
+        val verticalGradient = pairedGradient(false)
         val gradient = maxOf(horizontalGradient, verticalGradient)
         val lowRatio = lowCells.toFloat() / validInternalCells.coerceAtLeast(1)
         val abruptRatio = abruptEdges.toFloat() / comparedEdges.coerceAtLeast(1)

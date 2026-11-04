@@ -306,6 +306,20 @@ class JpegV2Stage6Test {
         assertEquals(1f, result.metrics.uniformityScore, 0.001f)
     }
 
+    @Test fun asymmetricForegroundDoesNotTurnMissingSkyCellsIntoZeroCoverage() {
+        val sky = AlphaMask(96, 96, FloatArray(96 * 96) { index ->
+            if (index % 96 >= 24 && index / 96 < 60) 1f else 0f
+        })
+        val result = CoverageUniformityValidator().validate(AlphaMask.full(96, 96), sky)
+        assertTrue(result.toString(), result.accepted)
+        assertEquals(0f, result.metrics.coverageGradient, 0.0001f)
+        assertEquals(1f, result.metrics.uniformityScore, 0.0001f)
+        val damaged = AlphaMask(96, 96, FloatArray(96 * 96) { index ->
+            if (index % 96 in 40..76 && index / 96 in 10..50) 0.2f else 1f
+        })
+        assertFalse(CoverageUniformityValidator().validate(damaged, sky).accepted)
+    }
+
     @Test fun coverageValidatorRejectsAbruptInternalSector() {
         val values = FloatArray(96 * 96) { index ->
             val x = index % 96
