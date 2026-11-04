@@ -1,0 +1,58 @@
+{
+  "date": "2026-11-04",
+  "baseCommit": "5465274a653a1e8d252cbc670d5e16ac398b503e",
+  "applicationId": "com.joe6355.astrophoto.qa20261017",
+  "device": "emulator-5580",
+  "android": 13,
+  "widthDp": 320,
+  "screen": "1080x1920 / override 540dpi",
+  "physicalPhoneTouched": false,
+  "processingAlgorithmsChanged": false,
+  "apkSha256": {
+    "app-debug.apk": "fbbe2a9f174e42d2904cc72fc828552b0bfd2871e54916c031de690ea5b35f68",
+    "app-debug-androidTest.apk": "0b9349602f90264d3753a1432dcd90ad912b5b1dfdae6d9a4e2c4f3578bbebdd"
+  },
+  "nativeStages": [
+    {
+      "name": "normal",
+      "systemFontScale": 1.0,
+      "tests": 4,
+      "failures": 0,
+      "elapsedSeconds": 15.579740399989532
+    },
+    {
+      "name": "font200",
+      "systemFontScale": 2.0,
+      "tests": 1,
+      "failures": 0,
+      "elapsedSeconds": 6.574853700003587
+    }
+  ],
+  "emulatorFontScaleRestored": "1.0",
+  "targetedJvmTests": {
+    "tests": 12,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "lintDebug": {
+    "errors": 0,
+    "warnings": 12
+  },
+  "sourceSha256": {
+    "app/src/main/java/com/joe6355/astrophoto/PhotoViewer.kt": "85c36f929f469d4577b7eca6f9d6c83e07620eaf44a2f0384f5cfa3c1237b6f1",
+    "app/src/main/java/com/joe6355/astrophoto/ProcessedResults.kt": "425a3c48e1cece137b7679f2c5a77f2e0c1848f4e01ca7f114150630b6f751fe",
+    "app/src/androidTest/java/com/joe6355/astrophoto/PhotoComparisonDeviceTest.kt": "85f27d94ee9f8ab06b628d7c973c5b9f788354a20e928aa647b54db4d1766adb"
+  },
+  "limitations": [
+    "Only emulator QA debug installed; physical main and QA APKs remain unchanged.",
+    "Synthetic PNGs validate UI, coordinates and source preservation, not photographic quality.",
+    "Full CI for this UI revision must be checked against its exact commit after push."
+  ],
+  "normalizedSourceSha256": {
+    "app/src/main/java/com/joe6355/astrophoto/PhotoViewer.kt": "85c36f929f469d4577b7eca6f9d6c83e07620eaf44a2f0384f5cfa3c1237b6f1",
+    "app/src/main/java/com/joe6355/astrophoto/ProcessedResults.kt": "9166396e2dd73643210e6857e86f17a03689ed48d6c1ba43f5f0fcda8e30e457",
+    "app/src/androidTest/java/com/joe6355/astrophoto/PhotoComparisonDeviceTest.kt": "85f27d94ee9f8ab06b628d7c973c5b9f788354a20e928aa647b54db4d1766adb"
+  },
+  "sourceHashNote": "sourceSha256 records local build input bytes; normalizedSourceSha256 normalizes CRLF to LF for cross-device comparison."
+}

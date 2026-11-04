@@ -40,7 +40,7 @@ internal class PhotoViewState {
 
 @Composable
 internal fun PhotoViewControls(state: PhotoViewState, modifier: Modifier = Modifier,
-    onNativeSize: (() -> Unit)? = null) {
+    onNativeSize: (() -> Unit)? = null, compact: Boolean = false) {
     Column(modifier) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically) {
@@ -57,7 +57,7 @@ internal fun PhotoViewControls(state: PhotoViewState, modifier: Modifier = Modif
                 Slider(value = state.exposure, onValueChange = { state.exposure = it },
                     valueRange = 0.1f..6f, modifier = Modifier.weight(1f).testTag("photo-exposure"))
             }
-            Text("Подсветка только для просмотра — файл не меняется",
+            Text(if (compact) "Файл не меняется" else "Подсветка только для просмотра — файл не меняется",
                 style = MaterialTheme.typography.labelSmall)
         }
     }
@@ -66,7 +66,8 @@ internal fun PhotoViewControls(state: PhotoViewState, modifier: Modifier = Modif
 /** Decodes the visible area again as zoom changes, rather than enlarging a thumbnail. */
 @Composable
 internal fun PhotoViewer(source: ImageSourceReference, modifier: Modifier = Modifier,
-    state: PhotoViewState = remember(source) { PhotoViewState() }, showControls: Boolean = true) {
+    state: PhotoViewState = remember(source) { PhotoViewState() }, showControls: Boolean = true,
+    gesturesEnabled: Boolean = true) {
     val context = LocalContext.current
     var decoder by remember(source) { mutableStateOf<PhotoRegionSource?>(null) }
     var overview by remember(source) { mutableStateOf<PhotoTile?>(null) }
@@ -123,7 +124,7 @@ internal fun PhotoViewer(source: ImageSourceReference, modifier: Modifier = Modi
             }
             .testTag("photo-viewport")
             .semantics { contentDescription = "Фотография ${source.displayName}" }
-            .pointerInput(state, source) {
+            .then(if (gesturesEnabled) Modifier.pointerInput(state, source) {
                 detectTapGestures(onDoubleTap = { point ->
                     val current = currentViewport
                     if (state.zoom > 1.01f) state.reset()
@@ -135,7 +136,7 @@ internal fun PhotoViewer(source: ImageSourceReference, modifier: Modifier = Modi
                 detectTransformGestures { centroid, pan, zoom, _ ->
                     state.apply(currentViewport.transform(centroid, pan, zoom))
                 }
-            }, contentAlignment = Alignment.Center) {
+            } else Modifier), contentAlignment = Alignment.Center) {
             Canvas(Modifier.fillMaxSize()) {
                 val current = decoder ?: return@Canvas
                 val canvas = drawContext.canvas.nativeCanvas

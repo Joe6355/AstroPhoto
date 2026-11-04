@@ -45,6 +45,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -52,17 +53,21 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -218,7 +223,7 @@ private data class ProcessedRenameResult(
     val metadataUpdated: Boolean
 )
 
-private data class ComparisonImage(
+internal data class ComparisonImage(
     val label: String,
     val displayPath: String,
     val contentUri: String?,
@@ -1410,23 +1415,47 @@ private fun ProcessedResultViewer(
     }
 }
 
+private enum class PhotoComparisonMode(val title: String) {
+    SIDE_BY_SIDE("Рядом"), FIRST("Фото 1"), SECOND("Фото 2")
+}
+
 @Composable
-private fun ProcessedComparisonViewer(
+internal fun ProcessedComparisonViewer(
     first: ComparisonImage,
     second: ComparisonImage,
     onDismiss: () -> Unit
 ) {
     val sharedState = remember(first, second) { PhotoViewState() }
+    var mode by rememberSaveable(first, second) { mutableStateOf(PhotoComparisonMode.SIDE_BY_SIDE) }
     Dialog(onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
-            .safeDrawingPadding().padding(12.dp)) {
+        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background,
+            contentColor = MaterialTheme.colorScheme.onBackground) {
+        Column(Modifier.fillMaxSize().safeDrawingPadding().padding(12.dp)) {
             com.joe6355.astrophoto.ui.AstroTopBar(title = "Сравнение", onBack = onDismiss)
-            Text("Щипок или двойной тап — масштаб обеих фотографий",
+            Text("Масштаб, участок и подсветка общие.",
                 style = MaterialTheme.typography.bodySmall)
-            PhotoViewControls(sharedState)
+            com.joe6355.astrophoto.ui.AstroSegmentedControl(
+                options = PhotoComparisonMode.entries,
+                selected = mode,
+                label = { it.title },
+                onSelected = { mode = it }
+            )
+            PhotoViewControls(sharedState, compact = true)
             BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
-                if (maxWidth > maxHeight) {
+                if (mode != PhotoComparisonMode.SIDE_BY_SIDE) {
+                    // Keep both bounded region decoders warm. Switching only changes visibility;
+                    // it must not reload the source or reset the shared viewport/exposure.
+                    listOf(first, second).forEachIndexed { index, image ->
+                        key(index) {
+                            val visible = (index == 0) == (mode == PhotoComparisonMode.FIRST)
+                            ComparisonPane(image, Modifier.fillMaxSize()
+                                .graphicsLayer { alpha = if (visible) 1f else 0f }
+                                .then(if (visible) Modifier else Modifier.clearAndSetSemantics {}),
+                                sharedState, gesturesEnabled = visible)
+                        }
+                    }
+                } else if (maxWidth > maxHeight) {
                     Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         ComparisonPane(first, Modifier.weight(1f), sharedState)
                         ComparisonPane(second, Modifier.weight(1f), sharedState)
@@ -1439,15 +1468,18 @@ private fun ProcessedComparisonViewer(
                 }
             }
         }
+        }
     }
 }
 
 @Composable
-private fun ComparisonPane(image: ComparisonImage, modifier: Modifier, state: PhotoViewState) {
+private fun ComparisonPane(image: ComparisonImage, modifier: Modifier, state: PhotoViewState,
+    gesturesEnabled: Boolean = true) {
     Column(modifier) {
         Text(image.label, fontWeight = FontWeight.SemiBold, maxLines = 1,
             overflow = TextOverflow.Ellipsis)
-        PhotoViewer(image.imageSource(), Modifier.fillMaxWidth().weight(1f), state, showControls = false)
+        PhotoViewer(image.imageSource(), Modifier.fillMaxWidth().weight(1f), state,
+            showControls = false, gesturesEnabled = gesturesEnabled)
     }
 }
 
