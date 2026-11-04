@@ -1,0 +1,190 @@
+{
+  "date": "2026-11-04",
+  "codeRevision": "6d85d698d92f2954484eb1376556c9de067d37af",
+  "qaApplicationId": "com.joe6355.astrophoto.qa20261017",
+  "qaVersion": "0.9.0-beta.5",
+  "qaVersionCode": 6,
+  "qaApkSha256": "bc3aff8c081ef55b3089877a3e23e48d8b4c76515f40dd9cd05b81ecbc2acdbe",
+  "androidTestApkSha256": "20d779da642209567faa7020b7d823c3f491d4b1c3b5dadfc2235e824dc157bf",
+  "productionBuildInputsVerified": 272,
+  "device": {
+    "model": "Xiaomi 23021RAA2Y",
+    "android": 13,
+    "api": 33
+  },
+  "targetedJvmTests": {
+    "tests": 75,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "ci": {
+    "id": 41846826128,
+    "head_sha": "6d85d698d92f2954484eb1376556c9de067d37af",
+    "status": "completed",
+    "conclusion": "success",
+    "html_url": "https://github.com/Joe6355/AstroPhoto/actions/runs/41846826128"
+  },
+  "ciCheckedAt": "2026-11-04T14:47:02.693046+00:00",
+  "ciUnitTests": {
+    "tests": 1387,
+    "failures": 0,
+    "skipped": 4,
+    "passed": 1383
+  },
+  "cases": {
+    "S1_VERIFIED": {
+      "folder": "Session_QA_WindowFix_S1_VERIFIED",
+      "selectedReference": "AstroSeries_20261104_000353_027.jpg",
+      "acceptedFrameCount": 12,
+      "inputFrameCount": 30,
+      "selectedCandidateType": "PROCESSED",
+      "processingOutcome": "PROCESSED",
+      "fallbackReason": null,
+      "cleanStackDecision": {
+        "accepted": true,
+        "score": 1.0,
+        "hardFailureReasons": [],
+        "warningReasons": []
+      },
+      "processedDecision": {
+        "accepted": true,
+        "score": 1.0,
+        "hardFailureReasons": [],
+        "warningReasons": []
+      },
+      "skyRatio": 0.12204102,
+      "coverageUniformityScore": 1.0,
+      "lineArtifactScore": 0.0,
+      "referenceStarSmearRate": 0.0,
+      "enhancedValidationStatus": "SAVED",
+      "enhancedRejectionReasons": [],
+      "published": {
+        "DeepSky_20261104_192244.png": {
+          "bytes": 3573528,
+          "sha256": "992ad94b9ea5856fd84a5f648a968227b7a8d1fa46003b7b0dc629293915f82f"
+        },
+        "Enhanced_20261104_192244.png": {
+          "bytes": 3651707,
+          "sha256": "9074ca0179242011c5e3dce55b44e094b79e5dce13b811bbc2e80ea8ab8754f1"
+        }
+      },
+      "elapsedMillis": 263191,
+      "comparisonSignal90PercentSpanPx": {
+        "reference": 3.6536102751509674,
+        "previous": 50.19317902119242,
+        "fixed": 3.655169886506286
+      },
+      "inputHashesUnchanged": true,
+      "decodedPngSize": [
+        1440,
+        1920
+      ]
+    },
+    "S2_VERIFIED": {
+      "folder": "Session_QA_WindowFix_S2_VERIFIED",
+      "selectedReference": "AstroSeries_20261104_002912_009.jpg",
+      "acceptedFrameCount": 4,
+      "inputFrameCount": 10,
+      "selectedCandidateType": "PROCESSED",
+      "processingOutcome": "PROCESSED",
+      "fallbackReason": null,
+      "cleanStackDecision": {
+        "accepted": true,
+        "score": 0.95,
+        "hardFailureReasons": [],
+        "warningReasons": [
+          "transform_sequence_score_is_low"
+        ]
+      },
+      "processedDecision": {
+        "accepted": true,
+        "score": 1.0,
+        "hardFailureReasons": [],
+        "warningReasons": []
+      },
+      "skyRatio": 0.34356192,
+      "coverageUniformityScore": 1.0,
+      "lineArtifactScore": 0.0,
+      "referenceStarSmearRate": 0.0,
+      "enhancedValidationStatus": "REJECTED",
+      "enhancedRejectionReasons": [
+        "confirmed_star_lost",
+        "confirmed_star_weakened"
+      ],
+      "published": {
+        "DeepSky_20261104_192632.png": {
+          "bytes": 3379927,
+          "sha256": "1ba22ede1d6af307b7e90dcab2f4819408a15ef64cf67b2b195ec8580826cc89"
+        }
+      },
+      "elapsedMillis": 342123,
+      "comparisonSignal90PercentSpanPx": {
+        "reference": 5.851581167386769,
+        "previous": 18.303413184534698,
+        "fixed": 4.898255540571572
+      },
+      "inputHashesUnchanged": true,
+      "decodedPngSize": [
+        1440,
+        1920
+      ]
+    }
+  },
+  "preservation": {
+    "pictures": {
+      "before": 1829,
+      "after": 1837,
+      "missing": 0,
+      "changed": 0,
+      "added": 8
+    },
+    "qa-private": {
+      "before": 574,
+      "after": 640,
+      "missing": 0,
+      "changed": 1,
+      "added": 66
+    },
+    "legacy-private": {
+      "before": 222,
+      "after": 222,
+      "missing": 0,
+      "changed": 0,
+      "added": 0
+    },
+    "packages": {
+      "com.joe6355.astrophoto": {
+        "apkSha256": "d8d875b50c60f4ef52a8ad537fbc514cd3a3f348db88abf86c5c7074c8412531",
+        "uid": 10505,
+        "dataInode": 1427204,
+        "dataDirectoryIdentityUnchanged": true
+      },
+      "com.joe6355.astrophoto.qa20261017": {
+        "apkSha256": "bc3aff8c081ef55b3089877a3e23e48d8b4c76515f40dd9cd05b81ecbc2acdbe",
+        "uid": 10354,
+        "dataInode": 1499328,
+        "dataDirectoryIdentityUnchanged": true
+      },
+      "com.example.astrophoto": {
+        "apkSha256": "08e3e74e8e60033d1e101f347a546d8b4069f0cd8a86e4163b1d608f6043a595",
+        "uid": 10503,
+        "dataInode": 1221503,
+        "dataDirectoryIdentityUnchanged": true
+      }
+    },
+    "stayAwakeRestored": true,
+    "foregroundIsHome": true,
+    "oldQaDerivedFilesRestored": 45,
+    "onlyOwnCompletedJournalRecordsArchivedAndRemoved": 8,
+    "previousQaPreferencesUnchanged": true
+  },
+  "limitations": [
+    "QA debug verified; main APK remains PC-signed a7e754e, not updated by this block.",
+    "Main private storage not available for complete hashing.",
+    "Captured through closed glass; sparse stars, strong light pollution, conservative sky mask.",
+    "Measured star spans are local thresholded high-pass signal extents, not FWHM or whole-field acceptance.",
+    "S2 Enhanced rejected by star preservation; accepted DeepSky retained."
+  ],
+  "next": "Obtain main on PC, sign changed main/R8 APK with existing key, update in place, and check changed path without repeating full acceptance."
+}
