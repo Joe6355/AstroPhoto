@@ -43,6 +43,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -66,6 +67,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.semantics
@@ -76,6 +79,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -695,8 +700,8 @@ fun ProcessedResultsScreen(
     var results by remember(session.folderName) {
         mutableStateOf<List<ProcessedResult>>(emptyList())
     }
-    var firstLight by remember(session.folderName) {
-        mutableStateOf<SessionFrame?>(null)
+    var lightFrames by remember(session.folderName) {
+        mutableStateOf<List<SessionFrame>>(emptyList())
     }
     var loading by remember(session.folderName) { mutableStateOf(true) }
     var compareMode by remember { mutableStateOf(false) }
@@ -737,24 +742,20 @@ fun ProcessedResultsScreen(
         loadError = null
         runCatching {
             val loadedResults = repository.loadResults(session).toList()
-            val loadedFirstLight = runCatching {
+            val loadedLights = runCatching {
                 framesRepository.loadFrames(session)
                     .filter { it.category == SessionFrameCategory.LIGHTS_JPEG }
-                    .minWithOrNull(
-                        compareBy<SessionFrame> { it.createdAtMillis }
-                            .thenBy { it.fileName }
-                    )
             }.onFailure { error ->
                 Log.e(
                     "AstroPhotoResults",
-                    "Failed to load first light for comparison: ${error.message}",
+                    "Failed to load lights for comparison: ${error.message}",
                     error
                 )
-            }.getOrNull()
-            loadedResults to loadedFirstLight
+            }.getOrDefault(emptyList())
+            loadedResults to loadedLights
         }.onSuccess { loaded ->
             results = loaded.first
-            firstLight = loaded.second
+            lightFrames = loaded.second
             comparisonSelection = emptyList()
             pendingInitialEditorFileName?.takeUnless {
                 SessionProcessingCoordinator.isActive(session.folderName)
@@ -772,7 +773,7 @@ fun ProcessedResultsScreen(
                 error
             )
             results = emptyList()
-            firstLight = null
+            lightFrames = emptyList()
             loadError =
                 "Не удалось открыть результаты. Один из файлов повреждён или не читается."
         }
@@ -950,12 +951,13 @@ fun ProcessedResultsScreen(
     selectedResult?.let { result ->
         ProcessedResultViewer(
             result = result,
-            firstLight = firstLight,
+            session = session,
+            lightFrames = lightFrames,
             fileActionsEnabled = fileActionsEnabled,
             onShare = {
                 if (allowFileAction()) shareResult(context, result) else RESULT_PROCESSING_MESSAGE
             },
-            onCompareWithFirst = { light ->
+            onCompareWithFrame = { light ->
                 selectedResult = null
                 comparison = light.toComparisonImage() to result.toComparisonImage()
             },
@@ -1378,39 +1380,103 @@ fun ProcessedResultActions(
 }
 
 @Composable
-private fun ProcessedResultViewer(
+internal fun ProcessedResultViewer(
     result: ProcessedResult,
-    firstLight: SessionFrame?,
+    session: SessionSummary,
+    lightFrames: List<SessionFrame>,
     fileActionsEnabled: Boolean,
     onShare: () -> String?,
-    onCompareWithFirst: (SessionFrame) -> Unit,
-    onDismiss: () -> Unit
+    onCompareWithFrame: (SessionFrame) -> Unit,
+    onDismiss: () -> Unit,
+    summaryLoader: (suspend () -> ResultProcessingSummary?)? = null
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var actionError by remember(result.key) { mutableStateOf<String?>(null) }
+    val compactActions = LocalConfiguration.current.fontScale >= 1.5f
+    var actionsExpanded by remember(result.key, compactActions) { mutableStateOf(false) }
+    val reportReader = remember(context) { ProcessedResultReportReader(context.applicationContext) }
+    var summary by remember(session.folderName, result.key, result.fileName) { mutableStateOf<ResultProcessingSummary?>(null) }
+    var summaryLoading by remember(session.folderName, result.key, result.fileName) { mutableStateOf(true) }
+    var showSummary by remember(session.folderName, result.key, result.fileName) { mutableStateOf(false) }
+    LaunchedEffect(session.folderName, result.key, result.fileName, fileActionsEnabled) {
+        summaryLoading = true
+        val loadingDeadline = launch {
+            delay(5_000)
+            summaryLoading = false
+        }
+        try {
+            val loaded = if (summaryLoader == null) reportReader.load(session.folderName, result.fileName)
+                else summaryLoader()
+            // A late provider response must not change the comparison choice after fallback.
+            if (summaryLoading) summary = loaded
+        } finally {
+            loadingDeadline.cancel()
+            if (isActive) summaryLoading = false
+        }
+    }
+    val reference = if (summaryLoading) null else resultComparisonReference(summary, lightFrames)
+    if (showSummary) {
+        ResultProcessingSummaryDialog(summary, reference?.fromReport == true,
+            "Файл: ${result.fileName}\nПуть: ${result.relativePath ?: result.displayPath}",
+            onDismiss = { showSummary = false })
+    }
     Dialog(onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
-            .safeDrawingPadding().padding(12.dp)) {
+        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background,
+            contentColor = MaterialTheme.colorScheme.onBackground) {
+        Column(Modifier.fillMaxSize().safeDrawingPadding().padding(12.dp)) {
             com.joe6355.astrophoto.ui.AstroTopBar(title = "Просмотр результата", onBack = onDismiss)
-            Text(result.fileName, style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (compactActions) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(result.fileName, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Box {
+                        IconButton(onClick = { actionsExpanded = true }, modifier = Modifier.testTag("result-viewer-actions")) {
+                            Icon(painterResource(R.drawable.ic_more_vert), contentDescription = "Действия с фотографией")
+                        }
+                        DropdownMenu(expanded = actionsExpanded, onDismissRequest = { actionsExpanded = false }) {
+                            DropdownMenuItem(text = { Text("В галерее") }, onClick = {
+                                actionsExpanded = false
+                                actionError = openResultInGallery(context, result)
+                            })
+                            DropdownMenuItem(text = { Text("Поделиться") }, enabled = fileActionsEnabled, onClick = {
+                                actionsExpanded = false
+                                actionError = onShare()
+                            })
+                        }
+                    }
+                }
+            } else {
+                Text(result.fileName, style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
             PhotoViewer(result.imageSource(), Modifier.fillMaxWidth().weight(1f).padding(vertical = 8.dp))
             actionError?.let { Text(it, color = AstroColors.Error) }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (!compactActions) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { actionError = openResultInGallery(context, result) },
                     modifier = Modifier.weight(1f)) { Text("В галерее") }
                 Button(onClick = { actionError = onShare() }, enabled = fileActionsEnabled,
                     modifier = Modifier.weight(1f)) { Text("Поделиться") }
             }
-            TextButton(onClick = { firstLight?.let(onCompareWithFirst) }, enabled = firstLight != null,
+            TextButton(onClick = { reference?.frame?.let(onCompareWithFrame) }, enabled = !summaryLoading && reference != null,
                 modifier = Modifier.fillMaxWidth()) {
-                Text(if (firstLight != null) "Сравнить с первым light frame" else "Исходный кадр не найден")
+                Text(when {
+                    summaryLoading -> "Выбор кадра для сравнения…"
+                    reference == null -> "Исходный кадр не найден"
+                    reference.fromReport -> "Сравнить с опорным кадром"
+                    else -> "Сравнить с первым кадром"
+                })
             }
-            AstroExpandableSection(title = "Технические сведения") {
-                Text("Файл: ${result.fileName}\nПуть: ${result.relativePath ?: result.displayPath}",
-                    style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = { showSummary = true }, enabled = !summaryLoading,
+                modifier = Modifier.fillMaxWidth().testTag("open-result-processing-summary")) {
+                Text(when {
+                    summaryLoading -> "Загрузка сведений…"
+                    summary?.candidateType == "REFERENCE" -> "Итог: опорный кадр"
+                    summary != null -> "Итог: ${summary!!.acceptedFrames} из ${summary!!.inputFrames}"
+                    else -> "Сведения о файле"
+                })
             }
+        }
         }
     }
 }

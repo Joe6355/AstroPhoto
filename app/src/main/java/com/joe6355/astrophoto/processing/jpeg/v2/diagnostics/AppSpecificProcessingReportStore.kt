@@ -51,6 +51,17 @@ class AppSpecificProcessingReportStore private constructor(private val root: Fil
         }
     }
 
+    fun findForImage(sessionFolder: String, imageFileName: String): AppSpecificProcessingReport? {
+        val directory = sessionDirectory(sessionFolder, create = false)
+        if (!validatedSessionDirectory(directory, sessionFolder)) return null
+        val reportName = processingReportFileName(imageFileName)
+        val file = File(directory, safeLeaf(reportName))
+        if (!file.isFile) return null
+        val marker = File(directory, "${file.name}.image")
+        if (!marker.isFile || marker.readText(Charsets.UTF_8) != imageFileName) return null
+        return AppSpecificProcessingReport(sessionFolder, imageFileName, reportName, file)
+    }
+
     fun delete(sessionFolder: String, imageFileName: String): Boolean {
         val directory = sessionDirectory(sessionFolder, create = false)
         if (!validatedSessionDirectory(directory, sessionFolder)) return false

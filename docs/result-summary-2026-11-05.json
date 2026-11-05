@@ -1,0 +1,105 @@
+{
+  "date": "2026-11-05",
+  "startedDate": "2026-11-04",
+  "applicationId": "com.joe6355.astrophoto.qa20261017",
+  "baseCommit": "30790c91da6fa79f46363598f7285032a6611ebc",
+  "device": "emulator-5580",
+  "android": 13,
+  "widthDp": 320,
+  "screen": "1080x1920 / override 540dpi",
+  "physicalPhoneTouched": false,
+  "processingAlgorithmsChanged": false,
+  "apkSha256": {
+    "app-debug.apk": "aeb0f130abe7b8bff9bf0c93407d033872dae936f62f70b42de53427a9964c36",
+    "app-debug-androidTest.apk": "9d2ed0396a2be0b16479437adb51e16b6af29af5e503176f33ba94d96bbd633d"
+  },
+  "unchangedBackendPreviouslyVerified": {
+    "appApkSha256": "a5d5841f6bb092c30e82396239fcfb293df526f1fc2dc23f61d0a160ec70d9e8",
+    "methods": [
+      "parsesBothActualReportCopiesAndRejectsUnpairedOrInconsistentData",
+      "readsExistingPrivateReportWithoutChangingItAndRejectsWrongIdentity"
+    ],
+    "passed": 2,
+    "sourceSha256": {
+      "app/src/main/java/com/joe6355/astrophoto/ResultProcessingSummary.kt": "fb10a6a2d17e31243bfac497331a61e3e7e3310a604ff554488f7a3bbba1a879",
+      "app/src/main/java/com/joe6355/astrophoto/ProcessedResultReportReader.kt": "09372a76476a22f802f9f41ee52766614a68045b2422cca55563cf1f16372aa9",
+      "app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/diagnostics/AppSpecificProcessingReportStore.kt": "b7cac451b437d42dfd2514ada23e6c2a71e8f54068fa8e491abe69766b804279"
+    }
+  },
+  "nativeStages": [
+    {
+      "name": "normal",
+      "systemFontScale": 1.0,
+      "tests": 4,
+      "failures": 0,
+      "methods": [
+        "viewerShowsTwelveOfThirtyAndComparesToReferenceTwentySeven",
+        "rejectedEnhancedIsExplainedAndMissingReferenceUsesFirstLight",
+        "unavailableReportDoesNotInventCountsAndKeepsFileDetailsAndComparison",
+        "slowOptionalReportKeepsFallbackUsableAndDoesNotReplaceItWithLateData"
+      ]
+    },
+    {
+      "name": "font200",
+      "systemFontScale": 2.0,
+      "tests": 1,
+      "failures": 0,
+      "elapsedSeconds": 13.156690299976617
+    }
+  ],
+  "nativeUniqueCasesPassed": 7,
+  "emulatorFontScaleRestored": "1.0",
+  "targetedJvmTests": {
+    "tests": 16,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "lintDebug": {
+    "errors": 0,
+    "warnings": 12
+  },
+  "sourceSha256": {
+    "app/src/main/java/com/joe6355/astrophoto/ResultProcessingSummary.kt": "fb10a6a2d17e31243bfac497331a61e3e7e3310a604ff554488f7a3bbba1a879",
+    "app/src/main/java/com/joe6355/astrophoto/ProcessedResultReportReader.kt": "09372a76476a22f802f9f41ee52766614a68045b2422cca55563cf1f16372aa9",
+    "app/src/main/java/com/joe6355/astrophoto/ResultProcessingSummaryDialog.kt": "3ec39b1bbfd11eaefa69681327fc68162baa7f73e7032a9af27a6eb00df5f03c",
+    "app/src/main/java/com/joe6355/astrophoto/ProcessedResults.kt": "e1d05124cfe96526646e7953f44e636e81a9806c6c101622780de8919032a329",
+    "app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/diagnostics/AppSpecificProcessingReportStore.kt": "b7cac451b437d42dfd2514ada23e6c2a71e8f54068fa8e491abe69766b804279",
+    "app/src/main/res/drawable/ic_more_vert.xml": "ef6e7fce32e9edd58c81e0646856746625df85f701644781b3324df20a91cd15",
+    "app/src/test/java/com/joe6355/astrophoto/ResultProcessingSummaryTest.kt": "f949b5917baf6912893e423452c57b99a9e1ca662ecbdbd21cecbef0973e96be",
+    "app/src/androidTest/java/com/joe6355/astrophoto/ResultProcessingSummaryDeviceTest.kt": "85cfe2caf89b0f23940359e49f162db4af23ff98be7fdcc1deae9809c396c7dc"
+  },
+  "normalizedSourceSha256": {
+    "app/src/main/java/com/joe6355/astrophoto/ResultProcessingSummary.kt": "fb10a6a2d17e31243bfac497331a61e3e7e3310a604ff554488f7a3bbba1a879",
+    "app/src/main/java/com/joe6355/astrophoto/ProcessedResultReportReader.kt": "09372a76476a22f802f9f41ee52766614a68045b2422cca55563cf1f16372aa9",
+    "app/src/main/java/com/joe6355/astrophoto/ResultProcessingSummaryDialog.kt": "3ec39b1bbfd11eaefa69681327fc68162baa7f73e7032a9af27a6eb00df5f03c",
+    "app/src/main/java/com/joe6355/astrophoto/ProcessedResults.kt": "7cb46a89ce5ed00adf8943204d270185b9f4db49bc2cffded98e6b7b772a1935",
+    "app/src/main/java/com/joe6355/astrophoto/processing/jpeg/v2/diagnostics/AppSpecificProcessingReportStore.kt": "52735bd66450d224b09e84269dca3aa9eb4b9df323691efb633f5b1a20a51bde",
+    "app/src/main/res/drawable/ic_more_vert.xml": "ef6e7fce32e9edd58c81e0646856746625df85f701644781b3324df20a91cd15",
+    "app/src/test/java/com/joe6355/astrophoto/ResultProcessingSummaryTest.kt": "f949b5917baf6912893e423452c57b99a9e1ca662ecbdbd21cecbef0973e96be",
+    "app/src/androidTest/java/com/joe6355/astrophoto/ResultProcessingSummaryDeviceTest.kt": "85cfe2caf89b0f23940359e49f162db4af23ff98be7fdcc1deae9809c396c7dc"
+  },
+  "screenshots": [
+    "font200-summary.png",
+    "font200-viewer.png",
+    "no-report.png",
+    "series1-summary.png",
+    "series1-viewer.png",
+    "series2-summary.png",
+    "slow-report-fallback.png"
+  ],
+  "limitations": [
+    "Only emulator QA installed; physical main and QA were not changed.",
+    "Read strict paired reports only; missing/renamed/secondary image without a paired report has no guessed summary.",
+    "Public MediaStore and pre-29 legacy positive paths were not separately exercised.",
+    "Full CI for this change must be checked at its exact commit after push.",
+    "At system font 200 percent on 320dp the photo viewport remains small."
+  ],
+  "emulatorClosedAfterEvidenceCollection": true,
+  "visuallyReviewedScreenshots": [
+    "series1-summary.png",
+    "series2-summary.png",
+    "font200-viewer.png",
+    "font200-summary.png"
+  ]
+}
