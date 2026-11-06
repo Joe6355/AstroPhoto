@@ -1,0 +1,266 @@
+{
+  "date": "2026-11-07",
+  "block": "advertising_step_2_sdk_integration",
+  "status": "implemented_and_tested_on_own_emulator",
+  "baseSource": "74c1c7fbdbddb1557a9185ace2a669e40a21a819",
+  "buildSourceState": "working_tree_with_ads_changes_on_base_not_a_clean_release_candidate",
+  "sdk": {
+    "name": "Yandex Mobile Ads",
+    "version": "8.6.0",
+    "nativeReleaseUnit": "R-M-20351551-1",
+    "appOpenReleaseUnit": "R-M-20351551-2",
+    "nativeDebugUnit": "demo-native-content-yandex",
+    "appOpenDebugUnit": "demo-appopenad-yandex",
+    "automaticInitialization": false,
+    "userConsent": false,
+    "locationTracking": false,
+    "zeroDataCollectionClaimed": false
+  },
+  "behavior": {
+    "nativePlacement": "home_after_recent_session",
+    "nativeAttemptsPerActivity": 1,
+    "cachedNativeViewReused": true,
+    "productionSplashAndAppOpenWindowMs": 700,
+    "appOpenColdLauncherOnly": true,
+    "lateAppOpenSkipped": true,
+    "cameraProcessingOnboardingAndRecoveryProtectedByGuards": true,
+    "additionalNetworkWaiting": false
+  },
+  "environment": {
+    "avd": "AstroPhotoAdsAPI34",
+    "androidApi": 34,
+    "abi": "x86_64",
+    "hardware": "ranchu",
+    "screenPixels": [
+      900,
+      1600
+    ],
+    "densityDpi": 320,
+    "qaApplicationId": "com.joe6355.astrophoto.adsqa20261107",
+    "versionName": "0.9.0-beta.5",
+    "versionCode": 6,
+    "physicalPhoneModified": false,
+    "physicalPhoneStateRefreshed": false
+  },
+  "builds": {
+    "qa-apk": {
+      "path": "artifacts/ads-sdk-2026-11-07/qa-initial.apk",
+      "bytes": 20825319,
+      "sha256": "ca535e57b013b0328cd88b06ea9d302f74cd8ca823932aacb595220a6bbfd930"
+    },
+    "qa-tests-apk": {
+      "path": "artifacts/ads-sdk-2026-11-07/qa-tests-final.apk",
+      "bytes": 1506645,
+      "sha256": "7dbe7147909c8dfca8129bd75ed6bccead7727b1a584393fbf26a40f8da5edab"
+    },
+    "release-r8-apk": {
+      "path": "artifacts/ads-sdk-2026-11-07/verified-builds/app-release.apk",
+      "bytes": 5770474,
+      "sha256": "40d1856ba2cfbc69205e9aa8ea7890173db0d77c9df758aaf33a30cd719e345b"
+    },
+    "release-r8-mapping": {
+      "path": "artifacts/ads-sdk-2026-11-07/verified-builds/mapping.txt",
+      "bytes": 77126954,
+      "sha256": "21f4610e205828a0072fe908daf84ada4777bd1a288c1984c4cee7b22c75f5e6"
+    },
+    "merged-release-permissions": [
+      "android.permission.CAMERA",
+      "android.permission.INTERNET",
+      "android.permission.ACCESS_NETWORK_STATE",
+      "android.permission.VIBRATE",
+      "android.permission.FOREGROUND_SERVICE",
+      "android.permission.FOREGROUND_SERVICE_CAMERA",
+      "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
+      "android.permission.FOREGROUND_SERVICE_MEDIA_PROCESSING",
+      "android.permission.POST_NOTIFICATIONS",
+      "android.permission.READ_MEDIA_IMAGES",
+      "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+      "android.permission.READ_EXTERNAL_STORAGE",
+      "android.permission.WRITE_EXTERNAL_STORAGE",
+      "com.google.android.gms.permission.AD_ID",
+      "com.joe6355.astrophoto.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+      "com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE"
+    ]
+  },
+  "tests": {
+    "newStartupPolicyJvmTests": 9,
+    "homeAndroidTests": 6,
+    "sdkDemo100Percent": {
+      "tests": 2,
+      "seconds": 15.749,
+      "appOpenTestOnlyWindowMs": 40000
+    },
+    "nativeDemo200Percent": {
+      "tests": 1,
+      "seconds": 9.779
+    },
+    "mainActivity200Percent": {
+      "mainActivity": true,
+      "fontScale": "2.0",
+      "nativeAdVisibleInUi": true,
+      "nativeLoaded": true,
+      "nativeImpressionObserved": true,
+      "appOpenShownInProductionWindow": false,
+      "screenshot": "main-native-200.png",
+      "labels": [
+        "Начать съёмку",
+        "Настройки",
+        "Камера",
+        "Обработка",
+        "Ваши съёмки",
+        "Все",
+        "Кадры и готовые результаты",
+        "Откройте съёмки, чтобы выбрать кадры для обработки.",
+        "Открыть съёмки →",
+        "[Demo Ad] Реклама",
+        "Яндекс.Недвижимость",
+        "https://realty.yandex.ru/",
+        "2 465 ₽",
+        "Подробнее",
+        "Главная",
+        "Камера",
+        "Съёмки"
+      ]
+    },
+    "offlineColdMain": {
+      "passed": true,
+      "package": "com.joe6355.astrophoto.adsqa20261107",
+      "clearedOnlyDisposableEmulatorQa": true,
+      "presetExistingUserOnboardingSeen": true,
+      "cameraPermissionGranted": true,
+      "airplaneModeVerified": true,
+      "sdkLoadFailureObserved": true,
+      "mainHomeAccessible": true,
+      "cameraNavigationAccessible": true,
+      "returnedHome": true,
+      "warmResumeDidNotShowAppOpen": true,
+      "nativeRequests": 1,
+      "appOpenRequests": 0,
+      "initialUiReadbackSecondsIncludingDump": 12.0,
+      "newCaptureOrProcessingStarted": false
+    },
+    "fullLocalGate": {
+      "unit": {
+        "tests": 1412,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 4,
+        "passed": 1408
+      },
+      "lint": {
+        "debug": {
+          "errors": 0,
+          "warnings": 16,
+          "rules": [
+            "AndroidGradlePluginVersion",
+            "GradleDependency",
+            "ModifierParameter",
+            "NewerVersionAvailable",
+            "OldTargetApi",
+            "UseKtx",
+            "ViewConstructor"
+          ]
+        },
+        "release": {
+          "errors": 0,
+          "warnings": 16,
+          "rules": [
+            "AndroidGradlePluginVersion",
+            "GradleDependency",
+            "ModifierParameter",
+            "NewerVersionAvailable",
+            "OldTargetApi",
+            "UseKtx",
+            "ViewConstructor"
+          ]
+        }
+      }
+    },
+    "fullGateSeconds": 644,
+    "qaAndroidTestApkBuilt": true
+  },
+  "manifestEvidence": {
+    "permissions": [
+      "android.permission.CAMERA",
+      "android.permission.INTERNET",
+      "android.permission.ACCESS_NETWORK_STATE",
+      "android.permission.VIBRATE",
+      "android.permission.FOREGROUND_SERVICE",
+      "android.permission.FOREGROUND_SERVICE_CAMERA",
+      "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
+      "android.permission.FOREGROUND_SERVICE_MEDIA_PROCESSING",
+      "android.permission.POST_NOTIFICATIONS",
+      "android.permission.READ_MEDIA_IMAGES",
+      "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+      "android.permission.READ_EXTERNAL_STORAGE",
+      "android.permission.WRITE_EXTERNAL_STORAGE",
+      "com.google.android.gms.permission.AD_ID",
+      "com.joe6355.astrophoto.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+      "com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE"
+    ],
+    "appMetricaComponents": [
+      "io.appmetrica.analytics.internal.AppMetricaService",
+      "io.appmetrica.analytics.IAppMetricaService",
+      "io.appmetrica.analytics.internal.PreloadInfoContentProvider"
+    ]
+  },
+  "cleanup": {
+    "emulatorRestored": {
+      "fontScale": "1.0",
+      "airplane": "0"
+    },
+    "emulatorShutdown": {
+      "method": "Stop only verified own headless emulator processes after ADB console unavailable",
+      "avd": "AstroPhotoAdsAPI34",
+      "stoppedPids": [
+        9676,
+        34736
+      ],
+      "ownProcessIdentityVerified": true
+    },
+    "clearedOnlyOwnDisposableQa": true
+  },
+  "lastVerifiedPhysicalMain": {
+    "report": "beta5-main-update-2026-11-05.md",
+    "source": "af94e72528a0f9718a909ac29e75e8ddd8c7e49b",
+    "versionName": "0.9.0-beta.5",
+    "versionCode": 6,
+    "apkSha256": "88cd1ee0336f354d54c9b36d85f827936bc8ae12610427ff86920d0bd719cc07",
+    "containsAdsSdk": false,
+    "notRecheckedThisBlock": true
+  },
+  "limits": [
+    "No real commercial impressions or revenue verified",
+    "New SDK not installed or tested on physical phone",
+    "R8 built but ad runtime tested on own debug/demo QA only",
+    "Main production cold launch skipped App Open within 700 ms; positive SDK show and close used test-only 40 s window",
+    "Native video and all possible real ad assets not covered",
+    "Privacy policy, public contact, RuStore declarations, ownership, payment profile and final publication candidate remain separate steps"
+  ],
+  "nextStep": {
+    "number": 3,
+    "task": "privacy_policy_public_contact_and_data_declarations",
+    "started": false
+  },
+  "ci": {
+    "statusAtReportCreation": "not_yet_pushed",
+    "instruction": "Check exact SHA of the commit containing this report; older green CI is not evidence for new code"
+  },
+  "localEvidenceDirectory": "artifacts/ads-sdk-2026-11-07",
+  "doNotRepeat": [
+    "closed capture/night/processing matrix",
+    "RSYA app and unit creation",
+    "unchanged emulator ads tests solely for documentation edits"
+  ],
+  "productionSourceSha256Lf": {
+    "app/build.gradle.kts": "b0a4b92385f2041ec00bfc5c1261502fc96e92969582c3454587507b9a7ddc69",
+    "gradle/libs.versions.toml": "1ffad92456c20cb2d39a989f6e53bdde4b428dc4195d97c6f3b71bc74f160c2c",
+    "app/src/main/AndroidManifest.xml": "1cfd4fab052bce4c1882cf02676499af4ab5334e7b3d6e6a42fde47de3cbe8c1",
+    "app/src/main/java/com/joe6355/astrophoto/MainActivity.kt": "c9d26f73813d0a5bb3b30aa6d0ea00d2c000f7caf1a2429a386268e52c590b21",
+    "app/src/main/java/com/joe6355/astrophoto/HomeScreen.kt": "f7aa5d93b4322710c160ad8f87f65e97106ad1931048bf0f10ae2af460d28813",
+    "app/src/main/java/com/joe6355/astrophoto/ads/AstroAdsController.kt": "c8da2db95d6722c6193e270593803dbfe6b399285500219fb56a593c10681efc",
+    "app/src/main/java/com/joe6355/astrophoto/ads/HomeNativeAd.kt": "fe886b46fe5e54f797a803553e0b1c06d38b7041c2b963a0932a64d7e80abb8b",
+    "app/src/main/java/com/joe6355/astrophoto/ads/StartupAdPolicy.kt": "8aaf5a179d69da749032d1e4bba66abb1648cac41f2e794c87aaa57ee790f3c4"
+  },
+  "sourceHashNormalization": "UTF-8 with LF line endings"
+}

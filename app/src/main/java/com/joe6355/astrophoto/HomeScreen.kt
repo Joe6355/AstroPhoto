@@ -52,7 +52,8 @@ fun AstroHomeScreen(
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
     recentSession: SessionSummary? = null,
-    onOpenRecentSession: () -> Unit = onOpenSessions
+    onOpenRecentSession: () -> Unit = onOpenSessions,
+    nativeAdContent: (@Composable () -> Unit)? = null
 ) {
     var sceneIndex by rememberSaveable { mutableIntStateOf(OrbitScene.METEORS.ordinal) }
     val scene = OrbitScene.entries[sceneIndex]
@@ -143,6 +144,7 @@ fun AstroHomeScreen(
                     }
                 }
                 }
+                nativeAdContent?.invoke()
             }
         }
     }

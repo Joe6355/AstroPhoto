@@ -34,6 +34,9 @@ android {
         versionCode = 6
         versionName = "0.9.0-beta.5"
 
+        buildConfigField("String", "YAN_NATIVE_UNIT_ID", "\"R-M-20351551-1\"")
+        buildConfigField("String", "YAN_APP_OPEN_UNIT_ID", "\"R-M-20351551-2\"")
+
         manifestPlaceholders["astrophotoAppLabel"] = providers
             .gradleProperty("astrophoto.installAppLabel").getOrElse("@string/app_name")
 
@@ -51,6 +54,10 @@ android {
         }
     }
     buildTypes {
+        debug {
+            buildConfigField("String", "YAN_NATIVE_UNIT_ID", "\"demo-native-content-yandex\"")
+            buildConfigField("String", "YAN_APP_OPEN_UNIT_ID", "\"demo-appopenad-yandex\"")
+        }
         release {
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")
@@ -66,6 +73,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -79,6 +87,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.exifinterface)
+    implementation(libs.yandex.mobileads)
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

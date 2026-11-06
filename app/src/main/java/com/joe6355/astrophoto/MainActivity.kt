@@ -43,10 +43,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -62,6 +64,11 @@ import com.joe6355.astrophoto.ui.theme.AstroPhotoTheme
 import com.joe6355.astrophoto.ui.theme.AstroColors
 import com.joe6355.astrophoto.ui.OrbitDestination
 import com.joe6355.astrophoto.ui.OrbitNavigationBar
+import com.joe6355.astrophoto.ads.AstroAdProcess
+import com.joe6355.astrophoto.ads.AstroAdsController
+import com.joe6355.astrophoto.ads.HomeNativeAdCard
+import com.joe6355.astrophoto.ads.StartupAdPolicy
+import com.joe6355.astrophoto.ads.rememberNativeAdCard
 import com.joe6355.astrophoto.processing.jpeg.v2.diagnostics.ProcessingFailureSummary
 import com.joe6355.astrophoto.processing.jpeg.v2.diagnostics.PreviousProcessingFailureDetector
 import com.joe6355.astrophoto.processing.jpeg.v2.diagnostics.PreviousRunClassification
@@ -77,11 +84,18 @@ class MainActivity : ComponentActivity() {
         val previousProcessingFailure = PreviousProcessingFailureDetector(this).detect()
         val interruptedProcessing = ProcessingRecoveryStore(this).pendingInterrupted()
             .filterNot { it.sessionFolder == previousProcessingFailure?.sessionFolder }
+        val coldStart = AstroAdProcess.session.claimColdStart(savedInstanceState != null)
+        val advertising = AstroAdsController(this,
+            startupEligible = coldStart && intent.action == Intent.ACTION_MAIN &&
+                intent.hasCategory(Intent.CATEGORY_LAUNCHER) && hasCameraPermission() &&
+                CameraSettingsStore(this).isOnboardingSeen() && previousProcessingFailure == null &&
+                interruptedProcessing.isEmpty())
         setContent {
             AstroPhotoTheme(darkTheme = true, dynamicColor = false) {
                 AstroPhotoApp(
                     initialProcessingFailure = previousProcessingFailure,
-                    initialInterruptedProcessing = interruptedProcessing
+                    initialInterruptedProcessing = interruptedProcessing,
+                    advertising = advertising
                 )
             }
         }
@@ -91,18 +105,22 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun AstroPhotoApp(
     initialProcessingFailure: ProcessingFailureSummary? = null,
-    initialInterruptedProcessing: List<InterruptedSessionProcessing> = emptyList()
+    initialInterruptedProcessing: List<InterruptedSessionProcessing> = emptyList(),
+    advertising: AstroAdsController? = null
 ) {
     var showSplash by remember { mutableStateOf(true) }
     var processingFailure by remember { mutableStateOf(initialProcessingFailure) }
     var interruptedProcessing by remember { mutableStateOf(initialInterruptedProcessing) }
 
     LaunchedEffect(Unit) {
-        delay(700L)
+        withFrameNanos { }
+        advertising?.startStartup()
+        delay(StartupAdPolicy.SPLASH_MILLIS)
+        advertising?.finishStartup()
         showSplash = false
     }
 
-    if (showSplash) {
+    if (showSplash || advertising?.appOpenShowing == true) {
         StarSplashScreen()
         return
     }
@@ -132,6 +150,13 @@ private fun AstroPhotoApp(
     var pendingSessionAction by remember { mutableStateOf<SessionManagementAction?>(null) }
     var recentSession by remember { mutableStateOf<SessionSummary?>(null) }
     var cameraNavigationEnabled by remember { mutableStateOf(true) }
+    val seriesState by SeriesCaptureCoordinator.state.collectAsState()
+    val processingStates by SessionProcessingCoordinator.states.collectAsState()
+    val nativeAllowed = currentScreen == AppScreen.Diagnostics && !showOnboarding && !showExitDialog &&
+        processingFailure == null && interruptedProcessing.isEmpty() && seriesState?.running != true &&
+        processingStates.values.none { it.running }
+    LaunchedEffect(nativeAllowed) { advertising?.setNativeAllowed(nativeAllowed) }
+    val nativeAdView = rememberNativeAdCard(advertising?.nativeAd)
     LaunchedEffect(currentScreen) {
         if (currentScreen == AppScreen.Diagnostics) {
             recentSession = try {
@@ -275,7 +300,10 @@ private fun AstroPhotoApp(
                             selectedSession = session
                             navigateTo(AppScreen.SessionDetails)
                         }
-                    }
+                    },
+                    nativeAdContent = if (nativeAllowed && nativeAdView != null) {
+                        { HomeNativeAdCard(nativeAdView) }
+                    } else null
                 )
                 AppScreen.DiagnosticsDetails -> CameraDiagnosticsScreen(
                     onBack = { navigateBack() }

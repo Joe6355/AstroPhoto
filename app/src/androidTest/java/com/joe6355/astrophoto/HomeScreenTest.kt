@@ -4,6 +4,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.Modifier
@@ -123,5 +127,28 @@ class HomeScreenTest {
         composeRule.onNodeWithTag(AstroTestTags.HomeScreen)
             .performScrollToNode(hasTestTag(AstroTestTags.HomePrimaryAction))
         composeRule.onNodeWithTag(AstroTestTags.HomePrimaryAction).assertIsDisplayed()
+    }
+
+    @Test
+    fun arrivingAdDoesNotMoveTheCameraActionAndAppearsAfterSessions() {
+        var loaded by mutableStateOf(false)
+        composeRule.setContent {
+            AstroPhotoTheme {
+                Box(Modifier.fillMaxWidth().height(700.dp)) {
+                    AstroHomeScreen({}, {}, {}, nativeAdContent = if (loaded) {
+                        { Box(Modifier.fillMaxWidth().height(140.dp).testTag("test-loaded-ad")) }
+                    } else null)
+                }
+            }
+        }
+        val before = composeRule.onNodeWithTag(AstroTestTags.HomePrimaryAction).fetchSemanticsNode().boundsInRoot
+        composeRule.runOnIdle { loaded = true }
+        val after = composeRule.onNodeWithTag(AstroTestTags.HomePrimaryAction).fetchSemanticsNode().boundsInRoot
+        assertEquals(before.top, after.top, 0.5f)
+        composeRule.onNodeWithTag(AstroTestTags.HomeScreen).performScrollToNode(hasTestTag("test-loaded-ad"))
+        composeRule.onNodeWithTag("test-loaded-ad").assertIsDisplayed()
+        val ad = composeRule.onNodeWithTag("test-loaded-ad").fetchSemanticsNode().boundsInRoot
+        val sessions = composeRule.onNodeWithTag(AstroTestTags.HomeSessions).fetchSemanticsNode().boundsInRoot
+        assertTrue(ad.top >= sessions.bottom)
     }
 }
