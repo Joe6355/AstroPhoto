@@ -1,7 +1,7 @@
 {
   "recordedOn": "2026-11-06",
   "installedOn": "2026-11-05",
-  "status": "installed_ui_and_data_verified_final_interface_check_pending",
+  "status": "installed_ui_and_post_update_data_verified",
   "candidate": {
     "sourceCommit": "af94e72528a0f9718a909ac29e75e8ddd8c7e49b",
     "applicationId": "com.joe6355.astrophoto",
@@ -109,34 +109,60 @@
     "conclusion": "success",
     "html_url": "https://github.com/Joe6355/AstroPhoto/actions/runs/42032079267"
   },
-  "pending": {
-    "freshPhoneConnection": false,
-    "postUpdateFileHashes": false,
-    "postUpdateSettingsComparison": true,
-    "newFileAndMetadataChangesNeedAttribution": false,
-    "fullAcceptanceClosed": false
-  },
   "phoneOn20261106": {
     "adbAvailable": true,
-    "currentScreenOrServicesVerified": false,
-    "anotherAppInForegroundDuringUiCheck": true,
-    "agentTapsInOtherAppPerformed": false
+    "currentScreenOrServicesVerified": true,
+    "leftOnMainHome": true,
+    "activeMainServices": false,
+    "ownerConfirmedStayAwakeAndAutoRotateChanges": true
   },
   "adsSdkIncluded": false,
   "localEvidence": "artifacts/pc-main-update-2026-11-05/",
-  "postUpdateDataVerification": {
-    "verifiedOn": "2026-11-06",
-    "sharedBefore": 1877,
-    "sharedAfter": 1878,
-    "sharedPreserved": 1877,
-    "sharedMissing": 0,
-    "sharedChanged": 0,
-    "sharedAdded": 1,
-    "legacyPrivatePreserved": 222,
-    "qaPrivatePreserved": 640,
-    "legacyAndQaApksUnchanged": true,
+  "completedOn": "2026-11-06",
+  "postUpdateVerification": {
+    "completedOn": "2026-11-06",
+    "updateBlockClosed": true,
+    "scope": "installed APK, accessible files and visible settings on Xiaomi 23021RAA2Y Android 13",
+    "installedSource": "af94e72528a0f9718a909ac29e75e8ddd8c7e49b",
+    "installedApkSha256": "88cd1ee0336f354d54c9b36d85f827936bc8ae12610427ff86920d0bd719cc07",
+    "shared": {
+      "before": 1877,
+      "after": 1878,
+      "preserved": 1877,
+      "missing": 0,
+      "changed": 0,
+      "added": 1
+    },
+    "legacyPrivate": {
+      "before": 222,
+      "after": 222,
+      "missing": 0,
+      "changed": 0,
+      "added": 0
+    },
+    "qaPrivate": {
+      "before": 640,
+      "after": 640,
+      "missing": 0,
+      "changed": 0,
+      "added": 0
+    },
     "allPackageIdentitiesAndPermissionsPreserved": true,
-    "mainPrivateFullyAccessible": false,
+    "legacyAndQaApksUnchanged": true,
+    "onlyMainApkReplaced": true,
+    "ownerOutput": {
+      "fileName": "DeepSky_20261105_201142.png",
+      "sha256": "1ba22ede1d6af307b7e90dcab2f4819408a15ef64cf67b2b195ec8580826cc89",
+      "bytes": 3379927,
+      "format": "PNG",
+      "size": [
+        1440,
+        1920
+      ],
+      "fullyDecoded": true,
+      "ownerConfirmedStartingProcessing": true,
+      "agentStartedProcessing": false
+    },
     "visibleSettings": {
       "cameraAndSessionMatch": true,
       "appSettingsMatch": true,
@@ -151,20 +177,37 @@
           "1",
           "0"
         ]
+      },
+      "themeMatch": true,
+      "themeComparisonMethod": "checked theme semantic node; current landscape layout",
+      "selectedTheme": "Тёмная",
+      "agentChangedSystemSettings": false,
+      "systemValuesPreservedDuringFinalCheck": true,
+      "systemComparisonBaseline": "tail-start-system.json",
+      "rotationAtEarlierSnapshot": "0",
+      "rotationAtTailStart": "1",
+      "phoneLeftOnMainHome": true,
+      "aboutVersionConfirmed": "0.9.0-beta.5",
+      "noActiveMainServices": true,
+      "currentSystem": {
+        "model": "23021RAA2Y",
+        "android": "13",
+        "fontScale": "0.81",
+        "stayAwake": "0",
+        "rotation": "1",
+        "autoRotate": "0"
       }
     },
-    "systemAtResumption": {
-      "model": "23021RAA2Y",
-      "android": "13",
-      "fontScale": "0.81",
-      "stayAwake": "0",
-      "rotation": "0",
-      "autoRotate": "0"
-    },
-    "remainingUi": [
-      "theme",
-      "about and return to main home",
-      "final system and services readback"
-    ]
-  }
+    "mainPrivateFullyAccessible": false,
+    "sourceCiSuccess": true,
+    "applicationInputsUnchangedSinceInstalledSource": true,
+    "reinstalledOrResignedDuringFinalCheck": false,
+    "repeatedCaptureProcessingOrComparisonTests": false,
+    "remainingRequiredForThisUpdate": []
+  },
+  "limitations": [
+    "main private files are not fully accessible",
+    "no new whole-field or zoom quality acceptance",
+    "ads and store publication are separate work"
+  ]
 }
