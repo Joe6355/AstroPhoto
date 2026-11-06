@@ -1,7 +1,7 @@
 {
   "recordedOn": "2026-11-06",
   "installedOn": "2026-11-05",
-  "status": "installed_ui_verified_post_update_data_check_pending",
+  "status": "installed_ui_and_data_verified_final_interface_check_pending",
   "candidate": {
     "sourceCommit": "af94e72528a0f9718a909ac29e75e8ddd8c7e49b",
     "applicationId": "com.joe6355.astrophoto",
@@ -94,7 +94,14 @@
     "logTotalMs": 125026,
     "sourceOfFacts": "app log and visible result summary",
     "agentStartedProcessing": false,
-    "fullOutputHashOrDecodeVerified": false
+    "fullOutputHashOrDecodeVerified": true,
+    "outputSha256": "1ba22ede1d6af307b7e90dcab2f4819408a15ef64cf67b2b195ec8580826cc89",
+    "outputBytes": 3379927,
+    "outputSize": [
+      1440,
+      1920
+    ],
+    "fullyDecoded": true
   },
   "sourceCi": {
     "head_sha": "af94e72528a0f9718a909ac29e75e8ddd8c7e49b",
@@ -103,17 +110,61 @@
     "html_url": "https://github.com/Joe6355/AstroPhoto/actions/runs/42032079267"
   },
   "pending": {
-    "freshPhoneConnection": true,
-    "postUpdateFileHashes": true,
+    "freshPhoneConnection": false,
+    "postUpdateFileHashes": false,
     "postUpdateSettingsComparison": true,
-    "newFileAndMetadataChangesNeedAttribution": true,
+    "newFileAndMetadataChangesNeedAttribution": false,
     "fullAcceptanceClosed": false
   },
   "phoneOn20261106": {
-    "adbAvailable": false,
-    "ownerCannotConnectNow": true,
-    "currentScreenOrServicesVerified": false
+    "adbAvailable": true,
+    "currentScreenOrServicesVerified": false,
+    "anotherAppInForegroundDuringUiCheck": true,
+    "agentTapsInOtherAppPerformed": false
   },
   "adsSdkIncluded": false,
-  "localEvidence": "artifacts/pc-main-update-2026-11-05/"
+  "localEvidence": "artifacts/pc-main-update-2026-11-05/",
+  "postUpdateDataVerification": {
+    "verifiedOn": "2026-11-06",
+    "sharedBefore": 1877,
+    "sharedAfter": 1878,
+    "sharedPreserved": 1877,
+    "sharedMissing": 0,
+    "sharedChanged": 0,
+    "sharedAdded": 1,
+    "legacyPrivatePreserved": 222,
+    "qaPrivatePreserved": 640,
+    "legacyAndQaApksUnchanged": true,
+    "allPackageIdentitiesAndPermissionsPreserved": true,
+    "mainPrivateFullyAccessible": false,
+    "visibleSettings": {
+      "cameraAndSessionMatch": true,
+      "appSettingsMatch": true,
+      "processingSettingsMatch": true,
+      "settingsValuesChangedByAgent": false,
+      "ownerConfirmedSystemSettingChanges": {
+        "stayAwake": [
+          "2",
+          "0"
+        ],
+        "autoRotate": [
+          "1",
+          "0"
+        ]
+      }
+    },
+    "systemAtResumption": {
+      "model": "23021RAA2Y",
+      "android": "13",
+      "fontScale": "0.81",
+      "stayAwake": "0",
+      "rotation": "0",
+      "autoRotate": "0"
+    },
+    "remainingUi": [
+      "theme",
+      "about and return to main home",
+      "final system and services readback"
+    ]
+  }
 }
