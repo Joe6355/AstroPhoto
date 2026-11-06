@@ -1,0 +1,63 @@
+{
+  "recordedOn": "2026-11-07",
+  "status": "app_and_two_ad_units_created_sdk_not_integrated",
+  "sourceCommitAtSetup": "17126cd96052f415a2c004515fa5823768804347",
+  "application": {
+    "consoleId": "20351551",
+    "name": "AstroPhoto",
+    "platform": "Android",
+    "consoleUrl": "https://partner.yandex.ru/v2/inapp/app/20351551/",
+    "statusInConsole": "Тестовый режим",
+    "createdAsUnpublished": true,
+    "storeLinkAdded": false,
+    "applicationIdInProject": "com.joe6355.astrophoto",
+    "publishedStoreBindingVerified": false
+  },
+  "adUnits": [
+    {
+      "id": "R-M-20351551-1",
+      "format": "native",
+      "name": "AstroPhoto — главная — нативная карточка",
+      "consoleStatus": "Активно",
+      "cpmStrategy": "Максимальный доход",
+      "placementPlanned": "home below recent session",
+      "consoleUrl": "https://partner.yandex.ru/v2/inapp/adunit/R-M-20351551-1/"
+    },
+    {
+      "id": "R-M-20351551-2",
+      "format": "app_open",
+      "name": "AstroPhoto — при открытии",
+      "consoleStatus": "Активно",
+      "cpmStrategy": "Максимальный доход",
+      "placementPlanned": "fresh application launch to home",
+      "consoleUrl": "https://partner.yandex.ru/v2/inapp/adunit/R-M-20351551-2/"
+    }
+  ],
+  "verification": {
+    "finalListContainsExactlyTwoUnits": true,
+    "idsNamesFormatsAndStatusesReadFromUi": true,
+    "nativeUnitPersistedAfterReopeningAppPage": true,
+    "appOpenCreationSuccessMessageObserved": true,
+    "screenshotVisuallyReviewed": true,
+    "previousAppEdited": false,
+    "applicationInputsUnchanged": true,
+    "sdkIntegrated": false,
+    "apkBuiltOrInstalled": false,
+    "phoneUsed": false,
+    "paymentDetailsOrAgreementsInspected": false,
+    "ownershipVerificationPerformed": false,
+    "publicationSubmitted": false
+  },
+  "localEvidence": {
+    "directory": "artifacts/yan-setup-2026-11-07/",
+    "screenshot": "rsya-blocks.png",
+    "uiSnapshot": "blocks-ui.txt"
+  },
+  "nextStep": "integrate SDK and verify only new advertising behavior",
+  "realAdEligibilityStillRequires": [
+    "store publication and binding",
+    "ownership verification",
+    "Yandex moderation"
+  ],
+  "paymentConfigurationStatus": "not inspected"
+}
