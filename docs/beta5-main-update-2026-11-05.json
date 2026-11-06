@@ -1,0 +1,119 @@
+{
+  "recordedOn": "2026-11-06",
+  "installedOn": "2026-11-05",
+  "status": "installed_ui_verified_post_update_data_check_pending",
+  "candidate": {
+    "sourceCommit": "af94e72528a0f9718a909ac29e75e8ddd8c7e49b",
+    "applicationId": "com.joe6355.astrophoto",
+    "versionName": "0.9.0-beta.5",
+    "versionCode": 6,
+    "certificateSha256": "79e37ad16c7cceaf6bae398d926e548e3f64ea0a6e248975cceb2a6e3d374f93",
+    "apkSha256": "88cd1ee0336f354d54c9b36d85f827936bc8ae12610427ff86920d0bd719cc07",
+    "apkBytes": 2276954,
+    "debuggable": false,
+    "mappingFile": "mapping.txt",
+    "mappingSha256": "7cae645c7b3f5a28f25fa4b30699465b1c26e54cb4b50e883229fdbac9fad420"
+  },
+  "archive": {
+    "path": "artifacts/pc-signed-release-20261105_200140/AstroPhoto-0.9.0-beta.5-signed-candidate.zip",
+    "sha256": "887715812df57757ea9c39a51e9c2b76ce4deca1724d0c97aba7fab6c782e0f2",
+    "bytes": 5651242,
+    "contentsVerified": true
+  },
+  "deviceAtInstallation": {
+    "model": "23021RAA2Y",
+    "android": "13",
+    "api": 33
+  },
+  "installation": {
+    "method": "adb install -r",
+    "sameCertificateVerified": true,
+    "success": true,
+    "installedApkSha256Verified": true,
+    "coldStartSucceeded": true,
+    "coldStartTotalTimeMs": 1954,
+    "onlyMainPackageUpdated": true
+  },
+  "beforeSnapshot": {
+    "sharedFiles": 1877,
+    "legacyPrivateFiles": 222,
+    "qaPrivateFiles": 640,
+    "threeOriginalApksBackedUp": true,
+    "accessiblePrivateTarsVerified": true,
+    "mainPrivateFullyAccessible": false
+  },
+  "visibleSettingsBefore": {
+    "session": "новая_серия_2_окно",
+    "iso": 50,
+    "exposureSeconds": 33,
+    "focus": "AF",
+    "frames": 10,
+    "pauseSeconds": 0,
+    "timerSeconds": 0,
+    "jpegQuality": 100,
+    "theme": "Тёмная",
+    "system": {
+      "model": "23021RAA2Y",
+      "android": "13",
+      "fontScale": "0.81",
+      "stayAwake": "2",
+      "rotation": "0",
+      "autoRotate": "1"
+    }
+  },
+  "postUpdateUi": {
+    "result": "DeepSky_20261105_201142.png",
+    "acceptedFrames": 4,
+    "inputFrames": 10,
+    "reference": "AstroSeries_20261104_002912_009.jpg",
+    "exclusionReasonsVisible": true,
+    "enhancedRejectionExplained": true,
+    "comparisonModes": [
+      "Фото 1",
+      "Фото 2",
+      "Рядом"
+    ],
+    "sharedExposurePreserved": true,
+    "hiddenImageExcludedFromSemantics": true,
+    "exposureRestored": true,
+    "screenshotsVisuallyReviewed": [
+      "11-result-viewer.png",
+      "17-user-result-summary.png",
+      "20-comparison-second.png"
+    ],
+    "freshZoomOrPixelQualityAcceptance": false
+  },
+  "ownerProcessing": {
+    "ownerConfirmedStartingIt": true,
+    "output": "DeepSky_20261105_201142.png",
+    "profile": "DEEP_SKY",
+    "acceptedFrames": 4,
+    "inputFrames": 10,
+    "logSanity": "passed",
+    "logFallback": "none",
+    "logTotalMs": 125026,
+    "sourceOfFacts": "app log and visible result summary",
+    "agentStartedProcessing": false,
+    "fullOutputHashOrDecodeVerified": false
+  },
+  "sourceCi": {
+    "head_sha": "af94e72528a0f9718a909ac29e75e8ddd8c7e49b",
+    "status": "completed",
+    "conclusion": "success",
+    "html_url": "https://github.com/Joe6355/AstroPhoto/actions/runs/42032079267"
+  },
+  "pending": {
+    "freshPhoneConnection": true,
+    "postUpdateFileHashes": true,
+    "postUpdateSettingsComparison": true,
+    "newFileAndMetadataChangesNeedAttribution": true,
+    "fullAcceptanceClosed": false
+  },
+  "phoneOn20261106": {
+    "adbAvailable": false,
+    "ownerCannotConnectNow": true,
+    "currentScreenOrServicesVerified": false
+  },
+  "adsSdkIncluded": false,
+  "localEvidence": "artifacts/pc-main-update-2026-11-05/"
+}
