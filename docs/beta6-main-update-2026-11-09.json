@@ -1,0 +1,170 @@
+{
+  "date": "2026-11-09",
+  "status": "signed_candidate_installed_verified",
+  "release": {
+    "sourceCommit": "34257370f9f3ede7f6c4750a89339527478903c4",
+    "applicationId": "com.joe6355.astrophoto",
+    "versionName": "0.9.0-beta.6",
+    "versionCode": 7,
+    "certificateSha256": "79e37ad16c7cceaf6bae398d926e548e3f64ea0a6e248975cceb2a6e3d374f93",
+    "apkSha256": "b4d0cf9bb3a9f3cd3d249cd00e2ebbc9ff28ae75ea85e1bd55b1bd8006319bff",
+    "apkBytes": 5790575,
+    "debuggable": false,
+    "mappingFile": "mapping.txt",
+    "mappingSha256": "5c15964c3737b3b74e7284956ad61c19f84c23e74afca271469299900576456b"
+  },
+  "localApk": "artifacts/pc-signed-release-20261109_000030/AstroPhoto-0.9.0-beta.6.apk",
+  "localArchive": "artifacts/pc-signed-release-20261109_000030/AstroPhoto-0.9.0-beta.6-signed-candidate.zip",
+  "archiveSha256": "5dd0c4fcec57844369bcf7345701f1f7694b139d22d5802b3b7fd37a3ee12bbf",
+  "archiveBytes": 11227115,
+  "candidateChecks": {
+    "sameCertificateAsInstalledBefore": true,
+    "archiveMatchesThreeFiles": true,
+    "embeddedRevisionMatches": true,
+    "policyAssetMatches": true,
+    "releaseAdUnitsPresent": true
+  },
+  "zipAlignmentCheckedWithPageSize16KiB": true,
+  "ci": {
+    "source": "34257370f9f3ede7f6c4750a89339527478903c4",
+    "conclusion": "success",
+    "runUrl": "https://github.com/Joe6355/AstroPhoto/actions/runs/42512473857"
+  },
+  "previousPrivacyCi": {
+    "source": "10dc150bf2730f05a0b73db697c254e9aeec275c",
+    "conclusion": "success",
+    "runUrl": "https://github.com/Joe6355/AstroPhoto/actions/runs/42508439109"
+  },
+  "device": {
+    "model": "23021RAA2Y",
+    "android": "13",
+    "apiLevel": 33
+  },
+  "installation": {
+    "installSuccess": true,
+    "apkSha256": "b4d0cf9bb3a9f3cd3d249cd00e2ebbc9ff28ae75ea85e1bd55b1bd8006319bff",
+    "method": "adb install -r",
+    "previous": {
+      "versionCode": "6",
+      "versionName": "0.9.0-beta.5",
+      "uid": "10505",
+      "ceDataInode": "1427204",
+      "dataDir": "/data/user/0/com.joe6355.astrophoto",
+      "debuggable": false,
+      "apkHashes": [
+        "88cd1ee0336f354d54c9b36d85f827936bc8ae12610427ff86920d0bd719cc07"
+      ],
+      "permissions": [
+        [
+          "android.permission.POST_NOTIFICATIONS",
+          "true"
+        ],
+        [
+          "android.permission.READ_MEDIA_IMAGES",
+          "true"
+        ],
+        [
+          "android.permission.CAMERA",
+          "true"
+        ]
+      ]
+    },
+    "current": {
+      "versionCode": "7",
+      "versionName": "0.9.0-beta.6",
+      "uid": "10505",
+      "ceDataInode": "1427204",
+      "dataDir": "/data/user/0/com.joe6355.astrophoto",
+      "debuggable": false,
+      "apkHashes": [
+        "b4d0cf9bb3a9f3cd3d249cd00e2ebbc9ff28ae75ea85e1bd55b1bd8006319bff"
+      ],
+      "permissions": [
+        [
+          "android.permission.POST_NOTIFICATIONS",
+          "true"
+        ],
+        [
+          "android.permission.READ_MEDIA_IMAGES",
+          "true"
+        ],
+        [
+          "android.permission.CAMERA",
+          "true"
+        ]
+      ]
+    }
+  },
+  "backupBefore": {
+    "sharedFiles": 1878,
+    "privateFiles": {
+      "com.example.astrophoto": 222,
+      "com.joe6355.astrophoto.qa20261017": 640
+    },
+    "allArchivedFilesMatch": true,
+    "sharedArchiveBytes": 1660225536,
+    "sharedArchiveSha256": "d0ad6c69a4a3d051595045f43b44d4cade791d5cd20392ff5ef93181c67e1ca7",
+    "mainPrivateAccessible": false
+  },
+  "preservationAfterInstall": {
+    "mainStableFields": [
+      "uid",
+      "ceDataInode",
+      "dataDir",
+      "permissions"
+    ],
+    "otherPackagesUnchanged": true,
+    "systemValuesUnchanged": true,
+    "mainPrivateAccessible": false,
+    "preservation": {
+      "media": {
+        "before": 1878,
+        "after": 1878,
+        "missing": 0,
+        "added": 0,
+        "changed": 0
+      },
+      "com.example.astrophoto-private": {
+        "before": 222,
+        "after": 222,
+        "missing": 0,
+        "added": 0,
+        "changed": 0
+      },
+      "com.joe6355.astrophoto.qa20261017-private": {
+        "before": 640,
+        "after": 640,
+        "missing": 0,
+        "added": 0,
+        "changed": 0
+      }
+    }
+  },
+  "phoneUi": {
+    "firstLaunchOk": true,
+    "policyOpenedFromChoice": true,
+    "publishedContactVisible": true,
+    "returnedToConsentDialog": true,
+    "dismissedWithBackWithoutChoosing": true,
+    "recentSessionVisible": true,
+    "recentSessionAndCountsComparedToBefore": false,
+    "adsStartedBeforeChoiceInAppLogs": false,
+    "actualAdShown": false,
+    "settingsPrivacyControlsVisible": true,
+    "advertisingChoiceRemainsUnset": true,
+    "aboutVersionAndContactVisible": true,
+    "leftOnMainHome": true,
+    "launchState": "COLD",
+    "observedLaunchMillis": 1175,
+    "viewedScreens": [
+      "after-first-choice.png",
+      "after-policy.png"
+    ]
+  },
+  "localEvidenceDirectory": "artifacts/pc-main-update-2026-11-08",
+  "next": "RuStore card, disclosure, upload the verified APK, and moderation",
+  "pending": [
+    "RuStore listing and moderation",
+    "YAN ownership, moderation, commercial ad test and payouts"
+  ]
+}
