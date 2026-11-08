@@ -1,7 +1,7 @@
 {
   "date": "2026-11-08",
   "block": "advertising_step_3_privacy_contact_and_data_choice",
-  "status": "implementation_and_local_checks_complete_public_verification_pending_push",
+  "status": "complete_policy_and_consent_block_public_url_verified",
   "baseSource": "6726c8df7160d8005cde0bc2ea7bc62a04608e85",
   "buildSourceState": "working_tree_with_privacy_changes_on_base_not_final_publication_candidate",
   "versionName": "0.9.0-beta.5",
@@ -19,7 +19,27 @@
     "bundledCopiesEqual": true,
     "source": "docs/PRIVACY_POLICY_RU.md",
     "url": "https://github.com/Joe6355/AstroPhoto/blob/main/docs/PRIVACY_POLICY_RU.md",
-    "anonymousVerification": "pending_after_push"
+    "anonymousVerification": "passed",
+    "verification": {
+      "anonymous": true,
+      "urls": {
+        "page": {
+          "status": 200,
+          "finalUrl": "https://github.com/Joe6355/AstroPhoto/blob/main/docs/PRIVACY_POLICY_RU.md",
+          "bytes": 245026
+        },
+        "raw": {
+          "status": 200,
+          "finalUrl": "https://raw.githubusercontent.com/Joe6355/AstroPhoto/main/docs/PRIVACY_POLICY_RU.md",
+          "bytes": 11412
+        }
+      },
+      "sourceCommit": "10dc150bf2730f05a0b73db697c254e9aeec275c",
+      "passed": true,
+      "normalizedSha256": "9bf287f7339867e600a3626c802799bf688f02296adcf1fcdd3e446be7af1cb9",
+      "matchesCanonicalSource": true,
+      "ownerAndContactPresentInPage": true
+    }
   },
   "consent": {
     "revision": "2026-11-08",
@@ -275,10 +295,67 @@
     ]
   },
   "currentCi": {
-    "status": "not_yet_pushed",
-    "instruction": "Check exact new implementation commit SHA after push"
+    "sha": "10dc150bf2730f05a0b73db697c254e9aeec275c",
+    "jobStatus": [
+      "in_progress"
+    ],
+    "runIds": [
+      "42508439109"
+    ],
+    "steps": [
+      {
+        "name": "Set up job",
+        "conclusion": "success"
+      },
+      {
+        "name": "Run actions/checkout@v6",
+        "conclusion": "success"
+      },
+      {
+        "name": "Set up JDK 21",
+        "conclusion": "success"
+      },
+      {
+        "name": "Set up Gradle",
+        "conclusion": "success"
+      },
+      {
+        "name": "Make Gradle wrapper executable",
+        "conclusion": "success"
+      },
+      {
+        "name": "Unit tests, lint and debug/release builds",
+        "conclusion": "null"
+      },
+      {
+        "name": "Upload reports",
+        "conclusion": "null"
+      },
+      {
+        "name": "Upload debug APK",
+        "conclusion": "null"
+      },
+      {
+        "name": "Upload optimized release APK",
+        "conclusion": "null"
+      },
+      {
+        "name": "Post Set up Gradle",
+        "conclusion": "null"
+      },
+      {
+        "name": "Post Set up JDK 21",
+        "conclusion": "null"
+      },
+      {
+        "name": "Post Run actions/checkout@v6",
+        "conclusion": "null"
+      }
+    ],
+    "statusAtVerification": "in_progress",
+    "runUrl": "https://github.com/Joe6355/AstroPhoto/actions/runs/42508439109"
   },
-  "nextStep": "After public URL verification: new clean version, signed APK with existing key and a separate main-phone update block",
+  "nextStep": "New clean version, signed APK with existing key and a separate main-phone update block; policy publication already complete",
   "limits": [
     "Store and YAN forms not submitted",
     "No commercial ad revenue or payouts verified",
@@ -303,5 +380,7 @@
     "app/src/main/res/xml/data_extraction_rules.xml": "b936736f66540a4dcd362bf780f5533f9eb7cc53702685bbed4afc4bd41a5b79",
     "docs/PRIVACY_POLICY_RU.md": "9bf287f7339867e600a3626c802799bf688f02296adcf1fcdd3e446be7af1cb9"
   },
-  "localEvidenceDirectory": "artifacts/privacy-policy-2026-11-07"
+  "localEvidenceDirectory": "artifacts/privacy-policy-2026-11-07",
+  "implementationCommit": "10dc150bf2730f05a0b73db697c254e9aeec275c",
+  "onlyDocumentationChangedAfterImplementationCommit": true
 }
