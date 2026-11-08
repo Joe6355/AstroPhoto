@@ -56,7 +56,8 @@ fun AboutScreen(
     onOpenHelp: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenSelfCheck: () -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onOpenPrivacy: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val versionName = remember { applicationVersionName(context) }
@@ -102,7 +103,8 @@ fun AboutScreen(
 
         item {
             AboutCard("Информация") {
-                AstroInfoRow(label = "Разработчик", value = "Дудин С.В.")
+                AstroInfoRow(label = "Разработчик", value = "Serega_6355")
+                AstroInfoRow(label = "Поддержка", value = "dudin1918@mail.ru")
             }
         }
 
@@ -129,6 +131,14 @@ fun AboutScreen(
             AboutCard("Что умеет сейчас") {
                 ABOUT_FEATURES.forEach { Text("• $it") }
             }
+        }
+
+        item {
+            AstroSecondaryButton(
+                text = "Политика конфиденциальности",
+                onClick = onOpenPrivacy,
+                modifier = Modifier.fillMaxWidth()
+            )
         }
 
         item {

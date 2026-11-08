@@ -10,6 +10,7 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import com.joe6355.astrophoto.BuildConfig
+import com.joe6355.astrophoto.CameraSettingsStore
 import com.joe6355.astrophoto.SeriesCaptureCoordinator
 import com.joe6355.astrophoto.SessionProcessingCoordinator
 import com.yandex.mobile.ads.appopenad.AppOpenAd
@@ -39,6 +40,7 @@ internal class AstroAdsController(
     var appOpenShowing by mutableStateOf(false)
         private set
     private var closed = false
+    private var consentGranted = CameraSettingsStore(activity).advertisingConsent() == AdvertisingConsent.ALLOWED
     private var initializationRequested = false
     private var initialized = false
     private var nativeAllowed = false
@@ -52,7 +54,7 @@ internal class AstroAdsController(
 
     fun startStartup() {
         if (closed) return
-        startupPolicy.start(SystemClock.elapsedRealtime(), startupEligible && !busy())
+        startupPolicy.start(SystemClock.elapsedRealtime(), startupEligible && consentGranted && !busy())
         if (!startupPolicy.finished) initialize()
     }
 
@@ -74,11 +76,23 @@ internal class AstroAdsController(
         }
     }
 
+    fun updateConsent(consent: AdvertisingConsent) {
+        if (closed) return
+        consentGranted = consent == AdvertisingConsent.ALLOWED
+        if (initializationRequested) YandexAds.setUserConsent(consentGranted)
+        if (!consentGranted) {
+            finishStartup()
+            setNativeAllowed(false)
+            nativeAd?.setNativeAdEventListener(null)
+            nativeAd = null
+        }
+        // Granting consent never opens a new App Open opportunity in an existing process.
+    }
+
     private fun initialize() {
-        if (closed || initializationRequested) return
+        if (closed || !consentGranted || initializationRequested) return
         initializationRequested = true
-        // No consent is inferred. A policy/consent UI is a separate release preparation step.
-        YandexAds.setUserConsent(false)
+        YandexAds.setUserConsent(consentGranted)
         YandexAds.setLocationTracking(false)
         YandexAds.enableLogging(BuildConfig.DEBUG)
         val owner = WeakReference(this)
@@ -95,7 +109,11 @@ internal class AstroAdsController(
     private fun onInitialized() {
         if (closed) return
         initialized = true
-        if (startupPolicy.request(SystemClock.elapsedRealtime(), !busy())) {
+        if (!consentGranted) {
+            finishStartup()
+            return
+        }
+        if (startupPolicy.request(SystemClock.elapsedRealtime(), canPresent())) {
             val loader = AppOpenAdLoader(activity.application)
             appOpenLoader = loader
             Log.d(TAG, "app_open_loading")
@@ -138,7 +156,7 @@ internal class AstroAdsController(
         loadNativeIfAllowed()
     }
 
-    private fun canPresent() = !closed && !activity.isFinishing && !activity.isDestroyed &&
+    private fun canPresent() = !closed && consentGranted && !activity.isFinishing && !activity.isDestroyed &&
         activity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) && !busy()
 
     private fun finishPresentation() {

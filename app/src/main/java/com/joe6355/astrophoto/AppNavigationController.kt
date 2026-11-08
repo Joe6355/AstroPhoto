@@ -4,7 +4,7 @@ import androidx.compose.runtime.mutableStateOf
 
 internal enum class AppScreen {
     Diagnostics, DiagnosticsDetails, Camera, Sessions, SessionDetails,
-    Settings, Help, About, SelfCheck
+    Settings, Help, About, SelfCheck, Privacy
 }
 
 /** Navigation state has one owner; screen composables only dispatch actions. */

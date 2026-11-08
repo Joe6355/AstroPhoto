@@ -65,6 +65,7 @@ import com.joe6355.astrophoto.ui.theme.AstroColors
 import com.joe6355.astrophoto.ui.OrbitDestination
 import com.joe6355.astrophoto.ui.OrbitNavigationBar
 import com.joe6355.astrophoto.ads.AstroAdProcess
+import com.joe6355.astrophoto.ads.AdvertisingConsent
 import com.joe6355.astrophoto.ads.AstroAdsController
 import com.joe6355.astrophoto.ads.HomeNativeAdCard
 import com.joe6355.astrophoto.ads.StartupAdPolicy
@@ -133,6 +134,11 @@ private fun AstroPhotoApp(
         CameraSettingsStore(context.applicationContext)
     }
     var appSettings by remember { mutableStateOf(appSettingsStore.load()) }
+    var advertisingConsent by remember { mutableStateOf(appSettingsStore.advertisingConsent()) }
+    var advertisingConsentDialogVisible by remember { mutableStateOf(false) }
+    var advertisingConsentDismissed by remember { mutableStateOf(false) }
+    var advertisingConsentSaveError by remember { mutableStateOf(false) }
+    var returnToConsentFromPolicy by remember { mutableStateOf(false) }
     var showOnboarding by remember {
         mutableStateOf(!appSettingsStore.isOnboardingSeen())
     }
@@ -152,10 +158,18 @@ private fun AstroPhotoApp(
     var cameraNavigationEnabled by remember { mutableStateOf(true) }
     val seriesState by SeriesCaptureCoordinator.state.collectAsState()
     val processingStates by SessionProcessingCoordinator.states.collectAsState()
-    val nativeAllowed = currentScreen == AppScreen.Diagnostics && !showOnboarding && !showExitDialog &&
+    val nativeAllowed = advertisingConsent == AdvertisingConsent.ALLOWED &&
+        currentScreen == AppScreen.Diagnostics && !advertisingConsentDialogVisible && !showOnboarding && !showExitDialog &&
         processingFailure == null && interruptedProcessing.isEmpty() && seriesState?.running != true &&
         processingStates.values.none { it.running }
     LaunchedEffect(nativeAllowed) { advertising?.setNativeAllowed(nativeAllowed) }
+    LaunchedEffect(advertisingConsent, currentScreen, showOnboarding, showExitDialog,
+        processingFailure, interruptedProcessing, seriesState?.running, processingStates) {
+        if (advertisingConsent == AdvertisingConsent.NOT_CHOSEN && !advertisingConsentDismissed &&
+            currentScreen == AppScreen.Diagnostics && !showOnboarding && !showExitDialog &&
+            processingFailure == null && interruptedProcessing.isEmpty() && seriesState?.running != true &&
+            processingStates.values.none { it.running }) advertisingConsentDialogVisible = true
+    }
     val nativeAdView = rememberNativeAdCard(advertising?.nativeAd)
     LaunchedEffect(currentScreen) {
         if (currentScreen == AppScreen.Diagnostics) {
@@ -210,6 +224,10 @@ private fun AstroPhotoApp(
     }
 
     fun navigateBack() {
+        if (currentScreen == AppScreen.Privacy && returnToConsentFromPolicy) {
+            returnToConsentFromPolicy = false
+            advertisingConsentDialogVisible = true
+        }
         if (currentScreen == AppScreen.Help) {
             helpInitialTopic = null
         }
@@ -283,6 +301,7 @@ private fun AstroPhotoApp(
             currentScreen == AppScreen.About ||
             currentScreen == AppScreen.Settings ||
             currentScreen == AppScreen.Help ||
+            currentScreen == AppScreen.Privacy ||
             currentScreen == AppScreen.SelfCheck
         if (cameraPermissionGranted || screenAvailableWithoutCamera) {
             when (currentScreen) {
@@ -402,6 +421,11 @@ private fun AstroPhotoApp(
                     onOpenDiagnostics = {
                         navigateTo(AppScreen.DiagnosticsDetails)
                     },
+                    onOpenPrivacy = { navigateTo(AppScreen.Privacy) },
+                    onOpenAdvertising = {
+                        advertisingConsentSaveError = false
+                        advertisingConsentDialogVisible = true
+                    },
                     onBack = { navigateBack() }
                 )
                 AppScreen.Help -> HelpScreen(
@@ -429,8 +453,10 @@ private fun AstroPhotoApp(
                         selfCheckReturnScreen = AppScreen.About
                         navigateTo(AppScreen.SelfCheck)
                     },
+                    onOpenPrivacy = { navigateTo(AppScreen.Privacy) },
                     onBack = { navigateBack() }
                 )
+                AppScreen.Privacy -> PrivacyPolicyScreen(onBack = { navigateBack() })
                 AppScreen.SelfCheck -> SelfCheckScreen(
                     cameraPermissionGranted = cameraPermissionGranted,
                     onRequestCameraPermission = {
@@ -469,6 +495,34 @@ private fun AstroPhotoApp(
                 }
             )
         }
+        }
+    }
+    if (advertisingConsentDialogVisible && !showOnboarding && !showExitDialog &&
+        processingFailure == null && interruptedProcessing.isEmpty()) {
+        AstroPhotoTheme(darkTheme = appSettings.themeMode != AppThemeMode.LIGHT.name,
+            dynamicColor = false, veryDark = appSettings.themeMode == AppThemeMode.VERY_DARK.name,
+            redNight = appSettings.themeMode == AppThemeMode.RED_NIGHT.name) {
+        AdvertisingConsentDialog(
+            consent = advertisingConsent,
+            saveError = advertisingConsentSaveError,
+            onChoose = { choice ->
+                if (appSettingsStore.saveAdvertisingConsent(choice)) {
+                    advertisingConsent = choice
+                    advertising?.updateConsent(choice)
+                    advertisingConsentDialogVisible = false
+                    advertisingConsentSaveError = false
+                } else advertisingConsentSaveError = true
+            },
+            onOpenPolicy = {
+                advertisingConsentDialogVisible = false
+                returnToConsentFromPolicy = true
+                navigateTo(AppScreen.Privacy)
+            },
+            onDismiss = {
+                advertisingConsentDialogVisible = false
+                advertisingConsentDismissed = true
+            }
+        )
         }
     }
     if (showOnboarding) {

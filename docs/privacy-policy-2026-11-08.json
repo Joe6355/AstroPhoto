@@ -1,0 +1,307 @@
+{
+  "date": "2026-11-08",
+  "block": "advertising_step_3_privacy_contact_and_data_choice",
+  "status": "implementation_and_local_checks_complete_public_verification_pending_push",
+  "baseSource": "6726c8df7160d8005cde0bc2ea7bc62a04608e85",
+  "buildSourceState": "working_tree_with_privacy_changes_on_base_not_final_publication_candidate",
+  "versionName": "0.9.0-beta.5",
+  "versionCode": 6,
+  "publicContact": {
+    "developer": "Serega_6355",
+    "email": "dudin1918@mail.ru",
+    "ownerExplicitlyApprovedForPublication": true,
+    "messagesSent": false
+  },
+  "policy": {
+    "revision": "2026-11-08",
+    "bytes": 11412,
+    "sha256": "9bf287f7339867e600a3626c802799bf688f02296adcf1fcdd3e446be7af1cb9",
+    "bundledCopiesEqual": true,
+    "source": "docs/PRIVACY_POLICY_RU.md",
+    "url": "https://github.com/Joe6355/AstroPhoto/blob/main/docs/PRIVACY_POLICY_RU.md",
+    "anonymousVerification": "pending_after_push"
+  },
+  "consent": {
+    "revision": "2026-11-08",
+    "unknownAndDeclinedPreventSdkInitialization": true,
+    "explicitAllowedPassedToSdk": true,
+    "locationTracking": false,
+    "independentOfCameraReset": true,
+    "privatePreferenceFile": "astrophoto_privacy.xml",
+    "excludedCloudBackup": true,
+    "excludedDeviceTransfer": true,
+    "realCloudRestoreTested": false,
+    "revocationBlocksNewRequestsAndHidesCard": true,
+    "runningSdkFullyStopsOnlyAfterAppCloses": true,
+    "serverDataDeletionClaimed": false
+  },
+  "sdk": {
+    "name": "Yandex Mobile Ads",
+    "version": "8.6.0",
+    "productionAppOpenWindowMs": 700,
+    "sdkAppOpenPositiveTestWindowMs": 40000,
+    "lateConsentDoesNotOpenNewAppOpenOpportunity": true,
+    "demoOnlyOnQa": true,
+    "mergedReleasePermissions": [
+      "android.permission.CAMERA",
+      "android.permission.INTERNET",
+      "android.permission.ACCESS_NETWORK_STATE",
+      "android.permission.VIBRATE",
+      "android.permission.FOREGROUND_SERVICE",
+      "android.permission.FOREGROUND_SERVICE_CAMERA",
+      "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
+      "android.permission.FOREGROUND_SERVICE_MEDIA_PROCESSING",
+      "android.permission.POST_NOTIFICATIONS",
+      "android.permission.READ_MEDIA_IMAGES",
+      "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+      "android.permission.READ_EXTERNAL_STORAGE",
+      "android.permission.WRITE_EXTERNAL_STORAGE",
+      "com.google.android.gms.permission.AD_ID",
+      "com.joe6355.astrophoto.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+      "com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE"
+    ]
+  },
+  "environment": {
+    "avd": "AstroPhotoAdsAPI34",
+    "api": 34,
+    "abi": "x86_64",
+    "qaApplicationId": "com.joe6355.astrophoto.adsqa20261107privacy",
+    "fontScalesTested": [
+      "1.0",
+      "2.0"
+    ],
+    "mainFlowTheme": "RED_NIGHT",
+    "mainFlowCameraDenied": true,
+    "mainFlowInitiallyOffline": true,
+    "mainFlowAdbPort": 5037,
+    "initialFixturePort": 5043
+  },
+  "tests": {
+    "relatedJvmPassed": 15,
+    "fullJvm": {
+      "tests": 1413,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 4,
+      "passed": 1409
+    },
+    "lint": {
+      "debug": {
+        "errors": 0,
+        "warnings": 18,
+        "rules": [
+          "AndroidGradlePluginVersion",
+          "GradleDependency",
+          "ModifierParameter",
+          "NewerVersionAvailable",
+          "OldTargetApi",
+          "UseKtx",
+          "ViewConstructor"
+        ]
+      },
+      "release": {
+        "errors": 0,
+        "warnings": 18,
+        "rules": [
+          "AndroidGradlePluginVersion",
+          "GradleDependency",
+          "ModifierParameter",
+          "NewerVersionAvailable",
+          "OldTargetApi",
+          "UseKtx",
+          "ViewConstructor"
+        ]
+      }
+    },
+    "initialAndroidPassed": {
+      "privacy": 3,
+      "about": 1,
+      "nativeSdk": 1
+    },
+    "initialAppOpenCloseTestFailedThenPassedAlone": true,
+    "appOpenStandaloneSeconds": 20.522,
+    "finalMainActivityFlow": {
+      "passed": true,
+      "seconds": 43.313,
+      "policyAndEmailOffline": true,
+      "declineSurvivedActivityRecreation": true,
+      "networkValidatedBeforeGrant": true,
+      "allowedNativeLoadedAndVisible": true,
+      "revocationHidNative": true,
+      "nativeRequests": 1,
+      "lateAppOpenShown": false
+    },
+    "coldProcess": {
+      "package": "com.joe6355.astrophoto.adsqa20261107privacy",
+      "coldProcessDeclinePersisted": true,
+      "policyRevision": "2026-11-08",
+      "newAdRequests": 0,
+      "fontScale": "1.0",
+      "physicalPhoneModified": false
+    },
+    "fullGateSeconds": 754,
+    "finalChecksSeconds": 419,
+    "fullJvmNotRepeatedAfterUiOnlyEdits": true
+  },
+  "builds": {
+    "qa": {
+      "bytes": 20862592,
+      "sha256": "2ba993714b2a31c3d38d809e98f18b0c82469f770c43d3ad08327e19bf5e15c6",
+      "path": "artifacts/privacy-policy-2026-11-07/qa-policy-final.apk"
+    },
+    "qaTest": {
+      "bytes": 1973961,
+      "sha256": "42a49f9b135eb73c6df610a468978f5db54977eca54dd8e7c8a02746df63a03e",
+      "path": "artifacts/privacy-policy-2026-11-07/qa-policy-tests-final.apk"
+    },
+    "mainDebug": {
+      "bytes": 20862540,
+      "sha256": "0ffa2a962959c1a741760150236c3eef7d45929ac60f7c4fbc66ecb2f194d15e",
+      "path": "app/build/outputs/apk/debug/app-debug.apk",
+      "archive": "artifacts/privacy-policy-2026-11-07/verified-final/mainDebug.apk"
+    },
+    "mainReleaseR8": {
+      "bytes": 5790575,
+      "sha256": "0f15ec01f5582e4f4fd3b210f96b78b21d0c72b0c32e00fbfee3af9743047073",
+      "path": "app/build/outputs/apk/release/app-release.apk",
+      "archive": "artifacts/privacy-policy-2026-11-07/verified-final/mainReleaseR8.apk"
+    },
+    "mapping": {
+      "bytes": 78074971,
+      "sha256": "5c15964c3737b3b74e7284956ad61c19f84c23e74afca271469299900576456b",
+      "path": "app/build/outputs/mapping/release/mapping.txt",
+      "archive": "artifacts/privacy-policy-2026-11-07/verified-final/mapping.txt"
+    }
+  },
+  "backupConfigurationVerified": true,
+  "phone": {
+    "package": "com.joe6355.astrophoto",
+    "apkSha256": "88cd1ee0336f354d54c9b36d85f827936bc8ae12610427ff86920d0bd719cc07",
+    "matchesLastVerifiedAf94e72": true,
+    "readOnly": true,
+    "newInstall": false,
+    "photoOrSettingsCheck": false,
+    "versionName": "0.9.0-beta.5",
+    "versionCode": 6,
+    "sourceOfMatchingApk": "af94e72528a0f9718a909ac29e75e8ddd8c7e49b",
+    "containsNewSdkOrPolicy": false,
+    "photosOrPrivateDataRehashed": false,
+    "uiActionsPerformed": false
+  },
+  "emulatorFinalState": {
+    "avd": "AstroPhotoAdsAPI34",
+    "fontScale": "1.0",
+    "airplane": "0",
+    "animationScales": {
+      "animator_duration_scale": "1.0",
+      "window_animation_scale": "1.0",
+      "transition_animation_scale": "1.0"
+    },
+    "qaCameraPermission": [
+      "android.permission.CAMERA: granted=false, flags=[ USER_SET|USER_FIXED|USER_SENSITIVE_WHEN_GRANTED|USER_SENSITIVE_WHEN_DENIED]"
+    ],
+    "onlyOwnAvd": true
+  },
+  "emulatorShutdown": {
+    "verifiedOwnPathAndPort": true,
+    "avd": "AstroPhotoAdsAPI34",
+    "stoppedPids": [
+      32500,
+      28168
+    ],
+    "otherAdbOrDevicesStopped": false
+  },
+  "previousSdkCi": {
+    "sha": "6726c8df7160d8005cde0bc2ea7bc62a04608e85",
+    "jobStatus": [
+      "completed"
+    ],
+    "steps": [
+      {
+        "name": "Set up job",
+        "conclusion": "success"
+      },
+      {
+        "name": "Run actions/checkout@v6",
+        "conclusion": "success"
+      },
+      {
+        "name": "Set up JDK 21",
+        "conclusion": "success"
+      },
+      {
+        "name": "Set up Gradle",
+        "conclusion": "success"
+      },
+      {
+        "name": "Make Gradle wrapper executable",
+        "conclusion": "success"
+      },
+      {
+        "name": "Unit tests, lint and debug/release builds",
+        "conclusion": "success"
+      },
+      {
+        "name": "Upload reports",
+        "conclusion": "success"
+      },
+      {
+        "name": "Upload debug APK",
+        "conclusion": "success"
+      },
+      {
+        "name": "Upload optimized release APK",
+        "conclusion": "success"
+      },
+      {
+        "name": "Post Set up Gradle",
+        "conclusion": "success"
+      },
+      {
+        "name": "Post Set up JDK 21",
+        "conclusion": "success"
+      },
+      {
+        "name": "Post Run actions/checkout@v6",
+        "conclusion": "success"
+      },
+      {
+        "name": "Complete job",
+        "conclusion": "success"
+      }
+    ],
+    "runs": [
+      "42297185125"
+    ]
+  },
+  "currentCi": {
+    "status": "not_yet_pushed",
+    "instruction": "Check exact new implementation commit SHA after push"
+  },
+  "nextStep": "After public URL verification: new clean version, signed APK with existing key and a separate main-phone update block",
+  "limits": [
+    "Store and YAN forms not submitted",
+    "No commercial ad revenue or payouts verified",
+    "New source not installed on physical phone",
+    "R8 runtime ad/privacy flow not tested on phone",
+    "No full packet capture of SDK traffic",
+    "No real cloud backup restore",
+    "No repeat of closed capture/night/processing/resource matrix"
+  ],
+  "sourceHashNormalization": "UTF-8 with LF line endings",
+  "productionSourceSha256Lf": {
+    "app/build.gradle.kts": "4cae0b8257235ae9da33b8ef560029fb71eed6c95b331ddf5116894584b017dd",
+    "app/src/main/java/com/joe6355/astrophoto/AboutScreen.kt": "55b32971e11cadede4c1a727b15536faa88f238542d11f8ee005896c365ab515",
+    "app/src/main/java/com/joe6355/astrophoto/AppNavigationController.kt": "5e5aa9a3cc4f34900233515b963552515e1e76eeec8001808316853b47cb36ef",
+    "app/src/main/java/com/joe6355/astrophoto/AppSettingsScreen.kt": "ebf87dab49656e5a94b5544ad0174267e5bceef1df79d8a3b09b3f73e4bd2f2f",
+    "app/src/main/java/com/joe6355/astrophoto/CameraSettingsStore.kt": "a4c750c000f7753fedff40afeccaecca86455853085ff2afeb9f352660e416bd",
+    "app/src/main/java/com/joe6355/astrophoto/MainActivity.kt": "377ba885e924ddbac81c4a4db1346e1b860fa95d47f1e7135e0552a0eccedf50",
+    "app/src/main/java/com/joe6355/astrophoto/PrivacyPolicyScreen.kt": "6413ad955dcbf8c8df9597a98563c0f0d7b6a9da82a67f96435586f4137a9d06",
+    "app/src/main/java/com/joe6355/astrophoto/ads/AstroAdsController.kt": "e6a37926700599e5ccf34827500586b2128721d5312e483a7b789a17ad2f390f",
+    "app/src/main/java/com/joe6355/astrophoto/ads/StartupAdPolicy.kt": "e66242268a1baf61c6a4ffbce0bf22cb68f363e2ccbf0e0ea6c2b7047c0114ca",
+    "app/src/main/res/xml/backup_rules.xml": "ed5add09aa46af4f13c021a269e624658a2c35dba0fe7cf1ee286cace795b14c",
+    "app/src/main/res/xml/data_extraction_rules.xml": "b936736f66540a4dcd362bf780f5533f9eb7cc53702685bbed4afc4bd41a5b79",
+    "docs/PRIVACY_POLICY_RU.md": "9bf287f7339867e600a3626c802799bf688f02296adcf1fcdd3e446be7af1cb9"
+  },
+  "localEvidenceDirectory": "artifacts/privacy-policy-2026-11-07"
+}

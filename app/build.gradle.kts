@@ -17,6 +17,22 @@ val hasReleaseSigning = listOf(
     "keyPassword"
 ).all { !releaseSigningProperties.getProperty(it).isNullOrBlank() }
 
+// The published document is also the offline copy; keep one source of policy text.
+abstract class PreparePrivacyPolicy : DefaultTask() {
+    @get:InputFile abstract val policyFile: RegularFileProperty
+    @get:OutputDirectory abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction fun prepare() {
+        val target = outputDirectory.file("PRIVACY_POLICY_RU.md").get().asFile
+        target.parentFile.mkdirs()
+        policyFile.get().asFile.copyTo(target, overwrite = true)
+    }
+}
+val preparePrivacyPolicy = tasks.register<PreparePrivacyPolicy>("preparePrivacyPolicy") {
+    policyFile.set(rootProject.layout.projectDirectory.file("docs/PRIVACY_POLICY_RU.md"))
+    outputDirectory.set(layout.buildDirectory.dir("generated/privacyAssets"))
+}
+
 android {
     namespace = "com.joe6355.astrophoto"
     compileSdk {
@@ -75,6 +91,10 @@ android {
         compose = true
         buildConfig = true
     }
+}
+
+androidComponents.onVariants { variant ->
+    variant.sources.assets?.addGeneratedSourceDirectory(preparePrivacyPolicy, PreparePrivacyPolicy::outputDirectory)
 }
 
 dependencies {

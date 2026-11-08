@@ -33,7 +33,9 @@ fun AppSettingsScreen(
     onOpenAbout: () -> Unit,
     onOpenSelfCheck: () -> Unit,
     onOpenDiagnostics: () -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onOpenPrivacy: () -> Unit = {},
+    onOpenAdvertising: () -> Unit = {}
 ) {
     var resetConfirmationVisible by remember { mutableStateOf(false) }
 
@@ -197,6 +199,15 @@ fun AppSettingsScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+            }
+
+            item {
+                AstroExpandableSection(title = "Конфиденциальность", initiallyExpanded = true) {
+                    AstroSecondaryButton("Политика конфиденциальности", onOpenPrivacy,
+                        modifier = Modifier.fillMaxWidth())
+                    AstroTextButton("Реклама и данные", onOpenAdvertising,
+                        modifier = Modifier.fillMaxWidth())
                 }
             }
 

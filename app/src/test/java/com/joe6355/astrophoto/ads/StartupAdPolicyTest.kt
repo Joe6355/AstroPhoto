@@ -4,6 +4,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class StartupAdPolicyTest {
+    @Test fun onlyACurrentExplicitChoiceCanAllowAdvertising() {
+        val revision = AdvertisingConsent.POLICY_REVISION
+        assertEquals(AdvertisingConsent.NOT_CHOSEN, AdvertisingConsent.restore(null, null))
+        assertEquals(AdvertisingConsent.NOT_CHOSEN, AdvertisingConsent.restore("ALLOWED", "old-policy"))
+        assertEquals(AdvertisingConsent.NOT_CHOSEN, AdvertisingConsent.restore("unknown", revision))
+        assertEquals(AdvertisingConsent.ALLOWED, AdvertisingConsent.restore("ALLOWED", revision))
+        assertEquals(AdvertisingConsent.DECLINED, AdvertisingConsent.restore("DECLINED", revision))
+    }
+
     @Test fun readyAdCanBeShownOnceInsideSplash() {
         val policy = StartupAdPolicy()
         policy.start(1_000, eligible = true)

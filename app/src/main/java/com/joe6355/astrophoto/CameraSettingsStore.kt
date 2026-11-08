@@ -2,6 +2,7 @@ package com.joe6355.astrophoto
 
 import android.content.Context
 import androidx.core.content.edit
+import com.joe6355.astrophoto.ads.AdvertisingConsent
 
 enum class AppThemeMode {
     LIGHT,
@@ -44,6 +45,22 @@ class CameraSettingsStore(context: Context) {
         "astrophoto_camera_settings",
         Context.MODE_PRIVATE
     )
+    // A data-processing choice must not silently migrate to a different device via backup.
+    private val privacyPreferences = context.getSharedPreferences("astrophoto_privacy", Context.MODE_PRIVATE)
+
+    fun advertisingConsent(): AdvertisingConsent = runCatching {
+        AdvertisingConsent.restore(
+            privacyPreferences.getString("advertising_consent", null),
+            privacyPreferences.getString("policy_revision", null)
+        )
+    }.getOrDefault(AdvertisingConsent.NOT_CHOSEN)
+
+    fun saveAdvertisingConsent(consent: AdvertisingConsent): Boolean = runCatching {
+        privacyPreferences.edit()
+            .putString("advertising_consent", consent.name)
+            .putString("policy_revision", AdvertisingConsent.POLICY_REVISION)
+            .commit()
+    }.getOrDefault(false)
 
     fun load(): SavedCameraSettings = runCatching {
         val legacyApplyLongExposure = preferences.getBoolean(

@@ -51,6 +51,7 @@ class AdsIntegrationTest {
         check(BuildConfig.YAN_APP_OPEN_UNIT_ID == "demo-appopenad-yandex")
         // Existing-user precondition for the subsequent MainActivity smoke on this disposable QA only.
         CameraSettingsStore(compose.activity).setOnboardingSeen(true)
+        check(CameraSettingsStore(compose.activity).saveAdvertisingConsent(AdvertisingConsent.ALLOWED))
     }
 
     @After fun releaseSdkResources() {
@@ -117,7 +118,22 @@ class AdsIntegrationTest {
                 startupPolicy = StartupAdPolicy(windowMillis = 40_000)).also { it.startStartup() }
         }
         compose.waitUntil(40_000) { advertising?.appOpenShowing == true }
-        compose.waitUntil(10_000) { closeControl() != null }
+        try {
+            compose.waitUntil(10_000) { closeControl() != null }
+        } catch (failure: Throwable) {
+            screenshot("app-open-close-timeout")
+            val root = InstrumentationRegistry.getInstrumentation().uiAutomation.rootInActiveWindow
+            val tree = StringBuilder()
+            fun describe(node: AccessibilityNodeInfo) {
+                tree.appendLine("${node.packageName}: text=${node.text}; description=${node.contentDescription}; " +
+                    "id=${node.viewIdResourceName}; clickable=${node.isClickable}; visible=${node.isVisibleToUser}")
+                repeat(node.childCount) { index -> node.getChild(index)?.let(::describe) }
+            }
+            root?.let(::describe)
+            File(compose.activity.getExternalFilesDir(null), "ads-proof/app-open-close-timeout.txt")
+                .writeText(tree.toString())
+            throw failure
+        }
         screenshot("app-open")
         assertTrue(requireNotNull(closeControl()).performAction(AccessibilityNodeInfo.ACTION_CLICK))
         compose.waitUntil(10_000) { advertising?.appOpenShowing == false }

@@ -1,5 +1,17 @@
 package com.joe6355.astrophoto.ads
 
+enum class AdvertisingConsent {
+    NOT_CHOSEN, ALLOWED, DECLINED;
+
+    companion object {
+        const val POLICY_REVISION = "2026-11-08"
+
+        fun restore(choice: String?, revision: String?): AdvertisingConsent =
+            if (revision == POLICY_REVISION) entries.firstOrNull { it.name == choice } ?: NOT_CHOSEN
+            else NOT_CHOSEN
+    }
+}
+
 /** A cold launch gets one opportunity inside the existing splash, never after content opens. */
 internal class StartupAdPolicy(private val windowMillis: Long = SPLASH_MILLIS) {
     private var startedAt: Long? = null

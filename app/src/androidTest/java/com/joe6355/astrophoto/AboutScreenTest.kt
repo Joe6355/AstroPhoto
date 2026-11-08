@@ -34,6 +34,6 @@ class AboutScreenTest {
         }
 
         composeRule.onNodeWithText("Разработчик").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("Дудин С.В.").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Serega_6355").performScrollTo().assertIsDisplayed()
     }
 }
