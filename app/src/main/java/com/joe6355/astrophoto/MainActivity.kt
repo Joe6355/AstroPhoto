@@ -136,7 +136,6 @@ private fun AstroPhotoApp(
     var appSettings by remember { mutableStateOf(appSettingsStore.load()) }
     var advertisingConsent by remember { mutableStateOf(appSettingsStore.advertisingConsent()) }
     var advertisingConsentDialogVisible by remember { mutableStateOf(false) }
-    var advertisingConsentDismissed by remember { mutableStateOf(false) }
     var advertisingConsentSaveError by remember { mutableStateOf(false) }
     var returnToConsentFromPolicy by remember { mutableStateOf(false) }
     var showOnboarding by remember {
@@ -159,17 +158,10 @@ private fun AstroPhotoApp(
     val seriesState by SeriesCaptureCoordinator.state.collectAsState()
     val processingStates by SessionProcessingCoordinator.states.collectAsState()
     val nativeAllowed = advertisingConsent == AdvertisingConsent.ALLOWED &&
-        currentScreen == AppScreen.Diagnostics && !advertisingConsentDialogVisible && !showOnboarding && !showExitDialog &&
+        currentScreen == AppScreen.Diagnostics && !showOnboarding && !showExitDialog &&
         processingFailure == null && interruptedProcessing.isEmpty() && seriesState?.running != true &&
         processingStates.values.none { it.running }
     LaunchedEffect(nativeAllowed) { advertising?.setNativeAllowed(nativeAllowed) }
-    LaunchedEffect(advertisingConsent, currentScreen, showOnboarding, showExitDialog,
-        processingFailure, interruptedProcessing, seriesState?.running, processingStates) {
-        if (advertisingConsent == AdvertisingConsent.NOT_CHOSEN && !advertisingConsentDismissed &&
-            currentScreen == AppScreen.Diagnostics && !showOnboarding && !showExitDialog &&
-            processingFailure == null && interruptedProcessing.isEmpty() && seriesState?.running != true &&
-            processingStates.values.none { it.running }) advertisingConsentDialogVisible = true
-    }
     val nativeAdView = rememberNativeAdCard(advertising?.nativeAd)
     LaunchedEffect(currentScreen) {
         if (currentScreen == AppScreen.Diagnostics) {
@@ -497,7 +489,7 @@ private fun AstroPhotoApp(
         }
         }
     }
-    if (advertisingConsentDialogVisible && !showOnboarding && !showExitDialog &&
+    if (currentScreen == AppScreen.Settings && advertisingConsentDialogVisible && !showOnboarding && !showExitDialog &&
         processingFailure == null && interruptedProcessing.isEmpty()) {
         AstroPhotoTheme(darkTheme = appSettings.themeMode != AppThemeMode.LIGHT.name,
             dynamicColor = false, veryDark = appSettings.themeMode == AppThemeMode.VERY_DARK.name,
@@ -518,10 +510,7 @@ private fun AstroPhotoApp(
                 returnToConsentFromPolicy = true
                 navigateTo(AppScreen.Privacy)
             },
-            onDismiss = {
-                advertisingConsentDialogVisible = false
-                advertisingConsentDismissed = true
-            }
+            onDismiss = { advertisingConsentDialogVisible = false }
         )
         }
     }

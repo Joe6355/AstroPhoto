@@ -92,17 +92,28 @@ class PrivacyPolicyTest {
         val launch = Intent(context, MainActivity::class.java).setAction(Intent.ACTION_MAIN)
             .addCategory(Intent.CATEGORY_LAUNCHER)
         ActivityScenario.launch<MainActivity>(launch).use { scenario ->
+            fun openChoice() {
+                compose.onNodeWithTag(AstroTestTags.HomeScreen).performScrollToIndex(0)
+                    .performScrollToNode(hasText("Настройки"))
+                compose.onNodeWithText("Настройки").performClick()
+                compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("Реклама и данные"))
+                compose.onNodeWithText("Реклама и данные").performClick()
+            }
+
             compose.waitUntil(10_000) {
-                compose.onAllNodes(androidx.compose.ui.test.hasTestTag("advertising-consent-dialog"))
+                compose.onAllNodes(androidx.compose.ui.test.hasTestTag(AstroTestTags.HomeScreen))
                     .fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty()
             }
+            compose.onNodeWithTag("advertising-consent-dialog").assertDoesNotExist()
+            assertEquals(AdvertisingConsent.NOT_CHOSEN, store.advertisingConsent())
+            val before = ownLogs()
+            assertFalse(before.contains("native_loading"))
+            assertFalse(before.contains("app_open_loading"))
+            openChoice()
             compose.onNodeWithText("Читать политику").assertIsDisplayed()
             compose.onNodeWithText("Разрешить").assertIsDisplayed()
             compose.onNodeWithText("Без рекламы").assertIsDisplayed()
             saveScreen("main-choice-200")
-            val before = ownLogs()
-            assertFalse(before.contains("native_loading"))
-            assertFalse(before.contains("app_open_loading"))
             compose.onNodeWithText("Читать политику").performClick()
             compose.waitUntil(5_000) {
                 compose.onAllNodes(hasText("Политика конфиденциальности AstroPhoto", substring = true))
@@ -116,6 +127,7 @@ class PrivacyPolicyTest {
             compose.onNodeWithText("Без рекламы").performClick()
             compose.onNodeWithTag("advertising-consent-dialog").assertDoesNotExist()
             assertEquals(AdvertisingConsent.DECLINED, store.advertisingConsent())
+            compose.onNodeWithText("Назад").performClick()
             scenario.recreate()
             compose.waitUntil(10_000) {
                 compose.onAllNodes(androidx.compose.ui.test.hasTestTag(AstroTestTags.HomeScreen))
@@ -135,13 +147,6 @@ class PrivacyPolicyTest {
                 } == true
             }
 
-            fun openChoice() {
-                compose.onNodeWithTag(AstroTestTags.HomeScreen).performScrollToIndex(0)
-                    .performScrollToNode(hasText("Настройки"))
-                compose.onNodeWithText("Настройки").performClick()
-                compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("Реклама и данные"))
-                compose.onNodeWithText("Реклама и данные").performClick()
-            }
             openChoice()
             compose.onNodeWithText("Разрешить").performClick()
             compose.onNodeWithText("Назад").performClick()
