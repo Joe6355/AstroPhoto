@@ -68,6 +68,7 @@ internal class AstroAdsController(
         if (!allowed) {
             val loader = nativeLoader
             nativeLoader = null
+            if (nativeAd == null) nativeRequested = false
             loader?.cancelLoading()
         } else if (!closed) {
             initialize()
@@ -199,7 +200,7 @@ internal class AstroAdsController(
                     if (nativeLoader !== loader) return
                     nativeLoader = null
                     Log.d(TAG, "native_load_failed:${error.code}")
-                    // One attempt for this Activity; no network retry loop or empty placeholder.
+                    // Retry only when the home screen becomes eligible again.
                 }
             })
         } catch (_: Exception) {
