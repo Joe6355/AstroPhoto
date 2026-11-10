@@ -17,6 +17,12 @@
 
 Девять целевых JVM-тестов логики App Open прошли. Проверочные debug, androidTest и release/R8 собраны, lint release без ошибок с 15 предупреждениями. `aapt` подтвердил отсутствие `AD_ID` в debug и release. Встроенная политика совпала с исходником. Первый сетевой прогон был прерван восстановлением сети эмулятора до запроса рекламы. После восстановления нативный сценарий прошёл. Локальные журналы и снимки в `artifacts/ads-default-2026-11-10/`.
 
+## Подписанный APK и черновик RuStore
+
+- Версия `0.9.0-beta.7`, код 8, пакет `com.joe6355.astrophoto`, исходники `1a8210077c6b9e19541383e10cac693267ebcef2`. APK 5 790 499 байт, SHA-256 `069e5ba513f889ac592da5e6b4da4316ddd9cb14ee7ac2fae1b681c24595b665`. Сертификат совпал с прежней основной версией, SHA-256 `79e37ad16c7cceaf6bae398d926e548e3f64ea0a6e248975cceb2a6e3d374f93`. Пакет, код версии, отсутствие `AD_ID`, встроенная политика и состав ZIP сверены. CI этой ревизии при сверке выполнялся. [Android CI](https://github.com/Joe6355/AstroPhoto/actions/runs/42734220859).
+- Архив на ПК `artifacts/pc-signed-release-20261110_061556/AstroPhoto-0.9.0-beta.7-signed-candidate.zip` содержит APK, `candidate.json` и `mapping.txt`. Физический телефон на этом этапе не использовался. Последняя подтверждённая основная установка Xiaomi — beta.6.
+- После сохранения и повторного открытия черновика подтверждены APK beta.7, комментарий модератору, декларация с возрастным режимом SDK, 0+, четыре скриншота и ручная публикация. Консоль автоматически отметила Google Mobile Ads (AdMob) и Yandex Mobile Ads. В декларации указана фактическая интеграция Yandex SDK. Снимок на ПК `artifacts/ads-default-2026-11-10/rustore-beta7-draft.png`. [Черновик](https://console.rustore.ru/apps/2063784942/versions/2064941088/edit).
+
 ## Следующий этап
 
-Подготовить подписанный beta.7 с кодом 8 и заменить beta.6 в черновике. В форме сверить декларацию, режим рекламы для 0+ и комментарий модератору. После APK отдельно доработать карточку. Коммерческий показ проверяется после привязки публичной ссылки и модерации в РСЯ. [Требования RuStore, разделы 9.7–9.8](https://www.rustore.ru/help/developers/publishing-and-verifying-apps/requirement-apps) · [Модерация приложения в РСЯ](https://ads.yandex.com/helpcenter/ru/monetization/app/add).
+Отдельно доработать карточку AstroPhoto. Отправка на модерацию после разрешения владельца. Коммерческий показ проверяется после публикации, привязки публичной ссылки и модерации в РСЯ. [Требования RuStore, разделы 9.7–9.8](https://www.rustore.ru/help/developers/publishing-and-verifying-apps/requirement-apps) · [Модерация приложения в РСЯ](https://ads.yandex.com/helpcenter/ru/monetization/app/add).
