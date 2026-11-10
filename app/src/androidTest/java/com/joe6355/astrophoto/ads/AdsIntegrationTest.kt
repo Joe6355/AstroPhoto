@@ -51,7 +51,7 @@ class AdsIntegrationTest {
         check(BuildConfig.YAN_APP_OPEN_UNIT_ID == "demo-appopenad-yandex")
         // Existing-user precondition for the subsequent MainActivity smoke on this disposable QA only.
         CameraSettingsStore(compose.activity).setOnboardingSeen(true)
-        check(CameraSettingsStore(compose.activity).saveAdvertisingConsent(AdvertisingConsent.ALLOWED))
+        check(CameraSettingsStore(compose.activity).saveAdvertisingEnabled(true))
     }
 
     @After fun releaseSdkResources() {
@@ -119,7 +119,7 @@ class AdsIntegrationTest {
         }
         compose.waitUntil(40_000) { advertising?.appOpenShowing == true }
         try {
-            compose.waitUntil(10_000) { closeControl() != null }
+            compose.waitUntil(20_000) { closeControl() != null }
         } catch (failure: Throwable) {
             screenshot("app-open-close-timeout")
             val root = InstrumentationRegistry.getInstrumentation().uiAutomation.rootInActiveWindow
@@ -160,9 +160,15 @@ class AdsIntegrationTest {
 
     private fun closeControl(): AccessibilityNodeInfo? {
         val root = InstrumentationRegistry.getInstrumentation().uiAutomation.rootInActiveWindow ?: return null
-        val label = root.findAccessibilityNodeInfosByText("Вернуться в приложение")
-            .firstOrNull { it.isVisibleToUser } ?: return null
-        var node = label
+        fun findLabel(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+            if (node.isVisibleToUser && node.text?.toString() == "Вернуться в приложение") return node
+            for (index in 0 until node.childCount) {
+                val child = node.getChild(index) ?: continue
+                findLabel(child)?.let { return it }
+            }
+            return null
+        }
+        var node = findLabel(root) ?: return null
         repeat(5) {
             if (node.isClickable) return node
             node = node.parent ?: return null

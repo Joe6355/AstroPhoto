@@ -14,6 +14,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import com.joe6355.astrophoto.ui.AstroConfirmationDialog
 import com.joe6355.astrophoto.ui.AstroExpandableSection
 import com.joe6355.astrophoto.ui.AstroScaffold
@@ -34,10 +35,12 @@ fun AppSettingsScreen(
     onOpenSelfCheck: () -> Unit,
     onOpenDiagnostics: () -> Unit,
     onBack: () -> Unit,
-    onOpenPrivacy: () -> Unit = {},
-    onOpenAdvertising: () -> Unit = {}
+    onOpenPrivacy: () -> Unit,
+    advertisingEnabled: Boolean,
+    onAdvertisingEnabledChanged: (Boolean) -> Boolean
 ) {
     var resetConfirmationVisible by remember { mutableStateOf(false) }
+    var advertisingSaveFailed by remember { mutableStateOf(false) }
 
     AstroScaffold(title = "Настройки", onBack = onBack) {
         LazyColumn(
@@ -206,8 +209,17 @@ fun AppSettingsScreen(
                 AstroExpandableSection(title = "Конфиденциальность", initiallyExpanded = true) {
                     AstroSecondaryButton("Политика конфиденциальности", onOpenPrivacy,
                         modifier = Modifier.fillMaxWidth())
-                    AstroTextButton("Реклама и данные", onOpenAdvertising,
-                        modifier = Modifier.fillMaxWidth())
+                    AstroSettingRow(
+                        title = "Неперсонализированная реклама",
+                        description = "Объявления Яндекса при запуске и на главной",
+                        checked = advertisingEnabled,
+                        onCheckedChange = { advertisingSaveFailed = !onAdvertisingEnabledChanged(it) },
+                        modifier = Modifier.testTag("settings-advertising")
+                    )
+                    if (advertisingSaveFailed) {
+                        Text("Не удалось сохранить настройку рекламы.",
+                            color = MaterialTheme.colorScheme.error)
+                    }
                 }
             }
 

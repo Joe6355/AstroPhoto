@@ -65,7 +65,6 @@ import com.joe6355.astrophoto.ui.theme.AstroColors
 import com.joe6355.astrophoto.ui.OrbitDestination
 import com.joe6355.astrophoto.ui.OrbitNavigationBar
 import com.joe6355.astrophoto.ads.AstroAdProcess
-import com.joe6355.astrophoto.ads.AdvertisingConsent
 import com.joe6355.astrophoto.ads.AstroAdsController
 import com.joe6355.astrophoto.ads.HomeNativeAdCard
 import com.joe6355.astrophoto.ads.StartupAdPolicy
@@ -134,10 +133,7 @@ private fun AstroPhotoApp(
         CameraSettingsStore(context.applicationContext)
     }
     var appSettings by remember { mutableStateOf(appSettingsStore.load()) }
-    var advertisingConsent by remember { mutableStateOf(appSettingsStore.advertisingConsent()) }
-    var advertisingConsentDialogVisible by remember { mutableStateOf(false) }
-    var advertisingConsentSaveError by remember { mutableStateOf(false) }
-    var returnToConsentFromPolicy by remember { mutableStateOf(false) }
+    var advertisingEnabled by remember { mutableStateOf(appSettingsStore.advertisingEnabled()) }
     var showOnboarding by remember {
         mutableStateOf(!appSettingsStore.isOnboardingSeen())
     }
@@ -157,7 +153,7 @@ private fun AstroPhotoApp(
     var cameraNavigationEnabled by remember { mutableStateOf(true) }
     val seriesState by SeriesCaptureCoordinator.state.collectAsState()
     val processingStates by SessionProcessingCoordinator.states.collectAsState()
-    val nativeAllowed = advertisingConsent == AdvertisingConsent.ALLOWED &&
+    val nativeAllowed = advertisingEnabled &&
         currentScreen == AppScreen.Diagnostics && !showOnboarding && !showExitDialog &&
         processingFailure == null && interruptedProcessing.isEmpty() && seriesState?.running != true &&
         processingStates.values.none { it.running }
@@ -216,10 +212,6 @@ private fun AstroPhotoApp(
     }
 
     fun navigateBack() {
-        if (currentScreen == AppScreen.Privacy && returnToConsentFromPolicy) {
-            returnToConsentFromPolicy = false
-            advertisingConsentDialogVisible = true
-        }
         if (currentScreen == AppScreen.Help) {
             helpInitialTopic = null
         }
@@ -414,9 +406,14 @@ private fun AstroPhotoApp(
                         navigateTo(AppScreen.DiagnosticsDetails)
                     },
                     onOpenPrivacy = { navigateTo(AppScreen.Privacy) },
-                    onOpenAdvertising = {
-                        advertisingConsentSaveError = false
-                        advertisingConsentDialogVisible = true
+                    advertisingEnabled = advertisingEnabled,
+                    onAdvertisingEnabledChanged = { enabled ->
+                        val saved = appSettingsStore.saveAdvertisingEnabled(enabled)
+                        if (saved) {
+                            advertisingEnabled = enabled
+                            advertising?.updateAdvertisingEnabled(enabled)
+                        }
+                        saved
                     },
                     onBack = { navigateBack() }
                 )
@@ -487,31 +484,6 @@ private fun AstroPhotoApp(
                 }
             )
         }
-        }
-    }
-    if (currentScreen == AppScreen.Settings && advertisingConsentDialogVisible && !showOnboarding && !showExitDialog &&
-        processingFailure == null && interruptedProcessing.isEmpty()) {
-        AstroPhotoTheme(darkTheme = appSettings.themeMode != AppThemeMode.LIGHT.name,
-            dynamicColor = false, veryDark = appSettings.themeMode == AppThemeMode.VERY_DARK.name,
-            redNight = appSettings.themeMode == AppThemeMode.RED_NIGHT.name) {
-        AdvertisingConsentDialog(
-            consent = advertisingConsent,
-            saveError = advertisingConsentSaveError,
-            onChoose = { choice ->
-                if (appSettingsStore.saveAdvertisingConsent(choice)) {
-                    advertisingConsent = choice
-                    advertising?.updateConsent(choice)
-                    advertisingConsentDialogVisible = false
-                    advertisingConsentSaveError = false
-                } else advertisingConsentSaveError = true
-            },
-            onOpenPolicy = {
-                advertisingConsentDialogVisible = false
-                returnToConsentFromPolicy = true
-                navigateTo(AppScreen.Privacy)
-            },
-            onDismiss = { advertisingConsentDialogVisible = false }
-        )
         }
     }
     if (showOnboarding) {

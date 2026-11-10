@@ -2,7 +2,6 @@ package com.joe6355.astrophoto
 
 import android.content.Context
 import androidx.core.content.edit
-import com.joe6355.astrophoto.ads.AdvertisingConsent
 
 enum class AppThemeMode {
     LIGHT,
@@ -45,20 +44,21 @@ class CameraSettingsStore(context: Context) {
         "astrophoto_camera_settings",
         Context.MODE_PRIVATE
     )
-    // A data-processing choice must not silently migrate to a different device via backup.
+    // Keep advertising preferences separate from camera settings and device backups.
     private val privacyPreferences = context.getSharedPreferences("astrophoto_privacy", Context.MODE_PRIVATE)
 
-    fun advertisingConsent(): AdvertisingConsent = runCatching {
-        AdvertisingConsent.restore(
-            privacyPreferences.getString("advertising_consent", null),
-            privacyPreferences.getString("policy_revision", null)
-        )
-    }.getOrDefault(AdvertisingConsent.NOT_CHOSEN)
+    fun advertisingEnabled(): Boolean = runCatching {
+        if (privacyPreferences.contains(ADVERTISING_ENABLED)) {
+            privacyPreferences.getBoolean(ADVERTISING_ENABLED, false)
+        } else {
+            // Preserve an explicit "Без рекламы" choice from the previous release.
+            privacyPreferences.getString("advertising_consent", null) != "DECLINED"
+        }
+    }.getOrDefault(false)
 
-    fun saveAdvertisingConsent(consent: AdvertisingConsent): Boolean = runCatching {
+    fun saveAdvertisingEnabled(enabled: Boolean): Boolean = runCatching {
         privacyPreferences.edit()
-            .putString("advertising_consent", consent.name)
-            .putString("policy_revision", AdvertisingConsent.POLICY_REVISION)
+            .putBoolean(ADVERTISING_ENABLED, enabled)
             .commit()
     }.getOrDefault(false)
 
@@ -186,6 +186,7 @@ class CameraSettingsStore(context: Context) {
     }
 
     companion object {
+        private const val ADVERTISING_ENABLED = "advertising_enabled"
         const val DEFAULT_JPEG_QUALITY = 100
         val JPEG_QUALITY_VALUES = setOf(85, 92, 100)
         val DARK_FRAME_COUNT_VALUES = listOf(0, 3, 5, 10, 20)

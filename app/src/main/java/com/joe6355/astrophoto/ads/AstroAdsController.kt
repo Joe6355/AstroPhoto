@@ -40,12 +40,11 @@ internal class AstroAdsController(
     var appOpenShowing by mutableStateOf(false)
         private set
     private var closed = false
-    private var consentGranted = CameraSettingsStore(activity).advertisingConsent() == AdvertisingConsent.ALLOWED
+    private var advertisingEnabled = CameraSettingsStore(activity).advertisingEnabled()
     private var initializationRequested = false
     private var initialized = false
     private var nativeAllowed = false
     private var nativeRequested = false
-    private var nativeRequestActive = false
     private var nativeLoader: NativeAdLoader? = null
     private var appOpenLoader: AppOpenAdLoader? = null
     private var appOpenAd: AppOpenAd? = null
@@ -54,7 +53,7 @@ internal class AstroAdsController(
 
     fun startStartup() {
         if (closed) return
-        startupPolicy.start(SystemClock.elapsedRealtime(), startupEligible && consentGranted && !busy())
+        startupPolicy.start(SystemClock.elapsedRealtime(), startupEligible && advertisingEnabled && !busy())
         if (!startupPolicy.finished) initialize()
     }
 
@@ -67,33 +66,35 @@ internal class AstroAdsController(
     fun setNativeAllowed(allowed: Boolean) {
         nativeAllowed = allowed
         if (!allowed) {
-            nativeRequestActive = false
-            nativeLoader?.cancelLoading()
+            val loader = nativeLoader
             nativeLoader = null
+            loader?.cancelLoading()
         } else if (!closed) {
             initialize()
             loadNativeIfAllowed()
         }
     }
 
-    fun updateConsent(consent: AdvertisingConsent) {
-        if (closed) return
-        consentGranted = consent == AdvertisingConsent.ALLOWED
-        if (initializationRequested) YandexAds.setUserConsent(consentGranted)
-        if (!consentGranted) {
+    fun updateAdvertisingEnabled(enabled: Boolean) {
+        if (closed || advertisingEnabled == enabled) return
+        advertisingEnabled = enabled
+        if (!enabled) {
             finishStartup()
             setNativeAllowed(false)
+            nativeRequested = false
             nativeAd?.setNativeAdEventListener(null)
             nativeAd = null
         }
-        // Granting consent never opens a new App Open opportunity in an existing process.
     }
 
     private fun initialize() {
-        if (closed || !consentGranted || initializationRequested) return
+        if (closed || !advertisingEnabled || initializationRequested) return
         initializationRequested = true
-        YandexAds.setUserConsent(consentGranted)
+        // Showing ads is a display preference. Configure the age-restricted SDK mode before it starts.
+        YandexAds.setUserConsent(false)
+        YandexAds.setAgeRestricted(true)
         YandexAds.setLocationTracking(false)
+        YandexAds.setAppAdAnalyticsReporting(false)
         YandexAds.enableLogging(BuildConfig.DEBUG)
         val owner = WeakReference(this)
         try {
@@ -109,7 +110,7 @@ internal class AstroAdsController(
     private fun onInitialized() {
         if (closed) return
         initialized = true
-        if (!consentGranted) {
+        if (!advertisingEnabled) {
             finishStartup()
             return
         }
@@ -156,7 +157,7 @@ internal class AstroAdsController(
         loadNativeIfAllowed()
     }
 
-    private fun canPresent() = !closed && consentGranted && !activity.isFinishing && !activity.isDestroyed &&
+    private fun canPresent() = !closed && advertisingEnabled && !activity.isFinishing && !activity.isDestroyed &&
         activity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) && !busy()
 
     private fun finishPresentation() {
@@ -171,7 +172,6 @@ internal class AstroAdsController(
         if (closed || !initialized || !nativeAllowed || nativeRequested ||
             !startupPolicy.finished || appOpenShowing || !canPresent()) return
         nativeRequested = true
-        nativeRequestActive = true
         val loader = NativeAdLoader(activity)
         nativeLoader = loader
         Log.d(TAG, "native_loading")
@@ -182,11 +182,11 @@ internal class AstroAdsController(
             object : NativeAdLoadListener {
                 override fun onAdLoaded(nativeAd: NativeAd) {
                     val ad = nativeAd
-                    if (closed || !nativeRequestActive) {
+                    if (nativeLoader !== loader) {
                         ad.setNativeAdEventListener(null)
                         return
                     }
-                    nativeRequestActive = false
+                    nativeLoader = null
                     ad.setNativeAdEventListener(object : NativeAdEventListener {
                         override fun onAdClicked() = Unit
                         override fun onImpression(impressionData: ImpressionData?) { Log.d(TAG, "native_impression") }
@@ -196,13 +196,13 @@ internal class AstroAdsController(
                 }
 
                 override fun onAdFailedToLoad(error: AdRequestError) {
-                    nativeRequestActive = false
+                    if (nativeLoader !== loader) return
+                    nativeLoader = null
                     Log.d(TAG, "native_load_failed:${error.code}")
                     // One attempt for this Activity; no network retry loop or empty placeholder.
                 }
             })
         } catch (_: Exception) {
-            nativeRequestActive = false
             nativeLoader = null
             Log.w(TAG, "native_request_failed")
         }
@@ -220,9 +220,7 @@ internal class AstroAdsController(
         if (closed) return
         closed = true
         finishStartup()
-        nativeRequestActive = false
-        nativeLoader?.cancelLoading()
-        nativeLoader = null
+        setNativeAllowed(false)
         nativeAd?.setNativeAdEventListener(null)
         nativeAd = null
         appOpenAd?.setAdEventListener(null)

@@ -47,8 +47,8 @@ android {
             .getOrElse("com.joe6355.astrophoto")
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.9.0-beta.6"
+        versionCode = 8
+        versionName = "0.9.0-beta.7"
 
         buildConfigField("String", "YAN_NATIVE_UNIT_ID", "\"R-M-20351551-1\"")
         buildConfigField("String", "YAN_APP_OPEN_UNIT_ID", "\"R-M-20351551-2\"")

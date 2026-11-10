@@ -4,17 +4,11 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -33,13 +27,9 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withLink
-import androidx.compose.ui.unit.dp
-import com.joe6355.astrophoto.ads.AdvertisingConsent
-import com.joe6355.astrophoto.ui.AstroPrimaryButton
 import com.joe6355.astrophoto.ui.AstroScaffold
 import com.joe6355.astrophoto.ui.AstroSecondaryButton
 import com.joe6355.astrophoto.ui.AstroSpacing
-import com.joe6355.astrophoto.ui.AstroTextButton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -116,47 +106,3 @@ private fun openPrivacyLink(context: Context, url: String): Boolean = runCatchin
     context.startActivity(Intent(Intent.ACTION_VIEW, uri))
     true
 }.getOrDefault(false)
-
-@Composable
-internal fun AdvertisingConsentDialog(
-    consent: AdvertisingConsent,
-    saveError: Boolean,
-    onChoose: (AdvertisingConsent) -> Unit,
-    onOpenPolicy: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    AlertDialog(
-        modifier = Modifier.testTag("advertising-consent-dialog"),
-        onDismissRequest = onDismiss,
-        title = { Text("Реклама и данные") },
-        text = {
-            Column(Modifier.heightIn(max = 280.dp).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(AstroSpacing.Sm)) {
-                Text("Реклама помогает поддерживать AstroPhoto. С вашего разрешения Яндекс получит " +
-                    "рекламный идентификатор и данные рекламных запросов для показа и учёта объявлений. " +
-                    "Фото и сессии остаются на устройстве.")
-                Text("Выбор добровольный: съёмка и обработка доступны без рекламы. " +
-                    "Изменить решение можно в настройках.")
-                Text(when (consent) {
-                    AdvertisingConsent.ALLOWED -> "Сейчас реклама разрешена. После отказа новые запросы прекратятся; " +
-                        "для полной остановки рекламного модуля закройте приложение."
-                    AdvertisingConsent.DECLINED -> "Сейчас реклама отключена."
-                    AdvertisingConsent.NOT_CHOSEN -> "Реклама пока отключена."
-                })
-                if (saveError) Text("Не удалось сохранить выбор. Повторите попытку.",
-                    color = MaterialTheme.colorScheme.error)
-            }
-        },
-        confirmButton = {
-            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(AstroSpacing.Sm)) {
-                AstroTextButton("Читать политику", onOpenPolicy,
-                    modifier = Modifier.fillMaxWidth())
-                AstroPrimaryButton("Разрешить", { onChoose(AdvertisingConsent.ALLOWED) },
-                    modifier = Modifier.fillMaxWidth())
-                AstroSecondaryButton("Без рекламы", { onChoose(AdvertisingConsent.DECLINED) },
-                    modifier = Modifier.fillMaxWidth())
-            }
-        },
-        containerColor = MaterialTheme.colorScheme.surface
-    )
-}
